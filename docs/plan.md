@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: planning in progress (2026-11-16).
+Status: stage 1 in progress (2026-11-16).
 
 ## Goal
 
@@ -52,11 +52,11 @@ being changed:
 
 Each stage ends with something that runs, and is one pull request or a few.
 
-### Stage 0: this repository (done here)
+### Stage 0: this repository (done, #1)
 
 README, this plan, `.gitignore`.
 
-### Stage 1: a window on Linux and Windows
+### Stage 1: a window on Linux and Windows (in progress)
 
 - `cargo new`-shaped project: `Cargo.toml` with Bevy 0.20 (default features for now), a
   `rust-toolchain.toml`, and the usual dev profile (`opt-level = 1` for our code, `3` for
@@ -109,24 +109,48 @@ pools; tints, badges and counters by name; card zones for card games.
 - A per-game appearance file read by this client only (name and format to be decided: likely
   RON or YAML, data and never code), with models, materials and camera for that game.
 - Hand-made looks for a few games that reward it, starting with Tak.
-- A way for the private overlay to supply appearance for its games without this repository naming
-  them (see the open questions).
+- Appearance for the private overlay's games loaded from a configured folder, without this
+  repository naming them (decision 2).
 
 ### Later
 
 Accounts and API tokens (`/auth/tokens`) instead of guest keys; release builds attached to GitHub
 releases; maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles.
 
-## Open questions
+### Later still: SteamVR
 
-1. **Assets**: does the client ship its own, download them from the server, or both? Bingle left
-   this for when the client is built. Proposal: ship them with the client, and leave downloading
-   until a data pack needs it.
-2. **The private games**: how their appearance reaches a private build. Options: a Cargo feature
-   that pulls an appearance crate from `bingle-private`, or appearance files loaded from a directory
-   at run time. The second keeps the binary the same for everyone.
-3. **API drift**: the client follows the server's API by hand. Should Bingle publish a JSON schema
-   for `internal/wire`, or a version the client can check, so a mismatch is found at start-up rather
-   than mid-game?
-4. **Platforms**: Linux and Windows to begin. macOS and the Steam Deck are possible later; say if
-   either matters sooner, since the Deck in particular changes how input should be designed.
+Once the flat client has momentum, the same table in VR through OpenXR (SteamVR's runtime), with
+hand tracking: pinching a piece is the same gesture as clicking it. Most likely through the
+`bevy_mod_openxr` family of crates, whose hand-tracking support follows OpenXR's
+`XR_EXT_hand_tracking`; the maintainer is also following a public project adding hand tracking for
+the Steam Frame. Nothing is built for it yet, but the flat client is shaped so that it fits later:
+
+- **Real-world scale**: one unit is a metre, the table top is at y = 0 and a board is the size of
+  a real one, so in VR the table stands where a table would.
+- **Input becomes gestures through one place**: picking turns a pointer ray (mouse today; a
+  controller's or a hand's ray, or a fingertip, later) into the same gestures, and nothing else
+  reads the mouse directly except the flat camera.
+- **The camera is replaceable**: the orbit camera is one plugin, and nothing depends on there being
+  exactly one camera or on where it is. A VR rig brings its own.
+- **Interface in the world, not only on the screen**: panels that matter during play (whose
+  impulse, clocks, the move list) should be able to live on the table as well as in a flat overlay.
+- **Bevy versions**: an XR crate usually trails a new Bevy release by weeks or months. When VR
+  starts, the client stays on the newest Bevy the XR crate supports, rather than the newest Bevy.
+
+## Decisions
+
+Settled 2026-11-16:
+
+1. **Assets ship with the client.** Models, textures and sounds live in this repository and are
+   packaged with the binary. Downloading from the server waits until a data pack needs it.
+2. **Private games' appearance is loaded from a folder at run time.** The binary is the same for
+   everyone; a private build is the public binary plus a folder of appearance files from
+   `bingle-private`, found by a configured path. Shared code still names no game.
+3. **Bingle should publish a schema and an API version**, so the client can check the server it
+   talks to at start-up and say clearly when it is too old or too new, rather than fail mid-game.
+   This is work in the `bingle` repository (to be raised there). Until it lands the client reads the
+   API with hand-written, tolerant types.
+4. **Platforms: Linux and Windows.** CI builds both; the maintainer runs Windows builds by hand
+   from time to time. The Steam Deck and macOS are left out for now but not ruled out.
+5. **Development on Linux happens in a toolbox** (`scripts/toolbox-setup.sh`) on the maintainer's
+   immutable Fedora desktop: build there, run on the host where the GPU driver is.
