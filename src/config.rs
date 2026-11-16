@@ -223,10 +223,13 @@ mod tests {
 
     impl TempDir {
         fn new(name: &str) -> Self {
+            // Only digits and dashes: Windows refuses some characters in names (`:`, `{`).
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
             let dir = std::env::temp_dir().join(format!(
-                "bingle-3d-test-{name}-{}-{:?}",
+                "bingle-3d-test-{name}-{}-{nanos}",
                 std::process::id(),
-                std::time::SystemTime::now()
             ));
             fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
