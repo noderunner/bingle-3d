@@ -1,0 +1,29 @@
+[package]
+name = "bingle-3d"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+description = "A 3D client for the Bingle game server, built with Bevy"
+repository = "https://github.com/noderunner/bingle-3d"
+license = "MIT"
+publish = false
+
+[dependencies]
+# Pinned to one Bevy minor version: each release breaks APIs, so upgrades are deliberate (docs/plan.md).
+bevy = "0.20.1"
+
+[features]
+# Faster incremental builds while developing on Linux: `cargo run --features dev`.
+# Not for release builds, and unreliable on Windows.
+dev = ["bevy/dynamic_linking"]
+
+# Our code lightly optimised and the dependencies fully, so a debug build runs at a usable frame rate.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
