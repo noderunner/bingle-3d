@@ -57,8 +57,9 @@ Right-drag (or the arrow keys) orbits the camera, and the wheel zooms.
 with the *Desktop development with C++* workload, then rustup, then `cargo run`.
 
 **Linux** needs the development headers Bevy links against: on Debian or Ubuntu,
-`libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev`; on Fedora, `alsa-lib-devel
-systemd-devel wayland-devel libxkbcommon-devel`.
+`libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev` (and `libxkbcommon-x11-0` to run
+under X11, which a desktop already has); on Fedora, `alsa-lib-devel systemd-devel wayland-devel
+libxkbcommon-devel`.
 
 **Immutable Fedora (Bazzite, Silverblue, Kinoite)**: rather than layering packages onto the
 system, build in a [toolbox](https://containertoolbx.org/), a container that shares your home

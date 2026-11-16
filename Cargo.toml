@@ -24,6 +24,17 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# CI builds everything cold on small runners and only renders a few frames, so: no debug info (huge
+# on Windows) and no optimisation, which roughly halves the first build. Overrides dev's
+# dependency opt-level too, which it would otherwise inherit.
+[profile.ci]
+inherits = "dev"
+debug = false
+opt-level = 0
+
+[profile.ci.package."*"]
+opt-level = 0
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

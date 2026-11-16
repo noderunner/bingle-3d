@@ -26,7 +26,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Linux packages
         if: runner.os == 'Linux'
@@ -34,34 +34,51 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             mesa-vulkan-drivers xvfb
 
       # rust-toolchain.toml names the compiler; rustup on the runner installs it on first use.
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@v4
+      # Restored here and saved straight after the build, so a later failing step (the smoke run)
+      # does not throw away the compiled dependencies, as a plain actions/cache would.
+      - name: Restore cache
+        id: cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.toml', 'Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
+      # Every step uses the `ci` profile (Cargo.toml): one cold build, kept small.
       - name: Clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --profile ci --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --profile ci --locked
 
       - name: Build
-        run: cargo build --locked
+        run: cargo build --profile ci --locked
+
+      - name: Save cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       # Open the window under Xvfb with Mesa's software Vulkan (no GPU on the runner), render
       # 120 frames, save a screenshot and quit. Proves the app starts, draws and exits cleanly.
@@ -71,11 +88,11 @@ jobs:
           WGPU_BACKEND: vulkan
           # Make sure the X11 path is taken under Xvfb, not Wayland.
           WAYLAND_DISPLAY: ""
-        run: xvfb-run -a -s "-screen 0 1280x720x24" ./target/debug/bingle-3d --frames 120 --screenshot smoke.png
+        run: xvfb-run -a -s "-screen 0 1280x720x24" ./target/ci/bingle-3d --frames 120 --screenshot smoke.png
 
       - name: Screenshot
         if: runner.os == 'Linux' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-screenshot
           path: smoke.png
