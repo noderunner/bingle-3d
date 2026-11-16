@@ -76,7 +76,7 @@ README, this plan, `.gitignore`.
 - **Done when** `cargo run` shows the scene on the maintainer's Linux desktop (Wayland and X11) and
   on Windows, and CI is green on both.
 
-### Stage 2: talk to a server (done)
+### Stage 2: talk to a server (done, #4)
 
 - A network thread, the config file, `POST /api/guest` once and the key kept for later runs.
 - A screen listing `GET /api/game-defs` and the open games from `GET /api/games`.
