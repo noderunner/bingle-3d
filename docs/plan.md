@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 1 in progress (2026-11-16).
+Status: stage 1 done; stage 2 next (2026-11-16).
 
 ## Goal
 
@@ -56,7 +56,7 @@ Each stage ends with something that runs, and is one pull request or a few.
 
 README, this plan, `.gitignore`.
 
-### Stage 1: a window on Linux and Windows (in progress)
+### Stage 1: a window on Linux and Windows (done, #2)
 
 - `cargo new`-shaped project: `Cargo.toml` with Bevy 0.20 (default features for now), a
   `rust-toolchain.toml`, and the usual dev profile (`opt-level = 1` for our code, `3` for
@@ -122,8 +122,8 @@ releases; maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles.
 Once the flat client has momentum, the same table in VR through OpenXR (SteamVR's runtime), with
 hand tracking: pinching a piece is the same gesture as clicking it. Most likely through the
 `bevy_mod_openxr` family of crates, whose hand-tracking support follows OpenXR's
-`XR_EXT_hand_tracking`; the maintainer is also following a public project adding hand tracking for
-the Steam Frame. Nothing is built for it yet, but the flat client is shaped so that it fits later:
+`XR_EXT_hand_tracking`. Nothing is built for it yet, but the flat client is shaped so that it fits
+later:
 
 - **Real-world scale**: one unit is a metre, the table top is at y = 0 and a board is the size of
   a real one, so in VR the table stands where a table would.
@@ -137,6 +137,27 @@ the Steam Frame. Nothing is built for it yet, but the flat client is shaped so t
 - **Bevy versions**: an XR crate usually trails a new Bevy release by weeks or months. When VR
   starts, the client stays on the newest Bevy the XR crate supports, rather than the newest Bevy.
 
+**Hands on the Steam Frame: Frametop.** [Frametop](https://github.com/Frametop/frametop) (MIT) is a
+desktop that runs on the Steam Frame itself, with no PC, and tracks hands from the headset's own
+cameras (experimental). Read on 2026-11-16, what matters to us:
+
+- **It does not offer hands through OpenXR or SteamVR's skeletal input.** It publishes them to files
+  in `/run/user/UID/frametop-hands/`: `hands` (`hands/include/fh_hands.h`: per hand, 21 MediaPipe
+  landmarks and, from version 2, a fitted skeleton with joint rotations; metres in OpenVR's head
+  frame at capture time, to be moved into the room with the head pose at that moment) and
+  `gestures` (`fh_gestures.h`: pinches and grips per hand, laid out so quick taps are not missed).
+  Both are rewritten in place under a sequence lock (read the sequence, copy, read it again, and use
+  the copy only if both are the same even number).
+- **So using it means running on the headset.** The client would run on the Frame (a Linux build
+  for the headset's processor, rendering through SteamVR's OpenXR runtime there) and read those two
+  files with a small reader of its own, next to OpenXR for the head and controllers. Its pinch and
+  grip events map straight onto our gestures; its 21 landmarks are not OpenXR's 26 joints, so a hand
+  model needs a mapping either way.
+- **It runs only alongside Frametop's services** (`HANDS_MODE=always` keeps them running during a VR
+  app), costs much of the headset's CPU, and its file layout is versioned but young.
+- **Keep both doors open**: hands behind one interface in the client, with Frametop's files as one
+  source and `XR_EXT_hand_tracking` as another, for when SteamVR offers hand tracking to apps itself.
+
 ## Decisions
 
 Settled 2026-11-16:
@@ -148,7 +169,8 @@ Settled 2026-11-16:
    `bingle-private`, found by a configured path. Shared code still names no game.
 3. **Bingle should publish a schema and an API version**, so the client can check the server it
    talks to at start-up and say clearly when it is too old or too new, rather than fail mid-game.
-   This is work in the `bingle` repository (to be raised there). Until it lands the client reads the
+   This is work in the `bingle` repository:
+   [bingle#212](https://github.com/noderunner/bingle/issues/212). Until it lands the client reads the
    API with hand-written, tolerant types.
 4. **Platforms: Linux and Windows.** CI builds both; the maintainer runs Windows builds by hand
    from time to time. The Steam Deck and macOS are left out for now but not ruled out.
