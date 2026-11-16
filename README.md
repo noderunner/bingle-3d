@@ -8,8 +8,9 @@ REST/WebSocket API, and draws them as a table in 3D. It has no rules of its own:
 says what the position is, what the legal moves are and who is to move, and the client decides
 only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
 
-> **Status: stage 1 of the [plan](docs/plan.md).** The app opens a window and draws a placeholder
-> board in 3D on Linux and Windows. It does not talk to a server yet.
+> **Status: stage 2 of the [plan](docs/plan.md).** The app draws a placeholder board in 3D on
+> Linux and Windows, connects to a Bingle server, and lists its open games and the games it can
+> play. It cannot show or play a game yet.
 
 > **AI-generated code.** As with Bingle, most of this project is expected to be written by an AI
 > assistant (Claude, by Anthropic) working with the project's author, who directs the design and
@@ -51,7 +52,37 @@ cargo test                                  # unit tests, no window needed
 cargo clippy --all-targets -- -D warnings   # as CI runs it
 ```
 
-Right-drag (or the arrow keys) orbits the camera, and the wheel zooms.
+Right-drag (or the arrow keys) orbits the camera, and the wheel zooms (or scrolls the panel, over
+it). F5 connects again.
+
+## Connecting to a server
+
+The client connects to `http://127.0.0.1:8080` unless told otherwise, which is where a Bingle
+built from source listens (`make build && ./bin/bingle` in a checkout of Bingle).
+
+```sh
+cargo run -- --server localhost:9000             # another server, for this run only
+cargo run -- --server https://games.example.com
+```
+
+To change it for good, set `server` in `config.toml`, in `~/.config/bingle-3d/` on Linux
+(`$XDG_CONFIG_HOME/bingle-3d/`) or `%APPDATA%\bingle-3d\` on Windows:
+
+```toml
+server = "https://games.example.com"
+```
+
+- **Plain `http://` only reaches this machine.** Any other server must use `https://`, as Bingle
+  itself requires ([ADR 0065](https://github.com/noderunner/bingle/blob/main/docs/decisions/0065-the-connection-must-be-secure.md)).
+  An address without a scheme gets `http://` for this machine and `https://` otherwise.
+- **A server with its own certificate** (`BINGLE_TLS_SELFSIGNED=1`) is not trusted at first. The
+  client shows the certificate's SHA-256 fingerprint; compare it with the one the server printed
+  when it started, and if they are the same, choose *Trust this certificate*. That certificate,
+  and only that one, is trusted for that server from then on (it is kept in `config.toml`).
+- **A guest key** is made the first time the client meets a server and kept in `keys.toml`,
+  beside `config.toml` and readable only by you, so the server knows it is the same guest next
+  time. Delete the file to start again as a new guest.
+- `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
 
 **Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 with the *Desktop development with C++* workload, then rustup, then `cargo run`.
@@ -79,6 +110,7 @@ CI builds and tests on Linux and Windows, and on Linux also opens the window und
 
 ## License
 
-MIT, as Bingle is: see [LICENSE](LICENSE). The games are independent implementations of
+MIT, as Bingle is: see [LICENSE](LICENSE). The interface's typeface is Fira Sans, under the SIL
+Open Font License ([assets/fonts/OFL.txt](assets/fonts/OFL.txt)). The games are independent implementations of
 published rules; their names and designs belong to their designers and publishers, who are
 credited in each game's information on the server.

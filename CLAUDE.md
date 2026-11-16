@@ -101,6 +101,14 @@ else. An agent's shell may have no display variables. A window on the maintainer
 closes by itself. Headless, run it as CI does: in the toolbox,
 `WAYLAND_DISPLAY= xvfb-run -a -s '-screen 0 1280x720x24' ./target/debug/bingle-3d --frames 120 --screenshot out.png`.
 
+**Against a real server**: build Bingle from `origin/main` into a scratch directory (`git archive
+origin/main` from `../bingle`, then `go build`), without touching that checkout, which may be on
+the maintainer's branch. Run it on loopback with its own database and ports, since the maintainer
+may have a Bingle running on the defaults (`BINGLE_ADDR=127.0.0.1:18080`, `BINGLE_METRICS_ADDR`,
+`BINGLE_DB_PATH`; add `BINGLE_TLS_SELFSIGNED=1` and `BINGLE_TLS_CACHE` to try a self-signed
+certificate). Point the client at it with `--server`, and **always set `BINGLE3D_CONFIG_DIR` to a
+scratch directory**, so the maintainer's own config and guest keys are never read or written.
+
 ## What the client must respect
 
 These are Bingle's decisions; the client is built around them, not around changing them.
@@ -139,17 +147,37 @@ A game's own rules and its players' words keep their terms.
 ## The shape of the code
 
 - `src/main.rs`: options, then the app and its plugins. `src/cli.rs`: command-line options.
+- `src/net/`: the server. **All network I/O is on one thread** (`mod.rs`), with blocking calls; systems
+  send it `Request`s and draw from the `ServerStatus` resource. `session.rs` makes the calls and
+  turns every failure into a `Problem` worded for the player; `api.rs` holds the API's types and the
+  version check; `server_url.rs` the address rule (plain HTTP only to loopback); `tls.rs` the
+  certificate check and the connector ureq uses.
+- `src/config.rs`: `config.toml` and `keys.toml`. Keys never go in `config.toml`, and a file that
+  cannot be read is never overwritten.
+- `src/browser.rs`: the panel listing the server's games; it becomes the game browser.
+- `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
+  ASCII only.
 - `src/scene.rs`: the table and the placeholder board. **One unit is one metre, and the table top
   is at y = 0**, so boards are their real size (this is what makes VR work later).
 - `src/camera.rs`: the orbit camera. The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
-- `src/hud.rs`: text over the scene. Bevy's built-in font is ASCII only.
+- `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
+  and clicks reach the table through it; the camera leaves the wheel to any UI node under the
+  pointer.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
 
 ## Dependencies and Bevy
 
 - **Keep the dependency list short**, as Bingle does. Say why before adding a crate. No async runtime
-  (networking runs on its own thread with blocking clients); `rustls`, never OpenSSL.
+  (networking runs on its own thread with blocking clients); `rustls` with *ring*, never OpenSSL or
+  aws-lc-rs (which needs cmake and nasm on Windows). Today: `bevy`, `ureq` (pinned to 3.5, for the
+  `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
+  `serde_json`, `toml`.
+- **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
+  (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
+  the smallest and fullest messages it allows with the client's types. When the client starts using
+  something a newer minor version added, copy that version's schema and raise `API_VERSION` with it:
+  the client then refuses servers older than that. A new major version is a deliberate upgrade.
 - **Bevy is pinned to one minor version** (0.20). An upgrade is its own pull request. Bevy's API
   changes every release, so check a type or field in the crate's source under
   `~/.cargo/registry/src/` rather than from memory; the compiler's suggestions are usually right.

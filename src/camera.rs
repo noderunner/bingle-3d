@@ -2,10 +2,13 @@
 //! the arrow keys) to go round, and the wheel to come closer.
 //!
 //! The left button is left free for the gestures that will pick pieces and positions (stage 4).
+//! Over a panel the wheel is the panel's, to scroll it, not the camera's.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 
 pub struct OrbitCameraPlugin;
@@ -95,6 +98,7 @@ fn orbit_input(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
+    pointer: PointerOverUi,
     mut cameras: Query<&mut OrbitCamera>,
 ) {
     let mut turn = Vec2::ZERO;
@@ -110,6 +114,7 @@ fn orbit_input(
         * time.delta_secs();
 
     let lines = match scroll.unit {
+        _ if pointer.is_over_ui() => 0.0,
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_LINE,
     };
@@ -120,6 +125,22 @@ fn orbit_input(
     }
     for mut orbit in &mut cameras {
         orbit.orbit(turn.x, -turn.y, zoom);
+    }
+}
+
+/// Whether the pointer is over a panel (any UI node that takes the pointer), where the wheel
+/// scrolls the panel instead.
+#[derive(SystemParam)]
+struct PointerOverUi<'w, 's> {
+    hovered: Res<'w, HoverMap>,
+    nodes: Query<'w, 's, (), With<Node>>,
+}
+
+impl PointerOverUi<'_, '_> {
+    fn is_over_ui(&self) -> bool {
+        self.hovered
+            .values()
+            .any(|hits| hits.keys().any(|e| self.nodes.contains(*e)))
     }
 }
 
