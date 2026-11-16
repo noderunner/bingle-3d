@@ -1,0 +1,5 @@
+# The same compiler on Linux, Windows and CI. Bevy 0.20 needs at least 1.97.1 (`rust-version`).
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

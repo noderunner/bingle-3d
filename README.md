@@ -8,8 +8,8 @@ REST/WebSocket API, and draws them as a table in 3D. It has no rules of its own:
 says what the position is, what the legal moves are and who is to move, and the client decides
 only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
 
-> **Status: planning.** There is no code yet. [docs/plan.md](docs/plan.md) lays out the stages,
-> starting with an application that opens a window and draws a scene on Linux and Windows.
+> **Status: stage 1 of the [plan](docs/plan.md).** The app opens a window and draws a placeholder
+> board in 3D on Linux and Windows. It does not talk to a server yet.
 
 > **AI-generated code.** As with Bingle, most of this project is expected to be written by an AI
 > assistant (Claude, by Anthropic) working with the project's author, who directs the design and
@@ -40,9 +40,42 @@ only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/d
 
 ## Building
 
-Not yet: stage 1 of the [plan](docs/plan.md) adds the Cargo project. It will need a Rust
-toolchain (via [rustup](https://rustup.rs/)) and, on Linux, the development headers Bevy links
-against (ALSA, udev, Wayland/X11, xkbcommon); on Windows, the MSVC build tools.
+You need [rustup](https://rustup.rs/); `rust-toolchain.toml` picks the compiler (Rust 1.100), and
+rustup fetches it on the first build. The first build compiles Bevy and takes several minutes;
+later ones take seconds.
+
+```sh
+cargo run                                   # a window with the scene
+cargo run -- --frames 120 --screenshot a.png  # render 120 frames, save a PNG, quit
+cargo test                                  # unit tests, no window needed
+cargo clippy --all-targets -- -D warnings   # as CI runs it
+```
+
+Right-drag (or the arrow keys) orbits the camera, and the wheel zooms.
+
+**Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+with the *Desktop development with C++* workload, then rustup, then `cargo run`.
+
+**Linux** needs the development headers Bevy links against: on Debian or Ubuntu,
+`libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev` (and `libxkbcommon-x11-0` to run
+under X11, which a desktop already has); on Fedora, `alsa-lib-devel systemd-devel wayland-devel
+libxkbcommon-devel`.
+
+**Immutable Fedora (Bazzite, Silverblue, Kinoite)**: rather than layering packages onto the
+system, build in a [toolbox](https://containertoolbx.org/), a container that shares your home
+directory, display and devices:
+
+```sh
+bash scripts/toolbox-setup.sh               # once: creates the `bingle-3d` toolbox
+toolbox run -c bingle-3d bash -lc 'cargo build'
+./target/debug/bingle-3d                    # run on the host
+```
+
+Run the binary on the host if you use NVIDIA's driver: the toolbox has no NVIDIA libraries and
+would draw in software. `cargo run` inside the toolbox still works, just slowly.
+
+CI builds and tests on Linux and Windows, and on Linux also opens the window under Xvfb, renders
+120 frames in software and keeps a screenshot (the `smoke-screenshot` artifact).
 
 ## License
 
