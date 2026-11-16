@@ -1,6 +1,7 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 1 in progress (2026-11-16).
+Status: stage 1 done; stage 2 next (2026-11-16). The desktop client comes first: Hex, a game
+browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
 
@@ -56,7 +57,7 @@ Each stage ends with something that runs, and is one pull request or a few.
 
 README, this plan, `.gitignore`.
 
-### Stage 1: a window on Linux and Windows (in progress)
+### Stage 1: a window on Linux and Windows (done, #2)
 
 - `cargo new`-shaped project: `Cargo.toml` with Bevy 0.20 (default features for now), a
   `rust-toolchain.toml`, and the usual dev profile (`opt-level = 1` for our code, `3` for
@@ -81,61 +82,100 @@ README, this plan, `.gitignore`.
 - **Done when** the client lists a local server's games, and says plainly when the server is not
   there or its certificate is not trusted.
 
-### Stage 3: watch a game, any game
+### Stage 3: watch Hex
 
-- Build a board from a game definition's positions and layout: squares, hexes and points from the
-  board's own coordinates, with generic defaults for pieces (shape by type, colour by seat).
-- Stacks drawn as stacks (Tak, and any game whose `cells` hold more than one piece).
+- Build the board from Hex's game definition: its positions, their hex coordinates and the board's
+  layout, with generic defaults for the pieces (shape by type, colour by seat). Nothing in the code
+  names Hex: the same path draws any hex board, and square boards and points follow later.
 - Start a bot match (`POST /api/bot-matches`), join as a spectator over `GET /ws/{code}`, and
   animate each `move` event; reload state on a `state` event or a `move_seq` gap.
-- **Done when** two bots can be watched playing Hex, Go and Tak to the end, from nothing but the
-  API.
+- **Done when** two bots can be watched playing Hex to the end, from nothing but the API.
 
-### Stage 4: play
+### Stage 4: play Hex
 
 - Create a game against a built-in bot, read `selections`, and turn clicks into gestures that
   narrow them, with preview and confirm as the web page does; submit the move by notation.
 - Highlight legal targets, the last move, whose impulse it is, and the result.
 - Join a game by room code; play a person over the WebSocket.
-- **Done when** a whole game of Hex and of Tak can be played against a bot and against the web page.
+- Resign, the swap rule, and the end of the game as the server reports it.
+- **Done when** a whole game of Hex can be played against a bot and against the web page.
 
-### Stage 5: the rest of a game
+### Stage 5: a game browser
 
-Clocks, undo and take-back requests, draw offers, resign, chat, move list and replay; reserves and
-pools; tints, badges and counters by name; card zones for card games.
+- The games the viewer may find (`GET /api/games`, filtered by game with `?family=` and to those
+  with a free seat with `?open_seats=1`), refreshed while the screen is open; join a seat or watch.
+- Create a game with its options (seats, bots in chosen seats, clocks, a lobby), and wait in the
+  lobby until the host starts it.
+- The game definitions with their names and descriptions, so a game can be chosen before Bingle
+  has more than Hex drawn well in 3D (any other game is drawn from defaults).
+- **Done when** a game made in the browser can be found and joined from the client, and the other
+  way round.
 
-### Stage 6: appearance
+### Stage 6: accounts
 
-- A per-game appearance file read by this client only (name and format to be decided: likely
-  RON or YAML, data and never code), with models, materials and camera for that game.
-- Hand-made looks for a few games that reward it, starting with Tak.
-- Appearance for the private overlay's games loaded from a configured folder, without this
-  repository naming them (decision 2).
+Friends, direct messages and calls need a signed-in account (ADR 0105); a guest key is not enough.
 
-### Later
+- Sign in with a handle and password (and a second factor when the account has one), keep the
+  session between runs beside the config, and sign out.
+- **To settle with Bingle first**: API tokens' scopes (`play`, `create_game`, `read_metrics`) do not
+  cover friends or direct messages, and `/ws-dm` is authenticated by the browser's session. Either
+  the client holds a session cookie like a browser (sending `X-Bingle-Session` on state-changing
+  requests), or Bingle gains a token scope or a sign-in flow for native clients. Raise it as a
+  Bingle issue before building this stage.
 
-Accounts and API tokens (`/auth/tokens`) instead of guest keys; release builds attached to GitHub
-releases; maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles.
+### Stage 7: friends
 
-### Later still: SteamVR
+- The friends list with who is online (`GET /api/friends`), requests in and out, and invitations to
+  games; ask, answer, remove, invite to a game the player has a seat in.
+- Live changes over `GET /ws-dm` (`friends` events), and the presence setting (ADR 0106).
+- Direct messages between friends, over the same socket.
+- **Done when** two clients, or the client and the web page, can befriend each other, see each
+  other come online, and invite each other to a game.
 
-Once the flat client has momentum, the same table in VR through OpenXR (SteamVR's runtime), with
-hand tracking: pinching a piece is the same gesture as clicking it. Most likely through the
-`bevy_mod_openxr` family of crates, whose hand-tracking support follows OpenXR's
-`XR_EXT_hand_tracking`; the maintainer is also following a public project adding hand tracking for
-the Steam Frame. Nothing is built for it yet, but the flat client is shaped so that it fits later:
+### Stage 8: voice chat
+
+The game's voice chat and calls between friends, interoperating with the web page
+([voice.md](https://github.com/noderunner/bingle/blob/main/docs/voice.md)): audio only, peer to peer
+over WebRTC, the server relaying only the signalling.
+
+- The call list (`POST /api/games/{code}/voice` as a heartbeat), offers, answers and ICE candidates
+  through `voice/signal` and the `only=voice` WebSocket, ICE servers from `GET /api/rtc/config`;
+  direct calls through `/api/dm/signal` and `/ws-dm`.
+- Mute, deafen, a volume per person, push to talk, and a choice of microphone and speaker.
+- **Needs a WebRTC stack in Rust**, and this is the stage's biggest decision: it must speak what
+  browsers speak (ICE, DTLS-SRTP, Opus). The first candidate is `str0m`, which does no I/O of its
+  own and so fits the client's thread model without an async runtime; with an Opus codec and the
+  audio devices through `cpal` (which Bevy's audio already pulls in). To be decided, with its
+  dependencies, when the stage starts.
+- **Done when** a player in the client and one on the web page can talk during a game.
+
+### After that
+
+- The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
+  reserves and pools; tints, badges and counters by name; card zones for card games.
+- More games: square boards, points and stacks (Go, Tak), drawn from their definitions.
+- Appearance: a per-game appearance file read by this client only (name and format to be decided:
+  likely RON or YAML, data and never code), with models, materials and camera for that game;
+  hand-made looks for a few games that reward it; the private overlay's games' appearance loaded
+  from a configured folder, without this repository naming them (decision 2).
+- Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
+  tutorials and puzzles.
+
+### Much later: VR
+
+Not before the desktop client above works (decision 6). The aim is the same table in SteamVR,
+through OpenXR, with hand tracking: pinching a piece is the same gesture as clicking it. Nothing is
+built for it, but the desktop client keeps these so that it fits later at little cost:
 
 - **Real-world scale**: one unit is a metre, the table top is at y = 0 and a board is the size of
-  a real one, so in VR the table stands where a table would.
-- **Input becomes gestures through one place**: picking turns a pointer ray (mouse today; a
-  controller's or a hand's ray, or a fingertip, later) into the same gestures, and nothing else
-  reads the mouse directly except the flat camera.
-- **The camera is replaceable**: the orbit camera is one plugin, and nothing depends on there being
-  exactly one camera or on where it is. A VR rig brings its own.
-- **Interface in the world, not only on the screen**: panels that matter during play (whose
-  impulse, clocks, the move list) should be able to live on the table as well as in a flat overlay.
-- **Bevy versions**: an XR crate usually trails a new Bevy release by weeks or months. When VR
-  starts, the client stays on the newest Bevy the XR crate supports, rather than the newest Bevy.
+  a real one.
+- **Input becomes gestures in one place**: nothing but picking and the flat camera reads the mouse.
+- **The camera is replaceable**: nothing depends on there being exactly one camera or on where it
+  is.
+
+A note for when it starts: [Frametop](https://github.com/Frametop/frametop) tracks hands on the
+Steam Frame itself and publishes them to files rather than through OpenXR, so using it would mean
+running the client on the headset. It is young and changing; look at it again then.
 
 ## Decisions
 
@@ -148,9 +188,13 @@ Settled 2026-11-16:
    `bingle-private`, found by a configured path. Shared code still names no game.
 3. **Bingle should publish a schema and an API version**, so the client can check the server it
    talks to at start-up and say clearly when it is too old or too new, rather than fail mid-game.
-   This is work in the `bingle` repository (to be raised there). Until it lands the client reads the
+   This is work in the `bingle` repository:
+   [bingle#212](https://github.com/noderunner/bingle/issues/212). Until it lands the client reads the
    API with hand-written, tolerant types.
 4. **Platforms: Linux and Windows.** CI builds both; the maintainer runs Windows builds by hand
    from time to time. The Steam Deck and macOS are left out for now but not ruled out.
 5. **Development on Linux happens in a toolbox** (`scripts/toolbox-setup.sh`) on the maintainer's
    immutable Fedora desktop: build there, run on the host where the GPU driver is.
+6. **The desktop client first, and Hex first.** One game, Hex, played end to end, and the platform
+   around a game (a game browser, accounts, friends, voice chat), before more games or VR. VR waits
+   until that works; the desktop client only keeps the few habits above that make it possible.
