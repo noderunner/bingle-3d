@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 1 done; stage 2 next (2026-11-16). The desktop client comes first: Hex, a game
+Status: stage 2 done; stage 3 next (2026-11-16). The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -34,19 +34,22 @@ being changed:
   ([ADR 0127](https://github.com/noderunner/bingle/blob/main/docs/decisions/0127-commercial-games-in-a-private-overlay.md)).
   Shared client code names no game, and a game's appearance can come from outside this repository.
 
-## Technical choices (proposed)
+## Technical choices
 
 | Area | Choice | Why |
 |---|---|---|
 | Engine | Bevy **0.20.x** (0.20.1 is current), pinned to a minor version | Upgrade deliberately, one Bevy release at a time: each one breaks APIs |
 | Language | Rust, edition 2024, `rust-version` = Bevy's MSRV (1.97.1 for 0.20) | Matches Bevy |
 | Layout | One crate to start; split into a workspace (`net`, `appearance`, app) once there is a reason | Keep it small until it hurts |
-| HTTP | a blocking client (`ureq`) with `rustls`, on a dedicated network thread | No async runtime to integrate with Bevy's; no OpenSSL to find on Windows |
+| HTTP | a blocking client (`ureq` 3.5) on a dedicated network thread, with our own `rustls` connector in its chain (`src/net/tls.rs`) | No async runtime to integrate with Bevy's; no OpenSSL to find on Windows. ureq has no setting for a verifier of our own, which trusting a self-signed certificate by fingerprint needs; the connector uses ureq's `unversioned` transport API, so ureq is pinned to 3.5 |
+| TLS | `rustls` with *ring*, Mozilla's roots (`webpki-roots`), and certificates the player has trusted, by SHA-256 | *ring* builds with a plain C compiler on Windows; aws-lc-rs needs cmake and nasm. The same configuration will serve the WebSocket |
 | WebSocket | `tungstenite` with `rustls`, on the same thread model | Server-push only: one socket per watched room |
 | Net ↔ ECS | channels; the network thread sends events, systems turn them into Bevy messages/resources | The ECS never blocks on I/O |
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
-| Config | a TOML file in the platform's config directory (server URL, trusted fingerprints) and the guest key beside it | Same places on Linux (XDG) and Windows (`%APPDATA%`) |
+| Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.0.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
 ## Stages
@@ -73,7 +76,7 @@ README, this plan, `.gitignore`.
 - **Done when** `cargo run` shows the scene on the maintainer's Linux desktop (Wayland and X11) and
   on Windows, and CI is green on both.
 
-### Stage 2: talk to a server
+### Stage 2: talk to a server (done)
 
 - A network thread, the config file, `POST /api/guest` once and the key kept for later runs.
 - A screen listing `GET /api/game-defs` and the open games from `GET /api/games`.
@@ -81,6 +84,10 @@ README, this plan, `.gitignore`.
   certificates; a self-signed server accepted by fingerprint after the player says so.
 - **Done when** the client lists a local server's games, and says plainly when the server is not
   there or its certificate is not trusted.
+- Also: `GET /api`'s `api_version` checked first (same major, at least the minor the client was
+  built for), with a plain message when the server or the client is too old; an unreachable server
+  tried again every 5 s; `--server` for one run. Changing the server from inside the client waits
+  for the game browser (stage 5), which needs text entry.
 
 ### Stage 3: watch Hex
 
@@ -186,11 +193,11 @@ Settled 2026-11-16:
 2. **Private games' appearance is loaded from a folder at run time.** The binary is the same for
    everyone; a private build is the public binary plus a folder of appearance files from
    `bingle-private`, found by a configured path. Shared code still names no game.
-3. **Bingle should publish a schema and an API version**, so the client can check the server it
-   talks to at start-up and say clearly when it is too old or too new, rather than fail mid-game.
-   This is work in the `bingle` repository:
-   [bingle#212](https://github.com/noderunner/bingle/issues/212). Until it lands the client reads the
-   API with hand-written, tolerant types.
+3. **Bingle publishes a schema and an API version** (done in
+   [bingle#212](https://github.com/noderunner/bingle/issues/212), Bingle's ADR 0134), so the client
+   checks the server it talks to at start-up and says clearly when it is too old or too new, rather
+   than failing mid-game. The client's types stay hand-written and tolerant, and are tested against
+   the schema of the API version they target.
 4. **Platforms: Linux and Windows.** CI builds both; the maintainer runs Windows builds by hand
    from time to time. The Steam Deck and macOS are left out for now but not ruled out.
 5. **Development on Linux happens in a toolbox** (`scripts/toolbox-setup.sh`) on the maintainer's

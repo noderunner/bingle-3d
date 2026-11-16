@@ -1,7 +1,10 @@
 //! Text over the scene: how to move the camera, and the frame rate in debug builds.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::picking::Pickable;
 use bevy::prelude::*;
+
+use crate::fonts::UiFonts;
 
 pub struct HudPlugin;
 
@@ -18,22 +21,20 @@ impl Plugin for HudPlugin {
 #[derive(Component)]
 struct FpsText;
 
-// Bevy's built-in font is ASCII only, so no "·" or "–" here.
-const HINT: &str = "Orbit: right-drag or arrow keys    Zoom: mouse wheel";
+const HINT: &str = "Orbit: right-drag or arrow keys  ·  Zoom: mouse wheel  ·  Reconnect: F5";
 
-fn spawn_hud(mut commands: Commands) {
-    let font = TextFont {
-        font_size: FontSize::Px(16.0),
-        ..default()
-    };
+fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
+    let font = fonts.regular(15.0);
     let colour = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7));
     commands.spawn((
         Text::new(HINT),
         font.clone(),
         colour,
+        // Only words: the wheel and clicks go through to the table.
+        Pickable::IGNORE,
         Node {
             position_type: PositionType::Absolute,
-            left: px(12),
+            left: px(16),
             bottom: px(10),
             ..default()
         },
@@ -44,6 +45,7 @@ fn spawn_hud(mut commands: Commands) {
             Text::new("- fps"),
             font,
             colour,
+            Pickable::IGNORE,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(12),

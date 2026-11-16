@@ -6,6 +6,8 @@ pub const USAGE: &str = "\
 Usage: bingle-3d [options]
 
 Options:
+  --server URL       the Bingle server for this run, in place of the configured one
+                     (localhost:8080, https://games.example.com)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -21,6 +23,8 @@ pub struct Options {
     pub frames: Option<u32>,
     /// Save a screenshot here at the last frame, then quit.
     pub screenshot: Option<PathBuf>,
+    /// A server for this run, in place of the configured one.
+    pub server: Option<String>,
     pub help: bool,
 }
 
@@ -57,6 +61,7 @@ impl Options {
                     opts.frames = Some(n);
                 }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
+                "--server" => opts.server = Some(value("an address")?),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
         }
@@ -126,6 +131,18 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown option")
         );
+    }
+
+    #[test]
+    fn a_server_for_this_run() {
+        assert_eq!(
+            parse(&["--server", "localhost:9000"])
+                .unwrap()
+                .server
+                .as_deref(),
+            Some("localhost:9000")
+        );
+        assert!(parse(&["--server"]).unwrap_err().contains("needs"));
     }
 
     #[test]

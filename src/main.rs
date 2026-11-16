@@ -1,10 +1,15 @@
 //! Bingle 3D: a native client for the Bingle game server.
 //!
-//! Stage 1 of docs/plan.md: a window with a lit 3D scene, on Linux and Windows.
+//! Stage 2 of docs/plan.md: a window with a lit 3D scene, and a panel that connects to a Bingle
+//! server and lists its games.
 
+mod browser;
 mod camera;
 mod cli;
+mod config;
+mod fonts;
 mod hud;
+mod net;
 mod run_limit;
 mod scene;
 
@@ -34,9 +39,14 @@ fn main() -> AppExit {
         ..default()
     }))
     .add_plugins((
+        fonts::FontsPlugin,
         scene::ScenePlugin,
         camera::OrbitCameraPlugin,
         hud::HudPlugin,
+        net::NetPlugin {
+            server: opts.server.clone(),
+        },
+        browser::BrowserPlugin,
     ));
     if let Some(limit) = run_limit::RunLimit::from_options(&opts) {
         app.add_plugins(run_limit::RunLimitPlugin(limit));
