@@ -148,17 +148,27 @@ A game's own rules and its players' words keep their terms.
 
 - `src/main.rs`: options, then the app and its plugins. `src/cli.rs`: command-line options.
 - `src/net/`: the server. **All network I/O is on one thread** (`mod.rs`), with blocking calls; systems
-  send it `Request`s and draw from the `ServerStatus` resource. `session.rs` makes the calls and
-  turns every failure into a `Problem` worded for the player; `api.rs` holds the API's types and the
-  version check; `server_url.rs` the address rule (plain HTTP only to loopback); `tls.rs` the
-  certificate check and the connector ureq uses.
+  send it `Request`s and draw from the `ServerStatus` and `WatchStatus` resources. The watched game's
+  WebSocket (`socket.rs`, tungstenite over our own TLS) is read in the same loop with a short
+  timeout, so it stays one thread. `session.rs` makes the calls and turns every failure into a
+  `Problem` worded for the player; `api.rs` holds the API's types and the version check;
+  `server_url.rs` the address rule (plain HTTP only to loopback); `tls.rs` the certificate check
+  and the connector ureq uses.
+- `src/table.rs`: the watched game as the server last reported it. Every event carries the whole
+  position, so it replaces what is known; `move_seq` decides what is stale and what is a gap
+  (reload).
 - `src/config.rs`: `config.toml` and `keys.toml`. Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
-- `src/browser.rs`: the panel listing the server's games; it becomes the game browser.
+- `src/browser.rs`: the panel listing the server's games; it becomes the game browser. Its `Action`
+  is what every panel's buttons do. `src/game_panel.rs`: the panel beside a watched game.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
   ASCII only.
-- `src/scene.rs`: the table and the placeholder board. **One unit is one metre, and the table top
-  is at y = 0**, so boards are their real size (this is what makes VR work later).
+- `src/scene.rs`: the table and its lights. **One unit is one metre, and the table top is at
+  y = 0**, so boards are their real size (this is what makes VR work later).
+- `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
+  layout coordinates and the position's cells; names no game. `src/look.rs`: generic defaults for
+  how things look (a seat's colour). Do not read `shape`, `style` or other fields ADR 0124 moves to
+  `web.yaml`: they are leaving the API.
 - `src/camera.rs`: the orbit camera. The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
@@ -172,7 +182,7 @@ A game's own rules and its players' words keep their terms.
   (networking runs on its own thread with blocking clients); `rustls` with *ring*, never OpenSSL or
   aws-lc-rs (which needs cmake and nasm on Windows). Today: `bevy`, `ureq` (pinned to 3.5, for the
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
-  `serde_json`, `toml`.
+  `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours).
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
   the smallest and fullest messages it allows with the client's types. When the client starts using

@@ -1,17 +1,21 @@
 //! Bingle 3D: a native client for the Bingle game server.
 //!
-//! Stage 2 of docs/plan.md: a window with a lit 3D scene, and a panel that connects to a Bingle
-//! server and lists its games.
+//! Stage 3 of docs/plan.md: a panel that connects to a Bingle server and lists its games, and a
+//! table in 3D on which a game can be watched, drawn from the API alone.
 
+mod board;
 mod browser;
 mod camera;
 mod cli;
 mod config;
 mod fonts;
+mod game_panel;
 mod hud;
+mod look;
 mod net;
 mod run_limit;
 mod scene;
+mod table;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -47,6 +51,13 @@ fn main() -> AppExit {
             server: opts.server.clone(),
         },
         browser::BrowserPlugin,
+        board::BoardPlugin,
+        game_panel::GamePanelPlugin {
+            on_start: opts.watch.clone().map(|w| match w {
+                cli::Watch::Room(code) => net::Target::Room(code),
+                cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
+            }),
+        },
     ));
     if let Some(limit) = run_limit::RunLimit::from_options(&opts) {
         app.add_plugins(run_limit::RunLimitPlugin(limit));

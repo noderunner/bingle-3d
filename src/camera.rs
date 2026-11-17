@@ -11,12 +11,14 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseSc
 use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 
+use crate::board::BoardBuilt;
+
 pub struct OrbitCameraPlugin;
 
 impl Plugin for OrbitCameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (orbit_input, apply_orbit).chain());
+            .add_systems(Update, (frame_board, orbit_input, apply_orbit).chain());
     }
 }
 
@@ -38,6 +40,12 @@ impl OrbitCamera {
     pub const MIN_PITCH: f32 = 0.08;
     /// Just short of straight down, where yaw would stop meaning anything.
     pub const MAX_PITCH: f32 = FRAC_PI_2 - 0.05;
+
+    /// Far enough back to see a board of this size (width and depth, in metres, centred on the
+    /// focus) with some table round it, from the default angle.
+    pub fn radius_to_frame(size: Vec2) -> f32 {
+        (size.max_element() * 1.45).clamp(0.42, Self::MAX_RADIUS)
+    }
 
     /// Turns by the given angles and moves in or out by a factor, keeping within limits.
     pub fn orbit(&mut self, d_yaw: f32, d_pitch: f32, zoom_factor: f32) {
@@ -128,6 +136,20 @@ fn orbit_input(
     }
 }
 
+/// A new board on the table: every camera comes to where it sees it whole, looking from the
+/// player's side.
+fn frame_board(mut built: MessageReader<BoardBuilt>, mut cameras: Query<&mut OrbitCamera>) {
+    let Some(board) = built.read().last() else {
+        return;
+    };
+    for mut orbit in &mut cameras {
+        *orbit = OrbitCamera {
+            radius: OrbitCamera::radius_to_frame(board.size),
+            ..default()
+        };
+    }
+}
+
 /// Whether the pointer is over a panel (any UI node that takes the pointer), where the wheel
 /// scrolls the panel instead.
 #[derive(SystemParam)]
@@ -191,6 +213,41 @@ mod tests {
         orbit.orbit(0.0, -10.0, 10_000.0);
         assert_eq!(orbit.pitch, OrbitCamera::MIN_PITCH);
         assert_eq!(orbit.radius, OrbitCamera::MAX_RADIUS);
+    }
+
+    #[test]
+    fn a_bigger_board_is_seen_from_further_back() {
+        let small = OrbitCamera::radius_to_frame(Vec2::new(0.2, 0.15));
+        let big = OrbitCamera::radius_to_frame(Vec2::new(0.45, 0.35));
+        assert!(small < big);
+        assert!(OrbitCamera::radius_to_frame(Vec2::ZERO) >= OrbitCamera::MIN_RADIUS);
+        assert!(OrbitCamera::radius_to_frame(Vec2::splat(9.0)) <= OrbitCamera::MAX_RADIUS);
+    }
+
+    #[test]
+    fn a_new_board_frames_every_camera() {
+        let mut app = App::new();
+        app.add_message::<BoardBuilt>()
+            .add_systems(Update, frame_board);
+        let turned = OrbitCamera {
+            yaw: 2.0,
+            radius: 2.5,
+            ..default()
+        };
+        let a = app.world_mut().spawn(turned).id();
+        let b = app.world_mut().spawn(turned).id();
+        app.world_mut().write_message(BoardBuilt {
+            size: Vec2::new(0.3, 0.2),
+        });
+        app.update();
+        for e in [a, b] {
+            let orbit = app.world().get::<OrbitCamera>(e).unwrap();
+            assert_eq!(orbit.yaw, 0.0);
+            assert_eq!(
+                orbit.radius,
+                OrbitCamera::radius_to_frame(Vec2::new(0.3, 0.2))
+            );
+        }
     }
 
     #[test]

@@ -12,7 +12,9 @@ use crate::fonts::UiFonts;
 use crate::net::api::{GameDef, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
-use crate::net::{Connection, Net, Request, ServerStatus, reconnect};
+use crate::net::{
+    Connection, Net, Request, ServerStatus, Target, WatchStatus, reconnect, stop_watching, watch,
+};
 
 pub struct BrowserPlugin;
 
@@ -22,6 +24,7 @@ impl Plugin for BrowserPlugin {
             Update,
             (
                 rebuild.run_if(resource_changed::<ServerStatus>),
+                show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                 update_countdown,
                 colour_buttons,
             )
@@ -30,7 +33,7 @@ impl Plugin for BrowserPlugin {
     }
 }
 
-mod colours {
+pub(crate) mod colours {
     use bevy::prelude::Color;
 
     pub const PANEL: Color = Color::srgba(0.07, 0.08, 0.10, 0.90);
@@ -43,6 +46,10 @@ mod colours {
     pub const BUTTON_HOVER: Color = Color::srgb(0.28, 0.40, 0.60);
 }
 
+/// The panel itself, hidden while a game is watched.
+#[derive(Component)]
+struct BrowserPanel;
+
 /// What the panel's two rebuilt parts hang from.
 #[derive(Component)]
 struct StatusArea;
@@ -54,15 +61,22 @@ struct ListArea;
 #[derive(Component)]
 struct Countdown;
 
-/// What a button does.
-#[derive(Component, Clone, Copy)]
-enum Action {
+/// What a button does, on this panel and the game's.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub(crate) enum Action {
     Retry,
     Trust(Fingerprint),
+    /// Watch two of the server's bots play this game.
+    WatchBots(String),
+    /// Watch a game being played.
+    Watch(String),
+    /// Stop watching and go back to the list.
+    Back,
 }
 
 fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
     commands.spawn((
+        BrowserPanel,
         Node {
             position_type: PositionType::Absolute,
             left: px(16),
@@ -218,6 +232,11 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
         area.spawn(card()).with_children(|card| {
             card.spawn(line(f.semibold(15.0), colours::TEXT, &title));
             card.spawn(line(f.regular(13.0), colours::MUTED, &detail));
+            if game.status == "active" {
+                card.spawn(buttons()).with_children(|row| {
+                    row.spawn(button(f, "Watch", Action::Watch(game.room_code.clone())));
+                });
+            }
         });
     }
 
@@ -229,6 +248,16 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
             card.spawn(line(f.semibold(15.0), colours::TEXT, &describe_def(def)));
             if !def.description.is_empty() {
                 card.spawn(line(f.regular(13.0), colours::MUTED, &def.description));
+            }
+            // A bot match is for two seats.
+            if def.seats_required == 2 {
+                card.spawn(buttons()).with_children(|row| {
+                    row.spawn(button(
+                        f,
+                        "Watch two bots",
+                        Action::WatchBots(def.id.clone()),
+                    ));
+                });
             }
         });
     }
@@ -276,7 +305,7 @@ fn describe_def(def: &GameDef) -> String {
     out
 }
 
-fn line(font: TextFont, colour: Color, text: &str) -> impl Bundle {
+pub(crate) fn line(font: TextFont, colour: Color, text: &str) -> impl Bundle {
     (Text::new(text), font, TextColor(colour))
 }
 
@@ -306,7 +335,7 @@ fn card() -> impl Bundle {
     )
 }
 
-fn buttons() -> impl Bundle {
+pub(crate) fn buttons() -> impl Bundle {
     Node {
         column_gap: px(8),
         margin: UiRect::top(px(4)),
@@ -314,7 +343,7 @@ fn buttons() -> impl Bundle {
     }
 }
 
-fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
+pub(crate) fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
     (
         Button,
         action,
@@ -341,17 +370,45 @@ fn on_activate(
     actions: Query<&Action>,
     net: Res<Net>,
     mut status: ResMut<ServerStatus>,
+    mut watching: ResMut<WatchStatus>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
     };
-    match *action {
+    match action {
         Action::Retry => reconnect(&net, &mut status),
         Action::Trust(fingerprint) => {
             status.retry_in = None;
             status.connection = Connection::Connecting;
-            net.send(Request::Trust(fingerprint));
+            net.send(Request::Trust(*fingerprint));
         }
+        Action::WatchBots(game_def_id) => watch(
+            &net,
+            &mut watching,
+            Target::Bots {
+                game_def_id: game_def_id.clone(),
+            },
+        ),
+        Action::Watch(room_code) => watch(&net, &mut watching, Target::Room(room_code.clone())),
+        Action::Back => {
+            stop_watching(&net, &mut watching);
+            // The list is as old as the last connection: read it again.
+            reconnect(&net, &mut status);
+        }
+    }
+}
+
+fn show_while_not_watching(
+    watching: Res<WatchStatus>,
+    mut panel: Single<&mut Node, With<BrowserPanel>>,
+) {
+    let display = if watching.is_watching() {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    if panel.display != display {
+        panel.display = display;
     }
 }
 
@@ -390,12 +447,14 @@ mod tests {
     fn app_with(connection: Connection) -> (App, std::sync::mpsc::Receiver<Request>) {
         let (net, requests) = Net::for_test();
         let mut app = App::new();
-        app.insert_resource(net).insert_resource(ServerStatus {
-            server: "https://box:8443".into(),
-            connection,
-            notices: vec![],
-            retry_in: None,
-        });
+        app.insert_resource(net)
+            .init_resource::<WatchStatus>()
+            .insert_resource(ServerStatus {
+                server: "https://box:8443".into(),
+                connection,
+                notices: vec![],
+                retry_in: None,
+            });
         (app, requests)
     }
 

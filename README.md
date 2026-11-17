@@ -8,9 +8,9 @@ REST/WebSocket API, and draws them as a table in 3D. It has no rules of its own:
 says what the position is, what the legal moves are and who is to move, and the client decides
 only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
 
-> **Status: stage 2 of the [plan](docs/plan.md).** The app draws a placeholder board in 3D on
-> Linux and Windows, connects to a Bingle server, and lists its open games and the games it can
-> play. It cannot show or play a game yet.
+> **Status: stage 3 of the [plan](docs/plan.md).** The app connects to a Bingle server, lists its
+> open games and the games it can play, and shows any game being played, live, on a table in 3D:
+> two of the server's bots, or a game in progress. It cannot play a game yet.
 
 > **AI-generated code.** As with Bingle, most of this project is expected to be written by an AI
 > assistant (Claude, by Anthropic) working with the project's author, who directs the design and
@@ -54,6 +54,17 @@ cargo clippy --all-targets -- -D warnings   # as CI runs it
 
 Right-drag (or the arrow keys) orbits the camera, and the wheel zooms (or scrolls the panel, over
 it). F5 connects again.
+
+*Watch two bots* on a game in the list starts a game between two of the server's bots and shows
+it as they play; *Watch* on an open game shows that game. From the command line:
+
+```sh
+cargo run -- --watch-bots hex-11           # a new bot game of Hex (11×11), by its id
+cargo run -- --watch 7ZKMXP                # the game in this room
+```
+
+Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
+as squares, and pieces as stones in their seat's colour.
 
 ## Connecting to a server
 

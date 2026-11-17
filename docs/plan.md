@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 2 done; stage 3 next (2026-11-16). The desktop client comes first: Hex, a game
+Status: stage 3 done; stage 4 next (2026-11-17). The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -48,7 +48,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.0.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.1.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -89,7 +89,7 @@ README, this plan, `.gitignore`.
   tried again every 5 s; `--server` for one run. Changing the server from inside the client waits
   for the game browser (stage 5), which needs text entry.
 
-### Stage 3: watch Hex
+### Stage 3: watch Hex (done)
 
 - Build the board from Hex's game definition: its positions, their hex coordinates and the board's
   layout, with generic defaults for the pieces (shape by type, colour by seat). Nothing in the code
@@ -97,6 +97,19 @@ README, this plan, `.gitignore`.
 - Start a bot match (`POST /api/bot-matches`), join as a spectator over `GET /ws/{code}`, and
   animate each `move` event; reload state on a `state` event or a `move_seq` gap.
 - **Done when** two bots can be watched playing Hex to the end, from nothing but the API.
+- As built: API 1.1 (for bot matches). The layout coordinates the server sends are used as they
+  are, one unit between neighbours, so a hex board, a grid and a board of points all draw from the
+  same code; the cells' shape comes from the board's kind (hexagons, squares, round spots) and
+  every piece is a stone in its seat's colour, with a word the client knows (`red`) drawn as that
+  colour and any other from a palette by seat. Shapes by piece type wait for an appearance file,
+  since `pieces.*.shape` is leaving the API (ADR 0124). Each `move` event carries the whole
+  position, so the client replaces what it shows and drops in only the pieces that are new, and
+  rings the last move. The camera frames each new board. *Watch two bots* on any two-player game
+  in the list, *Watch* on a game in progress, and `--watch-bots GAME` / `--watch ROOM`. The bots
+  are the server's MCTS bot when it has one (then minimax, tactical, or the first listed).
+- **Not yet**: which edges each seat must join in Hex is only in words in the API (seat labels,
+  `win_rules`); [bingle#216](https://github.com/noderunner/bingle/issues/216) asks for it as data,
+  and until then the edges are drawn plain. The socket is reopened after 5 s if it drops mid-game.
 
 ### Stage 4: play Hex
 
