@@ -120,7 +120,7 @@ README, this plan, `.gitignore`.
 - Join a game by room code; play a person over the WebSocket.
 - Resign, the swap rule, and the end of the game as the server reports it.
 - **Done when** a whole game of Hex can be played against a bot and against the web page.
-- As built so far (first pull request: playing the bots). *Play a bot* in the list, or
+- As built so far (#6: playing the bots). *Play a bot* in the list, or
   `--play-bot GAME`, makes a game with `opponent` set to the server's strongest bot, the player in
   the first seat under the name in `config.toml` (`name`, "Player" by default). The client knows
   its seat from `GET /api/games/{code}`'s `yours`, and opens the game's socket as that seat's
