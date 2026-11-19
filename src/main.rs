@@ -68,6 +68,8 @@ fn main() -> AppExit {
                 cli::Watch::Room(code) => net::Target::Room(code),
                 cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
                 cli::Watch::PlayBots(game_def_id) => net::Target::AgainstBots { game_def_id },
+                cli::Watch::Host(game_def_id) => net::Target::Host { game_def_id },
+                cli::Watch::Join(code) => net::Target::Join(code),
             }),
         },
     ));

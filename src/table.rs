@@ -53,8 +53,21 @@ impl Table {
                 self.state = state.clone();
                 Step::Changed
             }
-            Event::State { state, .. } => {
+            Event::State { state, seats, .. } => {
                 self.state = state.clone();
+                // A seat taken or given up. The event does not say which seat is this
+                // client's; that has not changed.
+                if !seats.is_empty() {
+                    let mine = self.yours().map(|s| s.seat);
+                    self.game.seats = seats
+                        .iter()
+                        .map(|s| GameSeat {
+                            yours: Some(s.seat) == mine,
+                            ..s.clone()
+                        })
+                        .collect();
+                }
+                self.game.status = state.status.clone();
                 // An undo or a new seat: the last move is no longer certain.
                 self.last_move = None;
                 Step::Changed
@@ -220,6 +233,8 @@ mod tests {
             },
             game: Game {
                 game_def_id: "g".into(),
+                status: "active".into(),
+                invite_url: String::new(),
                 seats: vec![GameSeat {
                     seat: 1,
                     color: "red".into(),
@@ -282,11 +297,36 @@ mod tests {
         let undo = Event::State {
             reason: "undo".into(),
             state: state(3, &[]),
+            seats: vec![],
         };
         assert_eq!(t.apply(&undo), Step::Changed);
         assert_eq!(t.state.move_seq, 3);
         assert!(t.state.state.cells.is_empty());
         assert_eq!(t.last_move, None);
+    }
+
+    #[test]
+    fn a_seat_taken_shows_who_took_it_and_this_clients_seat_stays_its_own() {
+        let mut t = table(0);
+        t.state.status = "waiting".into();
+        t.game.status = "waiting".into();
+        let seat = |seat: u32, color: &str, name: &str| GameSeat {
+            seat,
+            color: color.into(),
+            name: name.into(),
+            bot: String::new(),
+            yours: false,
+        };
+        let joined = Event::State {
+            reason: "join".into(),
+            state: state(0, &[]),
+            seats: vec![seat(1, "red", "Ana"), seat(2, "blue", "Ben")],
+        };
+        assert_eq!(t.apply(&joined), Step::Changed);
+        assert_eq!(t.player(2), "Ben");
+        assert_eq!(t.yours().map(|s| s.seat), Some(1));
+        assert_eq!(t.game.status, "active");
+        assert!(t.to_play());
     }
 
     #[test]

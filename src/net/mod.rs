@@ -89,6 +89,8 @@ pub enum Request {
         notation: String,
         ply: u64,
     },
+    /// Give up the watched game for the seat `player_name` sits at.
+    Resign { watch: u64, player_name: String },
     /// Close the watched game's socket.
     StopWatching,
 }
@@ -100,6 +102,11 @@ pub enum Target {
     Bots { game_def_id: String },
     /// A new game in which this client plays the first seat and the server's bots the others.
     AgainstBots { game_def_id: String },
+    /// A new game in which this client plays the first seat and waits for people to join.
+    Host { game_def_id: String },
+    /// The game in this room, from an open seat if it is waiting for players and has one;
+    /// watched otherwise.
+    Join(String),
     /// A game already being played.
     Room(String),
 }
@@ -132,6 +139,10 @@ enum Reply {
     Played {
         watch: u64,
         asked_at: u64,
+        result: Result<(), Problem>,
+    },
+    Resigned {
+        watch: u64,
         result: Result<(), Problem>,
     },
 }
@@ -242,6 +253,12 @@ fn handle(
                 Target::AgainstBots { game_def_id } => session
                     .start_game_against_bots(&game_def_id)
                     .and_then(|code| session.open_game(&code)),
+                Target::Host { game_def_id } => session
+                    .host_game(&game_def_id)
+                    .and_then(|code| session.open_game(&code)),
+                Target::Join(code) => session
+                    .join_game(&code)
+                    .and_then(|()| session.open_game(&code)),
             };
             Some(match opened {
                 Ok((opened, socket)) => {
@@ -302,6 +319,12 @@ fn handle(
                 asked_at,
                 result,
             })
+        }
+        Request::Resign { watch, player_name } => {
+            let w = watching.as_ref().filter(|w| w.watch == watch)?;
+            // The game's end comes on the socket, as a state event.
+            let result = session.resign(&w.room_code, &player_name);
+            Some(Reply::Resigned { watch, result })
         }
         Request::StopWatching => {
             if let Some(old) = watching.take() {
@@ -453,6 +476,16 @@ fn poll_network(net: Res<Net>, mut status: ResMut<ServerStatus>, mut watch: ResM
                     net.send(Request::Reload { watch: id });
                 }
             }
+            Ok(Reply::Resigned { watch: id, result }) if id == watch.id => {
+                watch.resign = match result {
+                    // Done when the game's end arrives on the socket.
+                    Ok(()) => Resign::Sent,
+                    Err(problem) => {
+                        warn!("could not resign: {}", problem.message());
+                        Resign::Failed(problem)
+                    }
+                };
+            }
             // For a watch that has since been replaced.
             Ok(
                 Reply::Opened { .. }
@@ -460,7 +493,8 @@ fn poll_network(net: Res<Net>, mut status: ResMut<ServerStatus>, mut watch: ResM
                 | Reply::Reloaded { .. }
                 | Reply::WatchFailed { .. }
                 | Reply::Selections { .. }
-                | Reply::Played { .. },
+                | Reply::Played { .. }
+                | Reply::Resigned { .. },
             ) => {}
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
@@ -522,6 +556,20 @@ pub struct WatchStatus {
     pub retry_in: Option<Timer>,
     /// This client's seat's impulse, while the game waits for it.
     pub turn: Option<Turn>,
+    /// Giving up the game, for the seat this client plays.
+    pub resign: Resign,
+}
+
+/// Where resigning stands. It takes two presses of the button, as it cannot be taken back.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Resign {
+    #[default]
+    No,
+    /// Asked once: the panel asks whether the player is sure.
+    Confirming,
+    /// Sent and taken; the game's end is on its way.
+    Sent,
+    Failed(Problem),
 }
 
 impl WatchStatus {
@@ -538,6 +586,7 @@ pub fn watch(net: &Net, status: &mut WatchStatus, target: Target) {
     status.problem = None;
     status.retry_in = None;
     status.turn = None;
+    status.resign = Resign::No;
     net.send(Request::Watch {
         target,
         watch: status.id,
@@ -551,6 +600,7 @@ pub fn stop_watching(net: &Net, status: &mut WatchStatus) {
     status.problem = None;
     status.retry_in = None;
     status.turn = None;
+    status.resign = Resign::No;
     net.send(Request::StopWatching);
 }
 
@@ -570,6 +620,24 @@ fn rewatch_later(time: Res<Time>, net: Res<Net>, mut status: ResMut<WatchStatus>
             watch: status.id,
         });
     }
+}
+
+/// Gives up the watched game, for the seat this client plays.
+pub fn resign(net: &Net, status: &mut WatchStatus) {
+    let Some(player_name) = status
+        .table
+        .as_ref()
+        .filter(|t| !t.finished())
+        .and_then(|t| t.yours())
+        .map(|s| s.name.clone())
+    else {
+        return;
+    };
+    status.resign = Resign::Sent;
+    net.send(Request::Resign {
+        watch: status.id,
+        player_name,
+    });
 }
 
 /// Asks what the turn may select next, after the selections it has made.
@@ -634,6 +702,8 @@ mod tests {
             },
             game: Game {
                 game_def_id: "g".into(),
+                status: "active".into(),
+                invite_url: String::new(),
                 seats: vec![
                     GameSeat {
                         seat: 1,
@@ -691,6 +761,61 @@ mod tests {
             .turn
             .as_ref()
             .map(|t| t.stage)
+    }
+
+    #[test]
+    fn resigning_is_sent_for_this_clients_seat_and_a_refusal_is_shown() {
+        let (net, requests, replies) = Net::for_test_with_replies();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(ServerStatus {
+                server: "http://127.0.0.1:8080".into(),
+                connection: Connection::Connecting,
+                notices: vec![],
+                retry_in: None,
+            })
+            .init_resource::<WatchStatus>()
+            .add_systems(PreUpdate, poll_network);
+        let mut status = WatchStatus {
+            id: 3,
+            table: Some(Table::new(opened())),
+            ..Default::default()
+        };
+        resign(&net, &mut status);
+        assert_eq!(status.resign, Resign::Sent);
+        assert_eq!(
+            requests.try_recv(),
+            Ok(Request::Resign {
+                watch: 3,
+                player_name: "Ana".into()
+            })
+        );
+
+        let refused = Problem::Refused {
+            status: 409,
+            message: "the game is over".into(),
+        };
+        replies
+            .send(Reply::Resigned {
+                watch: 3,
+                result: Err(refused.clone()),
+            })
+            .unwrap();
+        app.insert_resource(net).insert_resource(status);
+        app.update();
+        let status = app.world().resource::<WatchStatus>();
+        assert_eq!(status.resign, Resign::Failed(refused));
+
+        // A finished game cannot be given up.
+        let (net, requests) = Net::for_test();
+        let mut over = WatchStatus {
+            table: Some(Table::new(opened())),
+            ..Default::default()
+        };
+        over.table.as_mut().unwrap().state.status = "finished".into();
+        resign(&net, &mut over);
+        assert_eq!(over.resign, Resign::No);
+        assert!(requests.try_recv().is_err());
     }
 
     #[test]

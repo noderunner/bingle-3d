@@ -12,6 +12,9 @@ Options:
   --watch-bots GAME  start a game between two of the server's bots and watch it
                      (GAME is a game definition's id, such as one the panel lists)
   --play-bot GAME    start a game against the server's bots and play the first seat
+  --host GAME        start a game, play the first seat and wait for people to join it
+  --join ROOM        take an open seat in the game in this room (or watch it, if it
+                     has none)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -40,6 +43,10 @@ pub enum Watch {
     Bots(String),
     /// Play against the server's bots.
     PlayBots(String),
+    /// Start a game for people to join.
+    Host(String),
+    /// Take a seat in a game, or watch it.
+    Join(String),
 }
 
 impl Options {
@@ -76,12 +83,19 @@ impl Options {
                 }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
                 "--server" => opts.server = Some(value("an address")?),
-                "--watch" | "--watch-bots" | "--play-bot" if opts.watch.is_some() => {
-                    return Err("only one of --watch, --watch-bots and --play-bot, once".into());
+                "--watch" | "--watch-bots" | "--play-bot" | "--host" | "--join"
+                    if opts.watch.is_some() =>
+                {
+                    return Err(
+                        "only one of --watch, --watch-bots, --play-bot, --host and --join, once"
+                            .into(),
+                    );
                 }
                 "--watch" => opts.watch = Some(Watch::Room(value("a room code")?)),
                 "--watch-bots" => opts.watch = Some(Watch::Bots(value("a game's id")?)),
                 "--play-bot" => opts.watch = Some(Watch::PlayBots(value("a game's id")?)),
+                "--host" => opts.watch = Some(Watch::Host(value("a game's id")?)),
+                "--join" => opts.watch = Some(Watch::Join(value("a room code")?)),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
         }
@@ -186,6 +200,19 @@ mod tests {
         );
         assert!(
             parse(&["--play-bot", "a", "--watch", "B"])
+                .unwrap_err()
+                .contains("only one")
+        );
+        assert_eq!(
+            parse(&["--host", "hex-7"]).unwrap().watch,
+            Some(Watch::Host("hex-7".into()))
+        );
+        assert_eq!(
+            parse(&["--join=AB12CD"]).unwrap().watch,
+            Some(Watch::Join("AB12CD".into()))
+        );
+        assert!(
+            parse(&["--join", "AB12CD", "--host", "hex-7"])
                 .unwrap_err()
                 .contains("only one")
         );

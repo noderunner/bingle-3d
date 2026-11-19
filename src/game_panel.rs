@@ -12,7 +12,7 @@ use crate::browser::{Action, button, buttons, colours, line};
 use crate::fonts::UiFonts;
 use crate::look::seat_colour;
 use crate::net::api::{GameInfo, Gesture};
-use crate::net::{Connection, Net, ServerStatus, Target, WatchStatus, watch};
+use crate::net::{Connection, Net, Resign, ServerStatus, Target, WatchStatus, watch};
 use crate::play::{Stage, Turn};
 use crate::table::Table;
 
@@ -96,11 +96,15 @@ fn rebuild(
                     if let Some(turn) = &watching.turn {
                         your_turn(p, f, table, turn);
                     }
+                    waiting_for_players(p, f, table);
+                    resigning(p, f, table, &watching.resign);
                 }
                 None => {
                     let what = match &watching.target {
                         Some(Target::Bots { .. }) => "Starting a game between two bots…",
                         Some(Target::AgainstBots { .. }) => "Starting a game against the bots…",
+                        Some(Target::Host { .. }) => "Starting a game…",
+                        Some(Target::Join(_)) => "Joining the game…",
                         _ => "Opening the game…",
                     };
                     let colour = if watching.problem.is_some() {
@@ -129,7 +133,9 @@ fn rebuild(
                             "Play again",
                             Action::PlayBots(table.info.id.clone()),
                         ));
-                    } else if table.yours().is_none() {
+                    } else if table.yours().is_some() {
+                        row.spawn(button(f, "New game", Action::Host(table.info.id.clone())));
+                    } else {
                         row.spawn(button(
                             f,
                             "Watch another",
@@ -199,6 +205,51 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
         table.summary()
     };
     p.spawn(line(f.semibold(15.0), colour, &summary));
+}
+
+/// While a game this client is in waits for players: how somebody else joins it.
+fn waiting_for_players(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
+    if table.state.status != "waiting" || table.yours().is_none() || !table.game.has_open_seat() {
+        return;
+    }
+    p.spawn(line(
+        f.regular(14.0),
+        colours::TEXT,
+        &format!(
+            "Somebody can join it with the room code {},",
+            table.room_code
+        ),
+    ));
+    if !table.game.invite_url.is_empty() {
+        p.spawn(line(
+            f.regular(13.0),
+            colours::MUTED,
+            &format!("or on the web at {}", table.game.invite_url),
+        ));
+    }
+}
+
+/// The button that gives up the game, and the question it asks first.
+fn resigning(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, resign: &Resign) {
+    if table.finished() || table.yours().is_none() || table.state.status != "active" {
+        return;
+    }
+    if let Resign::Failed(problem) = resign {
+        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+    }
+    p.spawn(buttons()).with_children(|row| match resign {
+        Resign::Confirming => {
+            row.spawn(line(f.regular(14.0), colours::TEXT, "Give up the game?"));
+            row.spawn(button(f, "Resign", Action::Resign));
+            row.spawn(button(f, "Keep playing", Action::KeepPlaying));
+        }
+        Resign::Sent => {
+            row.spawn(line(f.regular(14.0), colours::MUTED, "Resigning…"));
+        }
+        Resign::No | Resign::Failed(_) => {
+            row.spawn(button(f, "Resign", Action::Resign));
+        }
+    });
 }
 
 /// What the player may do on their impulse.

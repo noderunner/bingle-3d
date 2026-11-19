@@ -17,8 +17,9 @@ use rustls::ClientConfig;
 
 use super::api::{
     self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, CreateGameRequest,
-    CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameState, GuestKey, Index,
-    MoveRequest, MoveResponse, OpenGame, OpenGames, Selections,
+    CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameSeat, GameState, GuestKey, Index,
+    JoinRequest, JoinResponse, MoveRequest, MoveResponse, OpenGame, OpenGames, PlayerRequest,
+    Selections,
 };
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
@@ -220,14 +221,71 @@ impl Session {
             status: 404,
             message: "the server has no bots to play".into(),
         })?;
+        self.create_game(game_def_id, Some(bot.to_string()))
+    }
+
+    /// A new game with this client in the first seat and the others open, for people to join.
+    pub fn host_game(&mut self, game_def_id: &str) -> Result<String, Problem> {
+        self.create_game(game_def_id, None)
+    }
+
+    fn create_game(
+        &mut self,
+        game_def_id: &str,
+        opponent: Option<String>,
+    ) -> Result<String, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
         let body = serde_json::to_value(CreateGameRequest {
             game_def_id: game_def_id.to_string(),
             player_name: self.store.player_name().to_string(),
-            opponent: bot.to_string(),
+            opponent,
         })
         .expect("a game request is JSON");
         let made: CreateGameResponse = self.as_guest(&url, "POST", "/api/games", Some(&body))?;
         Ok(made.room_code)
+    }
+
+    /// Takes an open seat in the game in this room, if it is waiting for players and this client
+    /// has no seat there yet; otherwise leaves it to be watched (or played, from the seat that is
+    /// already this client's).
+    pub fn join_game(&mut self, room_code: &str) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        if !valid_room_code(room_code) {
+            return Err(not_a_room_code(room_code));
+        }
+        let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
+        if game.status != "waiting" || game.seats.iter().any(|s| s.yours) || !game.has_open_seat() {
+            return Ok(());
+        }
+        // A seat goes by its player's name, so the name must not be one already at the table.
+        let body = serde_json::to_value(JoinRequest {
+            player_name: free_name(self.store.player_name(), &game.seats),
+            role: "player".into(),
+        })
+        .expect("a join is JSON");
+        let _: JoinResponse = self.as_guest(
+            &url,
+            "POST",
+            &format!("/api/games/{room_code}/join"),
+            Some(&body),
+        )?;
+        Ok(())
+    }
+
+    /// Gives up the game for the seat `player_name` sits at.
+    pub fn resign(&mut self, room_code: &str, player_name: &str) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(PlayerRequest {
+            player_name: player_name.to_string(),
+        })
+        .expect("a resignation is JSON");
+        let _: GameState = self.as_guest(
+            &url,
+            "POST",
+            &format!("/api/games/{room_code}/resign"),
+            Some(&body),
+        )?;
+        Ok(())
     }
 
     /// What the seat on impulse may select after the selections `made`, at `ply` once known.
@@ -279,9 +337,7 @@ impl Session {
     pub fn open_game(&mut self, room_code: &str) -> Result<(Opened, Socket), Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         if !valid_room_code(room_code) {
-            return Err(Problem::BadAddress(format!(
-                "\"{room_code}\" is not a room code."
-            )));
+            return Err(not_a_room_code(room_code));
         }
         let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
         let info = match self.infos.get(&game.game_def_id) {
@@ -528,6 +584,22 @@ pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
 }
 
 /// Room codes are letters and digits, which keeps them safe to put in a path.
+/// `name`, or the first of "name 2", "name 3"… that nobody at the table goes by.
+pub fn free_name(name: &str, seats: &[GameSeat]) -> String {
+    let taken = |n: &str| seats.iter().any(|s| s.name.eq_ignore_ascii_case(n));
+    if !taken(name) {
+        return name.to_string();
+    }
+    (2..)
+        .map(|i| format!("{name} {i}"))
+        .find(|n| !taken(n))
+        .expect("some number is free")
+}
+
+fn not_a_room_code(code: &str) -> Problem {
+    Problem::BadAddress(format!("\"{code}\" is not a room code."))
+}
+
 pub fn valid_room_code(code: &str) -> bool {
     !code.is_empty() && code.len() <= 32 && code.bytes().all(|b| b.is_ascii_alphanumeric())
 }
@@ -547,12 +619,11 @@ fn is_unreachable(e: &std::io::Error) -> bool {
     )
 }
 
-/// A 401 or 403 outside the key's own replacement means the server wants an account.
+/// A 401 outside the key's own replacement means the server wants an account. A 403 is about
+/// what was asked (a seat that is somebody else's), and keeps the server's reason.
 fn unauthorized(p: Problem) -> Problem {
     match p {
-        Problem::Refused {
-            status: 401 | 403, ..
-        } => Problem::NeedsAccount,
+        Problem::Refused { status: 401, .. } => Problem::NeedsAccount,
         other => other,
     }
 }
@@ -826,6 +897,79 @@ mod tests {
                 .filter(|r| r.path != "/api/guest")
                 .all(|r| r.auth.as_deref() == Some("Bearer bgg_new")),
             "every call is the guest's: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn joining_takes_an_open_seat_only_in_a_game_waiting_for_players() {
+        let (addr, seen) = serve(Box::new(|req: &Seen| {
+            let open = r#"{"seat":2,"color":"blue","name":""}"#;
+            let ana = r#"{"seat":1,"color":"red","name":"Ana"}"#;
+            let game = |status: &str, seats: &str| {
+                format!(r#"{{"game_def_id":"hex-7","status":"{status}","seats":[{seats}]}}"#)
+            };
+            match (req.method.as_str(), req.path.as_str()) {
+                ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                ("GET", "/api/games/WAIT01") => (200, game("waiting", &format!("{ana},{open}"))),
+                ("GET", "/api/games/BUSY01") => (
+                    200,
+                    game("active", &format!(r#"{ana},{{"seat":2,"color":"blue","name":"Ben"}}"#)),
+                ),
+                ("GET", "/api/games/MINE01") => (
+                    200,
+                    game(
+                        "waiting",
+                        &format!(r#"{{"seat":1,"color":"red","name":"Ana","yours":true}},{open}"#),
+                    ),
+                ),
+                ("POST", "/api/games/WAIT01/join") => (
+                    200,
+                    r#"{"role":"player","seat":2,"color":"blue","status":"active"}"#.into(),
+                ),
+                ("POST", "/api/games/BUSY01/resign") => (
+                    200,
+                    r#"{"status":"finished","impulse_seat":null,"move_seq":5,"ply":5,"winner_seat":2,"board_state":"","draw_offer_seat":null}"#.into(),
+                ),
+                _ => (404, r#"{"error":"api: no such endpoint"}"#.into()),
+            }
+        }));
+        let mut s = session(&addr);
+        for code in ["WAIT01", "BUSY01", "MINE01"] {
+            s.join_game(code).unwrap();
+        }
+        assert!(matches!(
+            s.join_game("not a code"),
+            Err(Problem::BadAddress(_))
+        ));
+        s.resign("BUSY01", "Ana").unwrap();
+
+        let seen = seen.lock().unwrap();
+        let posts: Vec<&str> = seen
+            .iter()
+            .filter(|r| r.method == "POST" && r.path != "/api/guest")
+            .map(|r| r.path.as_str())
+            .collect();
+        assert_eq!(
+            posts,
+            ["/api/games/WAIT01/join", "/api/games/BUSY01/resign"],
+            "a game already playing, or with a seat of this guest's, is only watched"
+        );
+    }
+
+    #[test]
+    fn a_name_already_at_the_table_is_numbered() {
+        let seat = |name: &str| GameSeat {
+            seat: 1,
+            color: "red".into(),
+            name: name.into(),
+            bot: String::new(),
+            yours: false,
+        };
+        assert_eq!(free_name("Player", &[seat(""), seat("Ana")]), "Player");
+        assert_eq!(free_name("Player", &[seat("player")]), "Player 2");
+        assert_eq!(
+            free_name("Player", &[seat("Player"), seat("Player 2")]),
+            "Player 3"
         );
     }
 

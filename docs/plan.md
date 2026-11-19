@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 4 under way: a game can be played against the server's bots (2026-11-19). The desktop client comes first: Hex, a game
+Status: stage 4 under way: a game can be played against the server's bots or a person (2026-11-19). The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -139,8 +139,20 @@ README, this plan, `.gitignore`.
   edge shows one colour. The way a region faces is square to the line of its cells, away from the
   board's middle. Nothing names Hex: any board with connect goals is drawn the same way, and a
   goal type the client does not know is skipped. A server older than API 1.2 is now refused.
-- **Next**: resign; join a game by its room code (`--join ROOM` first, since text entry waits for
-  the game browser); play a person.
+- Playing a person. *Play a person* in the list, or `--host GAME`, makes a game with no
+  `opponent`: the player has the first seat, and the panel shows the room code and the game's
+  `invite_url` while it waits. *Join* on a waiting game in the list, or `--join ROOM`, takes a free
+  seat (`POST …/join`) when the game is waiting for players and none of its seats is the
+  client's already; otherwise the game is only opened, so `--join` on a full game watches it.
+  A seat goes by its player's name, so a name already at the table is numbered ("Player 2").
+  Who sits where is read again from every `state` event's `seats`, so a person who joins appears
+  at once and the game starts on its own. *Resign* asks once more, then `POST …/resign`; the end
+  of the game arrives on the socket like a move. A 403 now shows the server's reason; only a
+  401 means the server wants an account. Checked against a Bingle on loopback: hosted and joined
+  by a guest, joined a guest's game (the swap rule offered on the first reply), and a
+  resignation seen ending the game.
+- **Next**: a whole game of Hex against the web page, by hand, which is stage 4's test; then
+  stage 5. Leaving a waiting game (`…/leave`) and offering a draw are not built.
 
 ### Stage 5: a game browser
 

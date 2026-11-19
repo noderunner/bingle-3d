@@ -201,8 +201,22 @@ pub struct BotMatchResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Game {
     pub game_def_id: String,
+    /// "waiting" until every seat is filled, then "active", then "finished".
+    pub status: String,
     #[serde(default, deserialize_with = "null_as_default")]
     pub seats: Vec<GameSeat>,
+    /// A link to the game's page, to send to somebody who should join it.
+    #[serde(default)]
+    pub invite_url: String,
+}
+
+impl Game {
+    /// A seat nobody plays yet, a person or a bot.
+    pub fn has_open_seat(&self) -> bool {
+        self.seats
+            .iter()
+            .any(|s| s.name.is_empty() && s.bot.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -220,13 +234,35 @@ pub struct GameSeat {
     pub yours: bool,
 }
 
-/// `POST /api/games`' body, for a game against the server's bots: `opponent` fills every seat but
-/// the creator's.
+/// `POST /api/games`' body. With `opponent`, that bot fills every seat but the creator's and the
+/// game starts at once; without it, the game waits for people to join.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CreateGameRequest {
     pub game_def_id: String,
     pub player_name: String,
-    pub opponent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opponent: Option<String>,
+}
+
+/// `POST /api/games/{code}/join`'s body: take an open seat.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct JoinRequest {
+    pub player_name: String,
+    pub role: String,
+}
+
+/// `POST /api/games/{code}/join`'s answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JoinResponse {
+    pub role: String,
+    #[serde(default)]
+    pub seat: Option<u32>,
+}
+
+/// The body of the calls a seated player makes about the game as a whole (`resign`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlayerRequest {
+    pub player_name: String,
 }
 
 /// `POST /api/games`' answer.
@@ -349,7 +385,12 @@ pub enum Event {
     /// One selection was played; the game now stands as `state` says.
     Move { seq: u64, state: GameState },
     /// Something other than a move changed the game (a seat taken, an undo, a resignation).
-    State { reason: String, state: GameState },
+    /// `seats` are who sits where now; they never say which is this client's.
+    State {
+        reason: String,
+        state: GameState,
+        seats: Vec<GameSeat>,
+    },
     /// A kind this client skips (chat, connections, voice, and any added later).
     Other(String),
 }
@@ -376,6 +417,8 @@ impl Event {
         #[derive(Deserialize)]
         struct StateData {
             reason: String,
+            #[serde(default, deserialize_with = "null_as_default")]
+            seats: Vec<GameSeat>,
             #[serde(flatten)]
             state: GameState,
         }
@@ -396,6 +439,7 @@ impl Event {
                 Event::State {
                     reason: d.reason,
                     state: d.state,
+                    seats: d.seats,
                 }
             }
             other => Event::Other(other.to_string()),
@@ -675,6 +719,8 @@ mod tests {
         reads::<CreateGameResponse>("POST /api/games");
         reads::<Selections>("GET /api/games/{code}/selections");
         reads::<MoveResponse>("POST /api/games/{code}/moves");
+        reads::<JoinResponse>("POST /api/games/{code}/join");
+        reads::<GameState>("POST /api/games/{code}/resign");
         let root = schema();
         for full in [false, true] {
             serde_json::from_value::<ErrorBody>(instance(&root, &root["x-error"], full, 0))
@@ -746,7 +792,28 @@ mod tests {
             json(CreateGameRequest {
                 game_def_id: "g".into(),
                 player_name: "Ana".into(),
-                opponent: "mcts".into(),
+                opponent: Some("mcts".into()),
+            }),
+        );
+        sends(
+            "POST /api/games",
+            json(CreateGameRequest {
+                game_def_id: "g".into(),
+                player_name: "Ana".into(),
+                opponent: None,
+            }),
+        );
+        sends(
+            "POST /api/games/{code}/join",
+            json(JoinRequest {
+                player_name: "Ana".into(),
+                role: "player".into(),
+            }),
+        );
+        sends(
+            "POST /api/games/{code}/resign",
+            json(PlayerRequest {
+                player_name: "Ana".into(),
             }),
         );
         sends(

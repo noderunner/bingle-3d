@@ -13,7 +13,8 @@ use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
 use crate::net::{
-    Connection, Net, Request, ServerStatus, Target, WatchStatus, reconnect, stop_watching, watch,
+    Connection, Net, Request, Resign, ServerStatus, Target, WatchStatus, reconnect, resign,
+    stop_watching, watch,
 };
 use crate::play;
 
@@ -73,6 +74,14 @@ pub(crate) enum Action {
     Watch(String),
     /// Play this game against the server's bots.
     PlayBots(String),
+    /// Start a game of this and wait for people to join it.
+    Host(String),
+    /// Take an open seat in the game in this room.
+    Join(String),
+    /// Give up the game (asked twice: the first press asks whether the player is sure).
+    Resign,
+    /// Not resigning after all.
+    KeepPlaying,
     /// A choice for the move being built that is not a click on the board.
     Choose(Gesture),
     /// Play the move shown.
@@ -247,6 +256,10 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
                 card.spawn(buttons()).with_children(|row| {
                     row.spawn(button(f, "Watch", Action::Watch(game.room_code.clone())));
                 });
+            } else if game.status == "waiting" && game.open_seats > 0 {
+                card.spawn(buttons()).with_children(|row| {
+                    row.spawn(button(f, "Join", Action::Join(game.room_code.clone())));
+                });
             }
         });
     }
@@ -268,6 +281,12 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
                         "Play bots"
                     };
                     row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
+                    let host = if def.seats_required == 2 {
+                        "Play a person"
+                    } else {
+                        "Play people"
+                    };
+                    row.spawn(button(f, host, Action::Host(def.id.clone())));
                     // A bot match is for two seats.
                     if def.seats_required == 2 {
                         row.spawn(button(
@@ -416,6 +435,19 @@ fn on_activate(
                 game_def_id: game_def_id.clone(),
             },
         ),
+        Action::Host(game_def_id) => watch(
+            &net,
+            &mut watching,
+            Target::Host {
+                game_def_id: game_def_id.clone(),
+            },
+        ),
+        Action::Join(room_code) => watch(&net, &mut watching, Target::Join(room_code.clone())),
+        Action::Resign => match watching.resign {
+            Resign::Confirming => resign(&net, &mut watching),
+            _ => watching.resign = Resign::Confirming,
+        },
+        Action::KeepPlaying => watching.resign = Resign::No,
         Action::Choose(g) => play::gesture(&net, &mut watching, g),
         Action::Submit => play::submit(&net, &mut watching),
         Action::Undo => play::back(&mut watching),
