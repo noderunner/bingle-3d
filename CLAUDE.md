@@ -169,7 +169,8 @@ A game's own rules and its players' words keep their terms.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. `src/look.rs`: generic defaults for
   how things look (a seat's colour). Do not read `shape`, `style` or other fields ADR 0124 moves to
-  `web.yaml`: they are leaving the API. The board also lights the cells a click would be taken on
+  `web.yaml`: they are leaving the API. Each seat's `connect` goals are strips along their regions'
+  outer sides, in the seat's colour (`goal_strips`). The board also lights the cells a click would be taken on
   and shows the move being built as see-through pieces.
 - `src/play.rs`: playing a seat. `Turn` is the move being built from the server's legal selections,
   narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a

@@ -48,7 +48,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.1.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.2.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -107,10 +107,9 @@ README, this plan, `.gitignore`.
   rings the last move. The camera frames each new board. *Watch two bots* on any two-player game
   in the list, *Watch* on a game in progress, and `--watch-bots GAME` / `--watch ROOM`. The bots
   are the server's MCTS bot when it has one (then minimax, tactical, or the first listed).
-- **Not yet**: which edges each seat must join in Hex is only in words in API 1.1 (seat labels,
+- **Then**: which edges each seat must join in Hex was only in words in API 1.1 (seat labels,
   `win_rules`); [bingle#216](https://github.com/noderunner/bingle/issues/216) added it as data in
-  API 1.2, and until the client targets 1.2 the edges are drawn plain. The socket is reopened
-  after 5 s if it drops mid-game.
+  API 1.2, and stage 4 draws it (below). The socket is reopened after 5 s if it drops mid-game.
 
 ### Stage 4: play Hex
 
@@ -133,9 +132,15 @@ README, this plan, `.gitignore`.
   pieces and waits for a second click, Enter or *Play*, and Esc or Backspace goes back. The move is
   sent whole, by notation, with its `ply`; it arrives on the socket like everyone else's. A move
   refused because the game moved on reads the state again. API 1.1 still covers all of it.
+- Each seat's goal on the board: the client targets API 1.2 for the game definition's `goals`
+  (bingle#216) and reads the board's `regions`. Every `connect` goal's regions get a strip in the
+  seat's colour along their cells' sides that face off the board (a neutral one for a goal every
+  seat shares); a side of a corner cell in two regions goes to the one it faces most, so each
+  edge shows one colour. The way a region faces is square to the line of its cells, away from the
+  board's middle. Nothing names Hex: any board with connect goals is drawn the same way, and a
+  goal type the client does not know is skipped. A server older than API 1.2 is now refused.
 - **Next**: resign; join a game by its room code (`--join ROOM` first, since text entry waits for
-  the game browser); play a person; and Hex's edges, which API 1.2 gives as data (`goals`,
-  bingle#216, done) and the board can now draw.
+  the game browser); play a person.
 
 ### Stage 5: a game browser
 
