@@ -1,0 +1,332 @@
+//! Setting up a new game: the player's seat, who plays each of the others (a built-in bot, or
+//! nobody yet, for a person to join), and how the game is timed.
+//!
+//! [`Form`] is the setup with no Bevy in it; [`draw`] puts it on the list panel in place of the
+//! lists while it is open. What the form needs from the server (the game's seats, the bots) is
+//! read by the network thread, which hands it to [`Form::prepared`].
+
+use std::collections::BTreeMap;
+
+use bevy::prelude::*;
+
+use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::fonts::UiFonts;
+use crate::look::seat_colour;
+use crate::net::api::{BotInfo, GameInfo};
+use crate::net::session::Problem;
+use crate::net::{GameSettings, TimeControl};
+
+/// The game being set up, while the form is open.
+#[derive(Resource, Debug, Default)]
+pub struct NewGame {
+    pub form: Option<Form>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Form {
+    pub def_id: String,
+    pub name: String,
+    /// The game's seats, once read.
+    pub info: Option<GameInfo>,
+    pub bots: Vec<BotInfo>,
+    /// Why the game's seats or the bots could not be read.
+    pub problem: Option<Problem>,
+    /// This client's seat.
+    pub mine: u32,
+    /// Who plays each seat that is not this client's: nobody, until somebody joins, unless set.
+    bots_at: BTreeMap<u32, String>,
+    pub time: TimeControl,
+}
+
+/// Who plays a seat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fill {
+    You,
+    /// Nobody yet: the seat waits for a person.
+    Open,
+    Bot(String),
+}
+
+/// The ways to time a game the form offers, by what they are called.
+pub const TIMES: &[(&str, TimeControl)] = &[
+    ("No clock", TimeControl::None),
+    (
+        "5 min + 3 s",
+        TimeControl::Clock {
+            seconds: 300,
+            increment: 3,
+        },
+    ),
+    (
+        "10 min + 5 s",
+        TimeControl::Clock {
+            seconds: 600,
+            increment: 5,
+        },
+    ),
+    (
+        "30 min",
+        TimeControl::Clock {
+            seconds: 1800,
+            increment: 0,
+        },
+    ),
+    ("1 min a move", TimeControl::PerMove { seconds: 60 }),
+    ("1 day a move", TimeControl::PerMove { seconds: 86_400 }),
+];
+
+impl Form {
+    pub fn new(def_id: &str, name: &str) -> Self {
+        Form {
+            def_id: def_id.to_string(),
+            name: name.to_string(),
+            info: None,
+            bots: vec![],
+            problem: None,
+            mine: 1,
+            bots_at: BTreeMap::new(),
+            time: TimeControl::None,
+        }
+    }
+
+    /// The game's seats and the server's bots have been read: start from the first seat, with
+    /// every other one open.
+    pub fn prepared(&mut self, info: GameInfo, bots: Vec<BotInfo>) {
+        self.mine = info.seats.first().map_or(1, |s| s.seat);
+        self.info = Some(info);
+        self.bots = bots;
+        self.bots_at.clear();
+        self.problem = None;
+    }
+
+    pub fn fill(&self, seat: u32) -> Fill {
+        if seat == self.mine {
+            return Fill::You;
+        }
+        match self.bots_at.get(&seat) {
+            Some(bot) => Fill::Bot(bot.clone()),
+            None => Fill::Open,
+        }
+    }
+
+    /// Who plays `seat` from now on. Taking another seat leaves the old one open; this client's
+    /// seat cannot be left without one.
+    pub fn set(&mut self, seat: u32, fill: Fill) {
+        match fill {
+            Fill::You => {
+                self.bots_at.remove(&seat);
+                self.mine = seat;
+            }
+            _ if seat == self.mine => {}
+            Fill::Open => {
+                self.bots_at.remove(&seat);
+            }
+            Fill::Bot(bot) => {
+                self.bots_at.insert(seat, bot);
+            }
+        }
+    }
+
+    /// Some seat waits for a person to join.
+    pub fn waits_for_people(&self) -> bool {
+        self.info
+            .as_ref()
+            .is_some_and(|info| info.seats.iter().any(|s| self.fill(s.seat) == Fill::Open))
+    }
+
+    /// What to ask the server for, once the game's seats are known.
+    pub fn settings(&self) -> Option<GameSettings> {
+        self.info.as_ref()?;
+        Some(GameSettings {
+            game_def_id: self.def_id.clone(),
+            seat: self.mine,
+            bots: self.bots_at.clone(),
+            time: self.time,
+        })
+    }
+}
+
+/// The form, in place of the lists.
+pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
+    area.spawn(line(
+        f.semibold(17.0),
+        colours::TEXT,
+        &format!("New game: {}", form.name),
+    ));
+    if let Some(problem) = &form.problem {
+        area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        area.spawn(buttons()).with_children(|row| {
+            row.spawn(button(
+                f,
+                "Try again",
+                Action::NewGame {
+                    def_id: form.def_id.clone(),
+                    name: form.name.clone(),
+                },
+            ));
+            row.spawn(button(f, "Cancel", Action::CancelNewGame));
+        });
+        return;
+    }
+    let Some(info) = &form.info else {
+        area.spawn(line(f.regular(14.0), colours::MUTED, "Reading the game…"));
+        area.spawn(buttons()).with_children(|row| {
+            row.spawn(button(f, "Cancel", Action::CancelNewGame));
+        });
+        return;
+    };
+
+    for seat in &info.seats {
+        let filled = form.fill(seat.seat);
+        area.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            flex_shrink: 0.0,
+            margin: UiRect::top(px(4)),
+            ..default()
+        })
+        .with_children(|block| {
+            block
+                .spawn(Node {
+                    column_gap: px(8),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        Node {
+                            width: px(12),
+                            height: px(12),
+                            border_radius: BorderRadius::all(px(6)),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        BackgroundColor(seat_colour(&seat.color, seat.seat)),
+                    ));
+                    row.spawn(line(f.semibold(14.0), colours::TEXT, &seat.label));
+                });
+            block.spawn(buttons()).with_children(|row| {
+                let mut offer = |label: &str, fill: Fill| {
+                    let chosen = filled == fill;
+                    row.spawn(chip(
+                        f,
+                        label,
+                        Action::SetSeat {
+                            seat: seat.seat,
+                            fill,
+                        },
+                        chosen,
+                    ));
+                };
+                offer("You", Fill::You);
+                offer("A person", Fill::Open);
+                for bot in &form.bots {
+                    offer(&bot.label, Fill::Bot(bot.id.clone()));
+                }
+            });
+        });
+    }
+
+    area.spawn(line(f.semibold(14.0), colours::TEXT, "Time"));
+    area.spawn(buttons()).with_children(|row| {
+        for (label, time) in TIMES {
+            row.spawn(chip(f, label, Action::SetTime(*time), form.time == *time));
+        }
+    });
+
+    let starts = if form.waits_for_people() {
+        "The seats for a person wait for somebody to join; the game starts once every seat is \
+         taken. The room code to send them is shown when the game is made."
+    } else {
+        "The game starts at once."
+    };
+    area.spawn(line(f.regular(13.0), colours::MUTED, starts));
+    area.spawn(buttons()).with_children(|row| {
+        row.spawn(button(f, "Make the game", Action::StartGame));
+        row.spawn(button(f, "Cancel", Action::CancelNewGame));
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::api::{Board, SeatDef};
+
+    fn form() -> Form {
+        let seat = |seat: u32, color: &str| SeatDef {
+            seat,
+            color: color.into(),
+            label: color.into(),
+        };
+        let mut form = Form::new("hex-7", "Hex (7×7)");
+        assert_eq!(
+            form.settings(),
+            None,
+            "nothing to make before the seats are known"
+        );
+        form.prepared(
+            GameInfo {
+                id: "hex-7".into(),
+                name: "Hex (7×7)".into(),
+                seats: vec![seat(1, "red"), seat(2, "blue"), seat(3, "green")],
+                board: Board {
+                    kind: "hex".into(),
+                    positions: vec![],
+                    regions: Default::default(),
+                },
+                actions: vec![],
+                goals: vec![],
+            },
+            vec![BotInfo {
+                id: "mcts".into(),
+                label: "MCTS".into(),
+            }],
+        );
+        form
+    }
+
+    #[test]
+    fn a_new_game_starts_in_the_first_seat_with_the_others_waiting_for_people() {
+        let form = form();
+        assert_eq!(form.fill(1), Fill::You);
+        assert_eq!(form.fill(2), Fill::Open);
+        assert!(form.waits_for_people());
+        assert_eq!(
+            form.settings(),
+            Some(GameSettings {
+                game_def_id: "hex-7".into(),
+                seat: 1,
+                bots: BTreeMap::new(),
+                time: TimeControl::None,
+            })
+        );
+    }
+
+    #[test]
+    fn bots_fill_seats_and_moving_seats_leaves_the_old_one_open() {
+        let mut form = form();
+        form.set(1, Fill::Bot("mcts".into()));
+        assert_eq!(
+            form.fill(1),
+            Fill::You,
+            "this client's seat keeps it until it moves"
+        );
+        form.set(2, Fill::You);
+        assert_eq!(form.fill(1), Fill::Open);
+        form.set(1, Fill::Bot("mcts".into()));
+        form.set(3, Fill::Bot("mcts".into()));
+        assert!(!form.waits_for_people());
+        form.set(3, Fill::You);
+        assert_eq!(form.fill(2), Fill::Open);
+        form.time = TIMES[1].1;
+        let settings = form.settings().unwrap();
+        assert_eq!(settings.seat, 3);
+        assert_eq!(settings.bots, BTreeMap::from([(1, "mcts".to_string())]));
+        assert_eq!(
+            settings.time,
+            TimeControl::Clock {
+                seconds: 300,
+                increment: 3
+            }
+        );
+    }
+}

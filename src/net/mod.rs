@@ -27,7 +27,10 @@ use bevy::prelude::*;
 use crate::config::Store;
 use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
-use api::{Event, GameState, OpenGame, Selections};
+use api::{BotInfo, Event, GameInfo, GameState, OpenGame, Selections};
+use std::collections::BTreeMap;
+
+use crate::new_game::NewGame;
 use session::{Opened, Problem, Session, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
@@ -57,6 +60,7 @@ impl Plugin for NetPlugin {
             .insert_resource(status)
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
+            .init_resource::<NewGame>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(
                 Update,
@@ -99,6 +103,30 @@ pub enum Request {
     StopWatching,
     /// The unfinished games that match `query`. `asked` comes back with the answer.
     Games { query: GameQuery, asked: u64 },
+    /// What setting up a game of this needs (its seats, the bots).
+    Setup { game_def_id: String },
+}
+
+/// A new game as the player set it up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameSettings {
+    pub game_def_id: String,
+    /// This client's seat.
+    pub seat: u32,
+    /// A built-in bot in each of these seats, by seat; any other seat waits for a person.
+    pub bots: BTreeMap<u32, String>,
+    pub time: TimeControl,
+}
+
+/// How a game is timed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TimeControl {
+    #[default]
+    None,
+    /// A game clock: each seat has `seconds` in all, and gains `increment` with every move.
+    Clock { seconds: u64, increment: u64 },
+    /// Each move may take `seconds`.
+    PerMove { seconds: u64 },
 }
 
 /// Which of the server's unfinished games to list.
@@ -119,6 +147,8 @@ pub enum Target {
     AgainstBots { game_def_id: String },
     /// A new game in which this client plays the first seat and waits for people to join.
     Host { game_def_id: String },
+    /// A new game set up by the player.
+    Start(GameSettings),
     /// The game in this room, from an open seat if it is waiting for players and has one;
     /// watched otherwise.
     Join(String),
@@ -163,6 +193,10 @@ enum Reply {
     Games {
         asked: u64,
         result: Result<Vec<OpenGame>, Problem>,
+    },
+    Setup {
+        game_def_id: String,
+        result: Result<Box<(GameInfo, Vec<BotInfo>)>, Problem>,
     },
 }
 
@@ -275,6 +309,9 @@ fn handle(
                 Target::Host { game_def_id } => session
                     .host_game(&game_def_id)
                     .and_then(|code| session.open_game(&code)),
+                Target::Start(settings) => session
+                    .start_game(&settings)
+                    .and_then(|code| session.open_game(&code)),
                 Target::Join(code) => session
                     .join_game(&code)
                     .and_then(|()| session.open_game(&code)),
@@ -355,6 +392,10 @@ fn handle(
             asked,
             result: session.games(&query),
         }),
+        Request::Setup { game_def_id } => Some(Reply::Setup {
+            result: session.game_setup(&game_def_id).map(Box::new),
+            game_def_id,
+        }),
     }
 }
 
@@ -417,6 +458,7 @@ fn poll_network(
     mut status: ResMut<ServerStatus>,
     mut watch: ResMut<WatchStatus>,
     mut list: ResMut<GameList>,
+    mut new_game: ResMut<NewGame>,
 ) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -540,6 +582,23 @@ fn poll_network(
                         warn!("could not list the games: {}", problem.message());
                         if list.problem.as_ref() != Some(&problem) {
                             list.problem = Some(problem);
+                        }
+                    }
+                }
+            }
+            Ok(Reply::Setup {
+                game_def_id,
+                result,
+            }) => {
+                if let Some(form) = new_game.form.as_mut().filter(|f| f.def_id == game_def_id) {
+                    match result {
+                        Ok(setup) => {
+                            let (info, bots) = *setup;
+                            form.prepared(info, bots);
+                        }
+                        Err(problem) => {
+                            warn!("could not set up a game: {}", problem.message());
+                            form.problem = Some(problem);
                         }
                     }
                 }
@@ -825,6 +884,10 @@ mod tests {
                 game_def_id: "g".into(),
                 status: "active".into(),
                 invite_url: String::new(),
+                clock: None,
+                impulse_deadline: String::new(),
+                server_time: String::new(),
+                move_time_seconds: None,
                 seats: vec![
                     GameSeat {
                         seat: 1,
@@ -897,6 +960,7 @@ mod tests {
             })
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
+            .init_resource::<NewGame>()
             .add_systems(PreUpdate, poll_network);
         let open = |code: &str| OpenGame {
             room_code: code.into(),
@@ -962,6 +1026,7 @@ mod tests {
             })
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
+            .init_resource::<NewGame>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
             id: 3,
@@ -1019,6 +1084,7 @@ mod tests {
             })
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
+            .init_resource::<NewGame>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);
         let id = {

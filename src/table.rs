@@ -5,6 +5,9 @@
 //! is older than what it has is ignored, and one that skips ahead (a move missed) makes it load
 //! the game again rather than trust a picture with a hole in it.
 
+use std::time::Instant;
+
+use crate::clock::Timing;
 use crate::net::api::{Event, Game, GameInfo, GameSeat, GameState};
 use crate::net::session::Opened;
 
@@ -16,6 +19,8 @@ pub struct Table {
     pub state: GameState,
     /// Where the last move was played, when it is known.
     pub last_move: Option<String>,
+    /// The time each seat has, in a timed game.
+    pub timing: Option<Timing>,
 }
 
 /// What an event did.
@@ -31,7 +36,13 @@ pub enum Step {
 
 impl Table {
     pub fn new(opened: Opened) -> Self {
+        let timing = Timing::new(
+            opened.game.clock.clone(),
+            &opened.game.impulse_deadline,
+            &opened.game.server_time,
+        );
         Table {
+            timing,
             room_code: opened.room_code,
             info: opened.info,
             game: opened.game,
@@ -49,11 +60,13 @@ impl Table {
             Event::Move { seq, .. } if *seq <= have => Step::Unchanged,
             Event::Move { seq, .. } if *seq > have + 1 => Step::Reload,
             Event::Move { state, .. } => {
+                self.timed(state);
                 self.last_move = arrived(&self.state, state);
                 self.state = state.clone();
                 Step::Changed
             }
             Event::State { state, seats, .. } => {
+                self.timed(state);
                 self.state = state.clone();
                 // A seat taken or given up. The event does not say which seat is this
                 // client's; that has not changed.
@@ -74,6 +87,25 @@ impl Table {
             }
             Event::Other(_) => Step::Unchanged,
         }
+    }
+
+    /// The time an event reports, if it reports any; the time known before stands otherwise.
+    fn timed(&mut self, state: &GameState) {
+        if let Some(timing) = Timing::new(
+            state.clock.clone(),
+            &state.impulse_deadline,
+            &state.server_time,
+        ) {
+            self.timing = Some(timing);
+        }
+    }
+
+    /// The time `seat` has left at `now`, in a timed game, if that seat's time is counted.
+    pub fn time_left(&self, seat: u32, now: Instant) -> Option<f64> {
+        let running = (self.state.status == "active")
+            .then_some(self.state.impulse_seat)
+            .flatten();
+        self.timing.as_ref()?.left(seat, running, now)
     }
 
     /// The state read again after [`Step::Reload`].
@@ -235,6 +267,10 @@ mod tests {
                 game_def_id: "g".into(),
                 status: "active".into(),
                 invite_url: String::new(),
+                clock: None,
+                impulse_deadline: String::new(),
+                server_time: String::new(),
+                move_time_seconds: None,
                 seats: vec![GameSeat {
                     seat: 1,
                     color: "red".into(),

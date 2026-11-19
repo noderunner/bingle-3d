@@ -8,12 +8,14 @@ mod board;
 mod browser;
 mod camera;
 mod cli;
+mod clock;
 mod config;
 mod fonts;
 mod game_panel;
 mod hud;
 mod look;
 mod net;
+mod new_game;
 mod play;
 mod run_limit;
 mod scene;
@@ -60,7 +62,9 @@ fn main() -> AppExit {
         net::NetPlugin {
             server: opts.server.clone(),
         },
-        browser::BrowserPlugin,
+        browser::BrowserPlugin {
+            new_game: opts.new_game.clone(),
+        },
         board::BoardPlugin,
         play::PlayPlugin,
         game_panel::GamePanelPlugin {

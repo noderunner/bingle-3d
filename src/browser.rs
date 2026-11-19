@@ -14,27 +14,36 @@ use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
 use crate::net::{
     Connection, GAMES_EVERY, GameList, GameQuery, Net, Request, Resign, ServerStatus, Target,
-    WatchStatus, find_games, reconnect, resign, stop_watching, watch,
+    TimeControl, WatchStatus, find_games, reconnect, resign, stop_watching, watch,
 };
+use crate::new_game::{self, Fill, Form, NewGame};
 use crate::play;
 
-pub struct BrowserPlugin;
+pub struct BrowserPlugin {
+    /// A game to open the new game form for, once connected (`--new-game`).
+    pub new_game: Option<String>,
+}
 
 impl Plugin for BrowserPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_panel).add_systems(
-            Update,
-            (
-                rebuild_status.run_if(resource_changed::<ServerStatus>),
-                rebuild_list.run_if(
-                    resource_changed::<ServerStatus>.or_eager(resource_changed::<GameList>),
-                ),
-                show_while_not_watching.run_if(resource_changed::<WatchStatus>),
-                update_countdown,
-                colour_buttons,
-            )
-                .chain(),
-        );
+        app.insert_resource(NewGameOnStart(self.new_game.clone()))
+            .add_systems(Startup, spawn_panel)
+            .add_systems(
+                Update,
+                (
+                    new_game_on_start.run_if(resource_changed::<ServerStatus>),
+                    rebuild_status.run_if(resource_changed::<ServerStatus>),
+                    rebuild_list.run_if(
+                        resource_changed::<ServerStatus>
+                            .or_eager(resource_changed::<GameList>)
+                            .or_eager(resource_changed::<NewGame>),
+                    ),
+                    show_while_not_watching.run_if(resource_changed::<WatchStatus>),
+                    update_countdown,
+                    colour_buttons,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -49,6 +58,9 @@ pub(crate) mod colours {
     pub const WARN: Color = Color::srgb(0.96, 0.74, 0.38);
     pub const BUTTON: Color = Color::srgb(0.22, 0.32, 0.48);
     pub const BUTTON_HOVER: Color = Color::srgb(0.28, 0.40, 0.60);
+    /// A choice that is made, among others that could be.
+    pub const CHOSEN: Color = Color::srgb(0.27, 0.52, 0.42);
+    pub const CHOSEN_HOVER: Color = Color::srgb(0.33, 0.60, 0.49);
 }
 
 /// The panel itself, hidden while a game is watched.
@@ -85,6 +97,22 @@ pub(crate) enum Action {
     Resign,
     /// Not resigning after all.
     KeepPlaying,
+    /// Open the form that sets up a new game of this.
+    NewGame {
+        def_id: String,
+        name: String,
+    },
+    /// On the form: who plays a seat.
+    SetSeat {
+        seat: u32,
+        fill: Fill,
+    },
+    /// On the form: how the game is timed.
+    SetTime(TimeControl),
+    /// Make the game the form set up.
+    StartGame,
+    /// Close the form.
+    CancelNewGame,
     /// List only the games with a free seat (or every one again).
     FreeSeats(bool),
     /// List only this game's family (or every game), named as `name`.
@@ -190,6 +218,7 @@ fn rebuild_list(
     mut commands: Commands,
     status: Res<ServerStatus>,
     list: Res<GameList>,
+    new_game: Res<NewGame>,
     fonts: Res<UiFonts>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
@@ -203,10 +232,13 @@ fn rebuild_list(
         .entity(area_id)
         .despawn_related::<Children>()
         .with_children(|area| match &status.connection {
-            Connection::Ready(snap) => {
-                games_being_played(area, f, &list);
-                games_to_start(area, f, snap);
-            }
+            Connection::Ready(snap) => match &new_game.form {
+                Some(form) => new_game::draw(area, f, form),
+                None => {
+                    games_being_played(area, f, &list);
+                    games_to_start(area, f, snap);
+                }
+            },
             _ => {
                 area.spawn(line(
                     f.regular(14.0),
@@ -341,12 +373,14 @@ fn games_to_start(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot)
                         "Play bots"
                     };
                     row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
-                    let host = if def.seats_required == 2 {
-                        "Play a person"
-                    } else {
-                        "Play people"
-                    };
-                    row.spawn(button(f, host, Action::Host(def.id.clone())));
+                    row.spawn(button(
+                        f,
+                        "New game…",
+                        Action::NewGame {
+                            def_id: def.id.clone(),
+                            name: def.name.clone(),
+                        },
+                    ));
                     // A bot match is for two seats.
                     if def.seats_required == 2 {
                         row.spawn(button(
@@ -456,16 +490,30 @@ pub(crate) fn buttons() -> impl Bundle {
 }
 
 pub(crate) fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
+    button_in(f, label, action, false)
+}
+
+/// Whether a button is the choice made (see [`chip`]).
+#[derive(Component)]
+pub(crate) struct Chosen(bool);
+
+fn button_in(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
+    let colour = if chosen {
+        colours::CHOSEN
+    } else {
+        colours::BUTTON
+    };
     (
         Button,
         action,
+        Chosen(chosen),
         Hovered::default(),
         Node {
             padding: UiRect::axes(px(12), px(6)),
             border_radius: BorderRadius::all(px(6)),
             ..default()
         },
-        BackgroundColor(colours::BUTTON),
+        BackgroundColor(colour),
         observe(on_activate),
         children![(
             Text::new(label),
@@ -477,6 +525,10 @@ pub(crate) fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy observer takes what it touches as parameters: every panel's buttons land here"
+)]
 fn on_activate(
     activate: On<Activate>,
     actions: Query<&Action>,
@@ -484,6 +536,7 @@ fn on_activate(
     mut status: ResMut<ServerStatus>,
     mut watching: ResMut<WatchStatus>,
     mut list: ResMut<GameList>,
+    mut new_game: ResMut<NewGame>,
     mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
@@ -524,6 +577,32 @@ fn on_activate(
             _ => watching.resign = Resign::Confirming,
         },
         Action::KeepPlaying => watching.resign = Resign::No,
+        Action::NewGame { def_id, name } => {
+            new_game.form = Some(Form::new(def_id, name));
+            net.send(Request::Setup {
+                game_def_id: def_id.clone(),
+            });
+            for mut scroll in &mut list_scroll {
+                scroll.0 = Vec2::ZERO;
+            }
+        }
+        Action::SetSeat { seat, fill } => {
+            if let Some(form) = new_game.form.as_mut() {
+                form.set(*seat, fill.clone());
+            }
+        }
+        Action::SetTime(time) => {
+            if let Some(form) = new_game.form.as_mut() {
+                form.time = *time;
+            }
+        }
+        Action::StartGame => {
+            if let Some(settings) = new_game.form.as_ref().and_then(Form::settings) {
+                new_game.form = None;
+                watch(&net, &mut watching, Target::Start(settings));
+            }
+        }
+        Action::CancelNewGame => new_game.form = None,
         Action::FreeSeats(open_seats) => {
             let query = GameQuery {
                 open_seats: *open_seats,
@@ -554,6 +633,32 @@ fn on_activate(
     }
 }
 
+#[derive(Resource)]
+struct NewGameOnStart(Option<String>);
+
+fn new_game_on_start(
+    mut pending: ResMut<NewGameOnStart>,
+    status: Res<ServerStatus>,
+    net: Res<Net>,
+    mut new_game: ResMut<NewGame>,
+) {
+    let Connection::Ready(snap) = &status.connection else {
+        return;
+    };
+    let Some(def_id) = pending.0.take() else {
+        return;
+    };
+    let name = snap
+        .defs
+        .iter()
+        .find(|d| d.id == def_id)
+        .map_or_else(|| def_id.clone(), |d| d.name.clone());
+    new_game.form = Some(Form::new(&def_id, &name));
+    net.send(Request::Setup {
+        game_def_id: def_id,
+    });
+}
+
 fn show_while_not_watching(
     watching: Res<WatchStatus>,
     mut panel: Single<&mut Node, With<BrowserPanel>>,
@@ -570,14 +675,20 @@ fn show_while_not_watching(
 
 type HoverChanged = (With<Action>, Changed<Hovered>);
 
-fn colour_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor), HoverChanged>) {
-    for (hovered, mut bg) in &mut buttons {
-        bg.0 = if hovered.0 {
-            colours::BUTTON_HOVER
-        } else {
-            colours::BUTTON
+fn colour_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor, &Chosen), HoverChanged>) {
+    for (hovered, mut bg, chosen) in &mut buttons {
+        bg.0 = match (chosen.0, hovered.0) {
+            (true, true) => colours::CHOSEN_HOVER,
+            (true, false) => colours::CHOSEN,
+            (false, true) => colours::BUTTON_HOVER,
+            (false, false) => colours::BUTTON,
         };
     }
+}
+
+/// A button for one choice among several, coloured when it is the one made.
+pub(crate) fn chip(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
+    button_in(f, label, action, chosen)
 }
 
 fn update_countdown(status: Res<ServerStatus>, mut lines: Query<&mut Text, With<Countdown>>) {
@@ -606,6 +717,7 @@ mod tests {
         app.insert_resource(net)
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
+            .init_resource::<NewGame>()
             .insert_resource(ServerStatus {
                 server: "https://box:8443".into(),
                 connection,

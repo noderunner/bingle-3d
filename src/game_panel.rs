@@ -6,9 +6,12 @@
 //!
 //! It also starts the watch that `--watch` or `--watch-bots` asked for, once the server is there.
 
+use std::time::Instant;
+
 use bevy::prelude::*;
 
 use crate::browser::{Action, button, buttons, colours, line};
+use crate::clock;
 use crate::fonts::UiFonts;
 use crate::look::seat_colour;
 use crate::net::api::{GameInfo, Gesture};
@@ -30,13 +33,46 @@ impl Plugin for GamePanelPlugin {
                 (
                     watch_on_start.run_if(resource_changed::<ServerStatus>),
                     rebuild.run_if(resource_changed::<WatchStatus>),
-                ),
+                    tick_clocks,
+                )
+                    .chain(),
             );
     }
 }
 
 #[derive(Resource)]
 struct WatchOnStart(Option<Target>);
+
+/// A seat's time on the panel, counted down between the server's reports.
+#[derive(Component)]
+struct SeatTime(u32);
+
+fn tick_clocks(
+    watching: Res<WatchStatus>,
+    mut times: Query<(&SeatTime, &mut Text, &mut TextColor)>,
+) {
+    let Some(table) = &watching.table else {
+        return;
+    };
+    let now = Instant::now();
+    for (seat, mut text, mut colour) in &mut times {
+        let Some(left) = table.time_left(seat.0, now) else {
+            continue;
+        };
+        let words = clock::words(left);
+        if text.0 != words {
+            text.0 = words;
+        }
+        let low = if left < 10.0 {
+            colours::WARN
+        } else {
+            colours::TEXT
+        };
+        if colour.0 != low {
+            colour.0 = low;
+        }
+    }
+}
 
 #[derive(Component)]
 struct GamePanel;
@@ -103,7 +139,7 @@ fn rebuild(
                     let what = match &watching.target {
                         Some(Target::Bots { .. }) => "Starting a game between two bots…",
                         Some(Target::AgainstBots { .. }) => "Starting a game against the bots…",
-                        Some(Target::Host { .. }) => "Starting a game…",
+                        Some(Target::Host { .. } | Target::Start(_)) => "Starting a game…",
                         Some(Target::Join(_)) => "Joining the game…",
                         _ => "Opening the game…",
                     };
@@ -184,6 +220,7 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
             } else {
                 f.regular(14.0)
             };
+            let time = table.time_left(seat.seat, Instant::now());
             let mut text = format!("{}  —  {}", table.player(seat.seat), seat.label);
             if table.yours().is_some_and(|s| s.seat == seat.seat) {
                 text.push_str("  · you");
@@ -192,6 +229,12 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
                 text.push_str("  · won");
             }
             row.spawn(line(font, colours::TEXT, &text));
+            if let Some(left) = time {
+                row.spawn((
+                    SeatTime(seat.seat),
+                    line(f.semibold(14.0), colours::TEXT, &clock::words(left)),
+                ));
+            }
         });
     }
     let colour = if table.finished() {
