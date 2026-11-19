@@ -1,4 +1,5 @@
-//! A game's WebSocket, `GET /ws/{code}`, opened as a spectator: blocking, on the network thread.
+//! A game's WebSocket, `GET /ws/{code}`, opened as a spectator or as the player of a seat:
+//! blocking, on the network thread. A player's socket is what shows the seat as connected.
 //!
 //! The socket is read with a short timeout, so that the one network thread can still answer the
 //! screens' requests between reads (see `mod.rs`). TLS is ours, the same `rustls` configuration
@@ -18,7 +19,7 @@ use tungstenite::handshake::HandshakeError;
 use tungstenite::http::HeaderValue;
 use tungstenite::{Message, WebSocket};
 
-use super::server_url::{Scheme, ServerUrl};
+use super::server_url::{Scheme, ServerUrl, query_value};
 
 /// How long a connection and the opening handshake may take.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -122,14 +123,30 @@ impl Write for Stream {
     }
 }
 
+/// Who the socket is opened for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role<'a> {
+    Spectator,
+    /// The player at a seat of this guest's: its name, and the guest key that owns it.
+    Player {
+        name: &'a str,
+        key: &'a str,
+    },
+}
+
 /// An open game socket.
 pub struct Socket {
     ws: WebSocket<Stream>,
 }
 
 impl Socket {
-    /// Opens `/ws/{room_code}` as a spectator.
-    pub fn open(url: &ServerUrl, room_code: &str, tls: Arc<ClientConfig>) -> Result<Self, Error> {
+    /// Opens `/ws/{room_code}`.
+    pub fn open(
+        url: &ServerUrl,
+        room_code: &str,
+        role: Role,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, Error> {
         let addrs: Vec<_> = (url.host.as_str(), url.port)
             .to_socket_addrs()
             .map_err(|_| Error::HostNotFound)?
@@ -161,11 +178,17 @@ impl Socket {
             }
         };
 
-        let mut request = socket_url(url, room_code).into_client_request()?;
-        request.headers_mut().insert(
+        let mut request = socket_url(url, room_code, role).into_client_request()?;
+        let headers = request.headers_mut();
+        headers.insert(
             "User-Agent",
             HeaderValue::from_static(concat!("bingle-3d/", env!("CARGO_PKG_VERSION"))),
         );
+        if let Role::Player { key, .. } = role {
+            let auth = HeaderValue::from_str(&format!("Bearer {key}"))
+                .map_err(|_| Error::Protocol("the guest key is not a valid header".into()))?;
+            headers.insert("Authorization", auth);
+        }
         let (ws, _) = tungstenite::client(request, stream).map_err(|e| match e {
             HandshakeError::Failure(e) => Error::from(e),
             // Only a non-blocking stream is interrupted, and this one blocks until the timeout.
@@ -203,14 +226,20 @@ impl Socket {
 }
 
 /// `ws://` or `wss://`, to the room's socket as a spectator.
-pub fn socket_url(url: &ServerUrl, room_code: &str) -> String {
+pub fn socket_url(url: &ServerUrl, room_code: &str, role: Role) -> String {
     let origin = url.origin();
     let rest = origin
         .strip_prefix("https")
         .map(|r| format!("wss{r}"))
         .or_else(|| origin.strip_prefix("http").map(|r| format!("ws{r}")))
         .expect("an origin starts with its scheme");
-    format!("{rest}/ws/{room_code}?name={SPECTATOR_NAME}&role=spectator")
+    match role {
+        Role::Spectator => format!("{rest}/ws/{room_code}?name={SPECTATOR_NAME}&role=spectator"),
+        Role::Player { name, .. } => format!(
+            "{rest}/ws/{room_code}?name={}&role=player",
+            query_value(name)
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -222,13 +251,22 @@ mod tests {
     fn the_socket_url_follows_the_server_scheme() {
         let local = ServerUrl::parse("localhost:8080").unwrap();
         assert_eq!(
-            socket_url(&local, "AB12CD"),
+            socket_url(&local, "AB12CD", Role::Spectator),
             "ws://localhost:8080/ws/AB12CD?name=bingle-3d&role=spectator"
         );
         let remote = ServerUrl::parse("games.example.com").unwrap();
         assert_eq!(
-            socket_url(&remote, "AB12CD"),
+            socket_url(&remote, "AB12CD", Role::Spectator),
             "wss://games.example.com:443/ws/AB12CD?name=bingle-3d&role=spectator"
+        );
+        let player = Role::Player {
+            name: "Ana Bé",
+            key: "bgg_x",
+        };
+        assert_eq!(
+            socket_url(&local, "AB12CD", player),
+            "ws://localhost:8080/ws/AB12CD?name=Ana%20B%C3%A9&role=player",
+            "the name is a player's, and the key is not in the address"
         );
     }
 
@@ -258,7 +296,7 @@ mod tests {
     fn messages_arrive_between_timeouts_and_a_close_ends_it() {
         // Slower than POLL, so reads time out in between and must not lose anything.
         let url = serve(vec!["one", "two"], POLL * 3);
-        let mut socket = Socket::open(&url, "AB12CD", tls()).unwrap();
+        let mut socket = Socket::open(&url, "AB12CD", Role::Spectator, tls()).unwrap();
         let mut got = Vec::new();
         let mut empty = 0;
         let err = loop {
@@ -292,7 +330,7 @@ mod tests {
             let _ = stream.write_all(answer.as_bytes());
         });
         let url = ServerUrl::parse(&format!("127.0.0.1:{port}")).unwrap();
-        match Socket::open(&url, "NOPE00", tls()) {
+        match Socket::open(&url, "NOPE00", Role::Spectator, tls()) {
             Err(Error::Refused { status, message }) => {
                 assert_eq!(status, 404);
                 assert_eq!(message, "session: no such room");

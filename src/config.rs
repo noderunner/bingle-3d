@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 /// Where the client looks first, which is what `cargo run` on Bingle's defaults needs.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 
+/// The name the player is shown by at a table, unless `config.toml` gives one.
+pub const DEFAULT_NAME: &str = "Player";
+
 /// Overrides the directory, for tests and for keeping a development setup apart.
 pub const DIR_VAR: &str = "BINGLE3D_CONFIG_DIR";
 
@@ -26,6 +29,8 @@ pub const DIR_VAR: &str = "BINGLE3D_CONFIG_DIR";
 pub struct Config {
     /// The server to connect to, such as `https://games.example.com` or `localhost:8080`.
     pub server: Option<String>,
+    /// The name the player is shown by at a table.
+    pub name: Option<String>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
@@ -120,6 +125,16 @@ impl Store {
 
     pub fn server(&self) -> &str {
         self.config.server.as_deref().unwrap_or(DEFAULT_SERVER)
+    }
+
+    /// The name to sit down under: the configured one, if it has anything but spaces in it.
+    pub fn player_name(&self) -> &str {
+        self.config
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or(DEFAULT_NAME)
     }
 
     pub fn trusted(&self, origin: &str) -> impl Iterator<Item = &str> {
@@ -311,12 +326,14 @@ mod tests {
         let tmp = TempDir::new("hand");
         fs::write(
             tmp.0.join("config.toml"),
-            "server = \"https://games.example.com\"\n\n[[trusted]]\nserver = \"https://box:8443\"\nsha256 = \"AB:CD\"\n",
+            "server = \"https://games.example.com\"\nname = \" Ana \"\n\n[[trusted]]\nserver = \"https://box:8443\"\nsha256 = \"AB:CD\"\n",
         )
         .unwrap();
         let store = Store::load(Some(tmp.0.clone()));
         assert!(store.problems().is_empty(), "{:?}", store.problems());
         assert_eq!(store.server(), "https://games.example.com");
         assert_eq!(store.trusted("https://box:8443").count(), 1);
+        assert_eq!(store.player_name(), "Ana");
+        assert_eq!(Store::load(None).player_name(), DEFAULT_NAME);
     }
 }

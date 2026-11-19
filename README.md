@@ -8,9 +8,10 @@ REST/WebSocket API, and draws them as a table in 3D. It has no rules of its own:
 says what the position is, what the legal moves are and who is to move, and the client decides
 only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
 
-> **Status: stage 3 of the [plan](docs/plan.md).** The app connects to a Bingle server, lists its
+> **Status: stage 4 of the [plan](docs/plan.md).** The app connects to a Bingle server, lists its
 > open games and the games it can play, and shows any game being played, live, on a table in 3D:
-> two of the server's bots, or a game in progress. It cannot play a game yet.
+> two of the server's bots, or a game in progress. A game can be played against the server's bots;
+> resigning, joining a game by its room and playing a person come next.
 
 > **AI-generated code.** As with Bingle, most of this project is expected to be written by an AI
 > assistant (Claude, by Anthropic) working with the project's author, who directs the design and
@@ -55,12 +56,21 @@ cargo clippy --all-targets -- -D warnings   # as CI runs it
 Right-drag (or the arrow keys) orbits the camera, and the wheel zooms (or scrolls the panel, over
 it). F5 connects again.
 
+*Play a bot* on a game in the list starts a game in which you have the first seat and the server's
+strongest bot the others. When it is your move, the cells you may play on are lit: click one, and
+the stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
+(or Backspace, or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
+Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
+the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
+again.
+
 *Watch two bots* on a game in the list starts a game between two of the server's bots and shows
 it as they play; *Watch* on an open game shows that game. From the command line:
 
 ```sh
 cargo run -- --watch-bots hex-11           # a new bot game of Hex (11×11), by its id
 cargo run -- --watch 7ZKMXP                # the game in this room
+cargo run -- --play-bot hex-7              # a new game of Hex (7×7) against the server's bot
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
@@ -81,6 +91,7 @@ To change it for good, set `server` in `config.toml`, in `~/.config/bingle-3d/` 
 
 ```toml
 server = "https://games.example.com"
+name = "Ana"    # the name you sit at a table under ("Player" if not set)
 ```
 
 - **Plain `http://` only reaches this machine.** Any other server must use `https://`, as Bingle

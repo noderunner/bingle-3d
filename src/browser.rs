@@ -9,12 +9,13 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, ScrollArea, observe};
 
 use crate::fonts::UiFonts;
-use crate::net::api::{GameDef, OpenGame};
+use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
 use crate::net::{
     Connection, Net, Request, ServerStatus, Target, WatchStatus, reconnect, stop_watching, watch,
 };
+use crate::play;
 
 pub struct BrowserPlugin;
 
@@ -70,6 +71,16 @@ pub(crate) enum Action {
     WatchBots(String),
     /// Watch a game being played.
     Watch(String),
+    /// Play this game against the server's bots.
+    PlayBots(String),
+    /// A choice for the move being built that is not a click on the board.
+    Choose(Gesture),
+    /// Play the move shown.
+    Submit,
+    /// Take back the last gesture or selection of the move being built.
+    Undo,
+    /// Ask the server again what may be played.
+    AskAgain,
     /// Stop watching and go back to the list.
     Back,
 }
@@ -249,14 +260,22 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
             if !def.description.is_empty() {
                 card.spawn(line(f.regular(13.0), colours::MUTED, &def.description));
             }
-            // A bot match is for two seats.
-            if def.seats_required == 2 {
+            if def.seats_required >= 2 {
                 card.spawn(buttons()).with_children(|row| {
-                    row.spawn(button(
-                        f,
-                        "Watch two bots",
-                        Action::WatchBots(def.id.clone()),
-                    ));
+                    let play = if def.seats_required == 2 {
+                        "Play a bot"
+                    } else {
+                        "Play bots"
+                    };
+                    row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
+                    // A bot match is for two seats.
+                    if def.seats_required == 2 {
+                        row.spawn(button(
+                            f,
+                            "Watch two bots",
+                            Action::WatchBots(def.id.clone()),
+                        ));
+                    }
                 });
             }
         });
@@ -390,6 +409,17 @@ fn on_activate(
             },
         ),
         Action::Watch(room_code) => watch(&net, &mut watching, Target::Room(room_code.clone())),
+        Action::PlayBots(game_def_id) => watch(
+            &net,
+            &mut watching,
+            Target::AgainstBots {
+                game_def_id: game_def_id.clone(),
+            },
+        ),
+        Action::Choose(g) => play::gesture(&net, &mut watching, g),
+        Action::Submit => play::submit(&net, &mut watching),
+        Action::Undo => play::back(&mut watching),
+        Action::AskAgain => play::ask_again(&net, &mut watching),
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.
