@@ -6,12 +6,14 @@
 //! test checks them against the JSON Schema Bingle publishes for [`API_VERSION`], kept in
 //! `schema/`.
 
-use serde::{Deserialize, Deserializer};
+use std::collections::BTreeMap;
 
-/// The version of Bingle's API this client is written against.
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`.
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 0,
+    minor: 1,
     patch: 0,
 };
 
@@ -89,6 +91,184 @@ pub struct Player {
     /// The bot's id when a built-in bot plays the seat, empty otherwise.
     #[serde(rename = "Bot", default)]
     pub bot: String,
+}
+
+/// `GET /api/game-defs/{id}`: a game as the rules see it. Only what the client draws from.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GameInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub seats: Vec<SeatDef>,
+    pub board: Board,
+}
+
+/// A seat of a game definition.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SeatDef {
+    pub seat: u32,
+    /// An identifier, not a colour to draw (Bingle's ADR 0124).
+    pub color: String,
+    /// What the seat is called, in words ("Red (top – bottom)").
+    pub label: String,
+}
+
+/// The board as the rules see it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Board {
+    /// "grid", "hex" or "explicit".
+    pub kind: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub positions: Vec<BoardPosition>,
+}
+
+/// One position, at its layout coordinates: one unit between neighbours, y growing downwards.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BoardPosition {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// One entry of `GET /api/bots`: a built-in bot.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BotInfo {
+    pub id: String,
+    pub label: String,
+}
+
+/// `POST /api/bot-matches`' body. `delay_ms` is left to the server's default.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BotMatchRequest {
+    pub game_def_id: String,
+    pub bot_a: String,
+    pub bot_b: String,
+}
+
+/// `POST /api/bot-matches`' answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BotMatchResponse {
+    pub room_code: String,
+}
+
+/// `GET /api/games/{code}`: who sits where.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Game {
+    pub game_def_id: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub seats: Vec<GameSeat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GameSeat {
+    pub seat: u32,
+    pub color: String,
+    /// Empty while the seat is free.
+    #[serde(default)]
+    pub name: String,
+}
+
+/// Where a game stands: the position and whose impulse it is, or how it ended. Read from
+/// `GET /api/games/{code}/state`, and the same fields come with every `move` and `state` event.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct GameState {
+    /// The position. Each game has its own document; the client reads only its cells.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub state: Position,
+    pub status: String,
+    #[serde(default)]
+    pub impulse_seat: Option<u32>,
+    /// Selections played so far. A `move` event's `seq` is this after it.
+    #[serde(default)]
+    pub move_seq: u64,
+    #[serde(default)]
+    pub winner_seat: Option<u32>,
+    /// Seats that share a draw.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub drawn_seats: Vec<u32>,
+    /// Every seat lost.
+    #[serde(default)]
+    pub all_lost: bool,
+    /// Why it ended, as a word ("connection", "resign").
+    #[serde(default)]
+    pub end_reason: String,
+}
+
+/// The full position document's cells: each position's stack, bottom first.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct Position {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub cells: BTreeMap<String, Vec<PieceOnBoard>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PieceOnBoard {
+    /// The piece's type.
+    pub piece: String,
+    /// The colour word of the seat it belongs to.
+    pub color: String,
+}
+
+/// A message on `GET /ws/{code}`, of the kinds the client acts on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// The first message: the selections played when the socket subscribed.
+    Joined { move_seq: u64 },
+    /// One selection was played; the game now stands as `state` says.
+    Move { seq: u64, state: GameState },
+    /// Something other than a move changed the game (a seat taken, an undo, a resignation).
+    State { reason: String, state: GameState },
+    /// A kind this client skips (chat, connections, voice, and any added later).
+    Other(String),
+}
+
+impl Event {
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(rename = "type")]
+            kind: String,
+            #[serde(default)]
+            data: serde_json::Value,
+        }
+        #[derive(Deserialize)]
+        struct JoinedData {
+            move_seq: u64,
+        }
+        #[derive(Deserialize)]
+        struct MoveData {
+            seq: u64,
+            #[serde(flatten)]
+            state: GameState,
+        }
+        #[derive(Deserialize)]
+        struct StateData {
+            reason: String,
+            #[serde(flatten)]
+            state: GameState,
+        }
+        let env: Envelope = serde_json::from_str(text)?;
+        Ok(match env.kind.as_str() {
+            "joined" => Event::Joined {
+                move_seq: serde_json::from_value::<JoinedData>(env.data)?.move_seq,
+            },
+            "move" => {
+                let d: MoveData = serde_json::from_value(env.data)?;
+                // A move event says where the game stands after it, but not as `move_seq`.
+                let mut state = d.state;
+                state.move_seq = d.seq;
+                Event::Move { seq: d.seq, state }
+            }
+            "state" => {
+                let d: StateData = serde_json::from_value(env.data)?;
+                Event::State {
+                    reason: d.reason,
+                    state: d.state,
+                }
+            }
+            other => Event::Other(other.to_string()),
+        })
+    }
 }
 
 /// The body of every error answer.
@@ -186,8 +366,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.0.0")), Compatible);
+        assert_eq!(compatibility(Some("1.1.0")), Compatible);
         assert_eq!(compatibility(Some("1.7.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.0.9")),
+            ServerTooOld(Some("1.0.9".into())),
+            "1.0 has no bot matches"
+        );
         assert_eq!(compatibility(Some("2.0.0")), ClientTooOld("2.0.0".into()));
         assert_eq!(
             compatibility(Some("0.9.0")),
@@ -215,7 +400,31 @@ mod tests {
 
     // --- Against the published schema ---
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.0.0.schema.json");
+    #[test]
+    fn events_are_read_by_their_type_and_unknown_ones_skipped() {
+        let joined = Event::parse(r#"{"type":"joined","data":{"role":"spectator","status":"active","connected":null,"move_seq":4}}"#).unwrap();
+        assert_eq!(joined, Event::Joined { move_seq: 4 });
+        let mv = Event::parse(
+            r#"{"type":"move","data":{"seq":5,"seat":1,"color":"red","from":"","to":"c3","captured":null,
+            "impulse_seat":2,"game_ended":false,"winner_seat":null,"status":"active","board_state":{},"ply":5,
+            "state":{"v":2,"cells":{"c3":[{"piece":"stone","color":"red"}]},"ply":5}}}"#,
+        )
+        .unwrap();
+        let Event::Move { seq, state } = mv else {
+            panic!("{mv:?}")
+        };
+        assert_eq!(seq, 5);
+        assert_eq!(state.move_seq, 5, "a move's seq is where the game stands");
+        assert_eq!(state.impulse_seat, Some(2));
+        assert_eq!(state.state.cells["c3"][0].color, "red");
+        assert_eq!(
+            Event::parse(r#"{"type":"chat","data":{"text":"hi"}}"#).unwrap(),
+            Event::Other("chat".into())
+        );
+        assert!(Event::parse("not json").is_err());
+    }
+
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.1.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -318,10 +527,60 @@ mod tests {
         reads::<GuestKey>("POST /api/guest");
         reads::<Vec<GameDef>>("GET /api/game-defs");
         reads::<OpenGames>("GET /api/games");
+        reads::<GameInfo>("GET /api/game-defs/{id}");
+        reads::<Vec<BotInfo>>("GET /api/bots");
+        reads::<BotMatchResponse>("POST /api/bot-matches");
+        reads::<Game>("GET /api/games/{code}");
+        reads::<GameState>("GET /api/games/{code}/state");
         let root = schema();
         for full in [false, true] {
             serde_json::from_value::<ErrorBody>(instance(&root, &root["x-error"], full, 0))
                 .expect("the error body");
+        }
+    }
+
+    #[test]
+    fn the_events_the_client_acts_on_read_as_the_schema_describes_them() {
+        let root = schema();
+        let arms = root["$defs"]["WebSocketEvent"]["oneOf"]
+            .as_array()
+            .expect("the events are a oneOf");
+        let mut acted_on = Vec::new();
+        for arm in arms {
+            let kind = arm["properties"]["type"]["const"].as_str().unwrap();
+            for full in [false, true] {
+                let text = instance(&root, arm, full, 0).to_string();
+                let event = Event::parse(&text)
+                    .unwrap_or_else(|e| panic!("cannot read a {kind} event ({e}): {text}"));
+                if !matches!(event, Event::Other(_)) {
+                    acted_on.push(kind);
+                }
+            }
+        }
+        acted_on.dedup();
+        assert_eq!(acted_on, ["joined", "move", "state"]);
+    }
+
+    #[test]
+    fn a_bot_match_request_has_what_the_schema_requires() {
+        let root = schema();
+        let node = &root["x-endpoints"]["POST /api/bot-matches"]["request"];
+        let node = match node.get("$ref").and_then(Value::as_str) {
+            Some(r) => &root["$defs"][r.strip_prefix("#/$defs/").unwrap()],
+            None => node,
+        };
+        let sent = serde_json::to_value(BotMatchRequest {
+            game_def_id: "g".into(),
+            bot_a: "a".into(),
+            bot_b: "b".into(),
+        })
+        .unwrap();
+        let props = node["properties"].as_object().unwrap();
+        for name in node["required"].as_array().unwrap() {
+            assert!(sent.get(name.as_str().unwrap()).is_some(), "{name} missing");
+        }
+        for name in sent.as_object().unwrap().keys() {
+            assert!(props.contains_key(name), "{name} is not in the schema");
         }
     }
 }

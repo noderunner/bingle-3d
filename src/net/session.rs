@@ -4,6 +4,7 @@
 //! sure there is a guest key, then list the games and the open games. Whatever goes wrong comes
 //! back as a [`Problem`] the player can understand.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,8 +13,14 @@ use ureq::Agent;
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{ConnectProxyConnector, Connector, TcpConnector};
 
-use super::api::{self, Compatibility, ErrorBody, GameDef, GuestKey, Index, OpenGame, OpenGames};
+use rustls::ClientConfig;
+
+use super::api::{
+    self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, ErrorBody, Game, GameDef,
+    GameInfo, GameState, GuestKey, Index, OpenGame, OpenGames,
+};
 use super::server_url::{Scheme, ServerUrl};
+use super::socket::{self, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
 use crate::config::Store;
 
@@ -82,7 +89,10 @@ pub struct Session {
     url: Result<ServerUrl, String>,
     store: Store,
     trust: Arc<Trust>,
+    tls: Arc<ClientConfig>,
     agent: Agent,
+    /// Game definitions already read, by id: they do not change while the server runs.
+    infos: HashMap<String, GameInfo>,
 }
 
 impl Session {
@@ -99,12 +109,15 @@ impl Session {
             Err(_) => Vec::new(),
         };
         let trust = Trust::new(pins);
-        let agent = agent(trust.clone());
+        let tls = super::tls::client_config(trust.clone());
+        let agent = agent(tls.clone());
         Session {
             url,
             store,
             trust,
+            tls,
             agent,
+            infos: HashMap::new(),
         }
     }
 
@@ -178,27 +191,129 @@ impl Session {
         self.connect()
     }
 
-    /// A GET with this client's guest key, made first if there is none. A key the server no
+    /// Asks the server for two of its bots to play a game, and returns the room they play in.
+    pub fn start_bot_match(&mut self, game_def_id: &str) -> Result<String, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        let bot = pick_bot(&bots).ok_or_else(|| Problem::Refused {
+            status: 404,
+            message: "the server has no bots to play".into(),
+        })?;
+        let body = serde_json::to_value(BotMatchRequest {
+            game_def_id: game_def_id.to_string(),
+            bot_a: bot.to_string(),
+            bot_b: bot.to_string(),
+        })
+        .expect("a bot match request is JSON");
+        let made: BotMatchResponse =
+            self.as_guest(&url, "POST", "/api/bot-matches", Some(&body))?;
+        Ok(made.room_code)
+    }
+
+    /// Everything needed to draw a game: its definition, who sits where, and where it stands.
+    /// The socket is opened first, so that no move is missed between the two: one played in
+    /// between is either in the state read after it, or arrives on the socket.
+    pub fn open_game(&mut self, room_code: &str) -> Result<(Opened, Socket), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        if !valid_room_code(room_code) {
+            return Err(Problem::BadAddress(format!(
+                "\"{room_code}\" is not a room code."
+            )));
+        }
+        let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
+        let info = match self.infos.get(&game.game_def_id) {
+            Some(info) => info.clone(),
+            None => {
+                let info: GameInfo =
+                    self.get_as_guest(&url, &format!("/api/game-defs/{}", game.game_def_id))?;
+                self.infos.insert(info.id.clone(), info.clone());
+                info
+            }
+        };
+        let socket = Socket::open(&url, room_code, self.tls.clone())
+            .map_err(|e| self.socket_problem(&url, e))?;
+        let state = self.state(room_code)?;
+        let opened = Opened {
+            room_code: room_code.to_string(),
+            info,
+            game,
+            state,
+        };
+        Ok((opened, socket))
+    }
+
+    /// Where a game stands now.
+    pub fn state(&mut self, room_code: &str) -> Result<GameState, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        self.get_as_guest(&url, &format!("/api/games/{room_code}/state"))
+    }
+
+    /// What a failure on an open game socket means for the player.
+    pub fn socket_failed(&self, err: socket::Error) -> Problem {
+        match &self.url {
+            Ok(url) => self.socket_problem(url, err),
+            Err(m) => Problem::BadAddress(m.clone()),
+        }
+    }
+
+    fn socket_problem(&self, url: &ServerUrl, err: socket::Error) -> Problem {
+        if let Some(rejection) = self.trust.take_rejection() {
+            return Problem::Untrusted {
+                fingerprint: rejection.fingerprint,
+                reason: rejection.reason,
+            };
+        }
+        let at = format!("{}:{}", url.host, url.port);
+        match err {
+            socket::Error::HostNotFound => Problem::Unreachable(format!(
+                "No computer called \"{}\" could be found.",
+                url.host
+            )),
+            socket::Error::Io(e) if is_unreachable(&e) => Problem::Unreachable(format!(
+                "Nothing is answering at {at}. Is Bingle running there?"
+            )),
+            socket::Error::Refused { status, message } => Problem::Refused { status, message },
+            socket::Error::Closed => {
+                Problem::Unreachable("The server closed the game's connection.".into())
+            }
+            other => {
+                Problem::Unreachable(format!("The game's connection to {url} failed: {other}."))
+            }
+        }
+    }
+
+    /// A request with this client's guest key, made first if there is none. A key the server no
     /// longer knows (unused for months, or a new database) is replaced once.
-    fn get_as_guest<T: DeserializeOwned>(
+    fn as_guest<T: DeserializeOwned>(
         &mut self,
         url: &ServerUrl,
+        method: &str,
         path: &str,
+        body: Option<&serde_json::Value>,
     ) -> Result<T, Problem> {
         let origin = url.origin();
         let had_key = self.store.guest_key(&origin).is_some();
         let key = self.guest_key(url)?;
-        match self.get(url, path, Some(&key)) {
+        match self.call(url, method, path, Some(&key), body) {
             Err(Problem::Refused { status: 401, .. }) if had_key => {
                 bevy::log::info!(
                     "the server no longer knows this client's guest key; making a new one"
                 );
                 self.forget_guest_key(&origin);
                 let key = self.guest_key(url)?;
-                self.get(url, path, Some(&key)).map_err(unauthorized)
+                self.call(url, method, path, Some(&key), body)
+                    .map_err(unauthorized)
             }
             other => other.map_err(unauthorized),
         }
+    }
+
+    fn get_as_guest<T: DeserializeOwned>(
+        &mut self,
+        url: &ServerUrl,
+        path: &str,
+    ) -> Result<T, Problem> {
+        self.as_guest(url, "GET", path, None)
     }
 
     fn guest_key(&mut self, url: &ServerUrl) -> Result<String, Problem> {
@@ -207,7 +322,7 @@ impl Session {
             return Ok(key.to_string());
         }
         let made: GuestKey = self
-            .call(url, "POST", "/api/guest", None)
+            .call(url, "POST", "/api/guest", None, None)
             .map_err(unauthorized)?;
         if let Err(e) = self.store.set_guest_key(&origin, Some(made.key.clone())) {
             bevy::log::warn!("could not save the guest key: {e}");
@@ -227,7 +342,7 @@ impl Session {
         path: &str,
         key: Option<&str>,
     ) -> Result<T, Problem> {
-        self.call(url, "GET", path, key)
+        self.call(url, "GET", path, key, None)
     }
 
     fn call<T: DeserializeOwned>(
@@ -236,6 +351,7 @@ impl Session {
         method: &str,
         path: &str,
         key: Option<&str>,
+        body: Option<&serde_json::Value>,
     ) -> Result<T, Problem> {
         let target = url.join(path);
         let auth = key.map(|k| format!("Bearer {k}"));
@@ -245,7 +361,10 @@ impl Session {
                 if let Some(a) = &auth {
                     req = req.header("Authorization", a);
                 }
-                req.send_empty()
+                match body {
+                    Some(b) => req.send_json(b),
+                    None => req.send_empty(),
+                }
             }
             _ => {
                 let mut req = self.agent.get(&target);
@@ -316,6 +435,32 @@ impl Session {
     }
 }
 
+/// A game opened to watch: what [`Session::open_game`] read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Opened {
+    pub room_code: String,
+    pub info: GameInfo,
+    pub game: Game,
+    pub state: GameState,
+}
+
+/// The bots to watch, best first among those this client knows something about: ones that look
+/// ahead make a game worth watching, and any bot will do on a server with others.
+const PREFERRED_BOTS: [&str; 3] = ["mcts", "minimax", "tactical"];
+
+pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
+    PREFERRED_BOTS
+        .iter()
+        .find_map(|id| bots.iter().find(|b| b.id == *id))
+        .or_else(|| bots.first())
+        .map(|b| b.id.as_str())
+}
+
+/// Room codes are letters and digits, which keeps them safe to put in a path.
+pub fn valid_room_code(code: &str) -> bool {
+    !code.is_empty() && code.len() <= 32 && code.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 fn is_unreachable(e: &std::io::Error) -> bool {
     use std::io::ErrorKind::*;
     matches!(
@@ -341,7 +486,7 @@ fn unauthorized(p: Problem) -> Problem {
     }
 }
 
-fn agent(trust: Arc<Trust>) -> Agent {
+fn agent(tls: Arc<ClientConfig>) -> Agent {
     let config = Agent::config_builder()
         .http_status_as_error(false)
         // A redirect is reported rather than followed, so the address in use is the one shown.
@@ -350,10 +495,10 @@ fn agent(trust: Arc<Trust>) -> Agent {
         .timeout_global(Some(Duration::from_secs(20)))
         .user_agent(concat!("bingle-3d/", env!("CARGO_PKG_VERSION")))
         .build();
-    let connector = ()
-        .chain(ConnectProxyConnector::default())
-        .chain(TcpConnector::default())
-        .chain(TlsConnector::new(super::tls::client_config(trust)));
+    let connector =
+        ().chain(ConnectProxyConnector::default())
+            .chain(TcpConnector::default())
+            .chain(TlsConnector::new(tls));
     Agent::with_parts(config, connector, DefaultResolver::default())
 }
 
@@ -414,7 +559,7 @@ mod tests {
         (addr, seen)
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.0.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.1.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -450,7 +595,7 @@ mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.0.0");
+        assert_eq!(snap.api_version, "1.1.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");

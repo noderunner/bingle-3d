@@ -8,6 +8,9 @@ Usage: bingle-3d [options]
 Options:
   --server URL       the Bingle server for this run, in place of the configured one
                      (localhost:8080, https://games.example.com)
+  --watch ROOM       watch the game in this room, once connected
+  --watch-bots GAME  start a game between two of the server's bots and watch it
+                     (GAME is a game definition's id, such as one the panel lists)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -25,7 +28,15 @@ pub struct Options {
     pub screenshot: Option<PathBuf>,
     /// A server for this run, in place of the configured one.
     pub server: Option<String>,
+    /// What to watch once connected.
+    pub watch: Option<Watch>,
     pub help: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Watch {
+    Room(String),
+    Bots(String),
 }
 
 impl Options {
@@ -62,6 +73,11 @@ impl Options {
                 }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
                 "--server" => opts.server = Some(value("an address")?),
+                "--watch" | "--watch-bots" if opts.watch.is_some() => {
+                    return Err("only one of --watch and --watch-bots, once".into());
+                }
+                "--watch" => opts.watch = Some(Watch::Room(value("a room code")?)),
+                "--watch-bots" => opts.watch = Some(Watch::Bots(value("a game's id")?)),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
         }
@@ -143,6 +159,24 @@ mod tests {
             Some("localhost:9000")
         );
         assert!(parse(&["--server"]).unwrap_err().contains("needs"));
+    }
+
+    #[test]
+    fn one_thing_to_watch() {
+        assert_eq!(
+            parse(&["--watch", "AB12CD"]).unwrap().watch,
+            Some(Watch::Room("AB12CD".into()))
+        );
+        assert_eq!(
+            parse(&["--watch-bots=hex-7"]).unwrap().watch,
+            Some(Watch::Bots("hex-7".into()))
+        );
+        assert!(
+            parse(&["--watch", "A", "--watch-bots", "b"])
+                .unwrap_err()
+                .contains("only one")
+        );
+        assert!(parse(&["--watch"]).unwrap_err().contains("needs"));
     }
 
     #[test]
