@@ -10,10 +10,11 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`.
+/// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
+/// and 1.2 the regions each seat must connect (`goals`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 1,
+    minor: 2,
     patch: 0,
 };
 
@@ -104,6 +105,37 @@ pub struct GameInfo {
     /// The game's actions, for what a button that plays one says.
     #[serde(default, deserialize_with = "null_as_default")]
     pub actions: Vec<ActionDef>,
+    /// The regions of the board each seat must connect, as data (API 1.2).
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub goals: Vec<Goal>,
+}
+
+/// A goal of the game: for `connect`, a group of the seat's pieces that joins regions of the
+/// board. A client skips a type it does not know.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Goal {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The seat whose goal it is; every seat's when absent.
+    #[serde(default)]
+    pub seat: Option<u32>,
+    /// Pairs of regions to connect, any one pair winning.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub regions: Vec<Vec<String>>,
+    /// Regions of which a group must touch `touch`, instead of pairs.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub of: Vec<String>,
+}
+
+impl Goal {
+    /// Every region the goal names.
+    pub fn named_regions(&self) -> impl Iterator<Item = &str> {
+        self.regions
+            .iter()
+            .flatten()
+            .chain(&self.of)
+            .map(String::as_str)
+    }
 }
 
 /// One of a game's actions (placing, stepping, swapping sides), as the rules name it.
@@ -131,6 +163,9 @@ pub struct Board {
     pub kind: String,
     #[serde(default, deserialize_with = "null_as_default")]
     pub positions: Vec<BoardPosition>,
+    /// Named sets of positions, such as a board's edges.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub regions: BTreeMap<String, Vec<String>>,
 }
 
 /// One position, at its layout coordinates: one unit between neighbours, y growing downwards.
@@ -463,12 +498,17 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.1.0")), Compatible);
+        assert_eq!(compatibility(Some("1.2.0")), Compatible);
         assert_eq!(compatibility(Some("1.7.2")), Compatible);
         assert_eq!(
             compatibility(Some("1.0.9")),
             ServerTooOld(Some("1.0.9".into())),
             "1.0 has no bot matches"
+        );
+        assert_eq!(
+            compatibility(Some("1.1.4")),
+            ServerTooOld(Some("1.1.4".into())),
+            "1.1 has no goals"
         );
         assert_eq!(compatibility(Some("2.0.0")), ClientTooOld("2.0.0".into()));
         assert_eq!(
@@ -521,7 +561,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.1.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.2.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")

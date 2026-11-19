@@ -213,8 +213,10 @@ mod tests {
                 board: Board {
                     kind: "hex".into(),
                     positions: vec![],
+                    regions: Default::default(),
                 },
                 actions: vec![],
+                goals: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),
