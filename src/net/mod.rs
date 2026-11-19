@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use crate::config::Store;
 use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
-use api::{Event, GameState, Selections};
+use api::{Event, GameState, OpenGame, Selections};
 use session::{Opened, Problem, Session, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
@@ -56,8 +56,12 @@ impl Plugin for NetPlugin {
         app.insert_resource(net)
             .insert_resource(status)
             .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
             .add_systems(PreUpdate, poll_network)
-            .add_systems(Update, (retry_later, refresh_now, rewatch_later));
+            .add_systems(
+                Update,
+                (retry_later, refresh_now, rewatch_later, refresh_games),
+            );
     }
 }
 
@@ -93,6 +97,17 @@ pub enum Request {
     Resign { watch: u64, player_name: String },
     /// Close the watched game's socket.
     StopWatching,
+    /// The unfinished games that match `query`. `asked` comes back with the answer.
+    Games { query: GameQuery, asked: u64 },
+}
+
+/// Which of the server's unfinished games to list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameQuery {
+    /// Only this game and its other layouts (a definition's `family`, or its id without one).
+    pub family: Option<String>,
+    /// Only games with a seat free.
+    pub open_seats: bool,
 }
 
 /// What to watch.
@@ -144,6 +159,10 @@ enum Reply {
     Resigned {
         watch: u64,
         result: Result<(), Problem>,
+    },
+    Games {
+        asked: u64,
+        result: Result<Vec<OpenGame>, Problem>,
     },
 }
 
@@ -332,6 +351,10 @@ fn handle(
             }
             None
         }
+        Request::Games { query, asked } => Some(Reply::Games {
+            asked,
+            result: session.games(&query),
+        }),
     }
 }
 
@@ -389,7 +412,12 @@ pub enum Connection {
 /// How long to wait before trying an unreachable server again.
 pub const RETRY_AFTER: Duration = Duration::from_secs(5);
 
-fn poll_network(net: Res<Net>, mut status: ResMut<ServerStatus>, mut watch: ResMut<WatchStatus>) {
+fn poll_network(
+    net: Res<Net>,
+    mut status: ResMut<ServerStatus>,
+    mut watch: ResMut<WatchStatus>,
+    mut list: ResMut<GameList>,
+) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         match replies.try_recv() {
@@ -496,8 +524,38 @@ fn poll_network(net: Res<Net>, mut status: ResMut<ServerStatus>, mut watch: ResM
                 | Reply::Played { .. }
                 | Reply::Resigned { .. },
             ) => {}
+            Ok(Reply::Games { asked, result }) => {
+                if asked != list.asked {
+                    // For a query since replaced.
+                    continue;
+                }
+                match result {
+                    Ok(games) => {
+                        if list.games != games || list.problem.is_some() {
+                            list.games = games;
+                            list.problem = None;
+                        }
+                    }
+                    Err(problem) => {
+                        warn!("could not list the games: {}", problem.message());
+                        if list.problem.as_ref() != Some(&problem) {
+                            list.problem = Some(problem);
+                        }
+                    }
+                }
+            }
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
+                // The connection lists every game; a narrower list is asked for again.
+                if list.query == GameQuery::default() {
+                    list.asked += 1;
+                    if list.games != snapshot.games || list.problem.is_some() {
+                        list.games = snapshot.games.clone();
+                        list.problem = None;
+                    }
+                } else {
+                    ask_games(&net, &mut list);
+                }
                 // Only touch the resource when something changed, so screens rebuild only then.
                 if status.connection != Connection::Ready(snapshot.clone()) {
                     status.connection = Connection::Ready(snapshot);
@@ -539,6 +597,69 @@ fn retry_later(time: Res<Time>, net: Res<Net>, mut status: ResMut<ServerStatus>)
 fn refresh_now(keys: Res<ButtonInput<KeyCode>>, net: Res<Net>, mut status: ResMut<ServerStatus>) {
     if keys.just_pressed(KeyCode::F5) {
         reconnect(&net, &mut status);
+    }
+}
+
+/// How often the list of games is read again while it is on screen.
+pub const GAMES_EVERY: Duration = Duration::from_secs(5);
+
+/// The server's unfinished games, as the list shows them: what was asked for and what came back.
+#[derive(Resource, Debug)]
+pub struct GameList {
+    pub query: GameQuery,
+    /// The name of the game `query.family` stands for, to show.
+    pub family_name: String,
+    pub games: Vec<OpenGame>,
+    /// Why the last reading failed; the games shown are from the one before.
+    pub problem: Option<Problem>,
+    /// Numbers each question, so that the answer to an older one is dropped.
+    asked: u64,
+    refresh: Timer,
+}
+
+impl Default for GameList {
+    fn default() -> Self {
+        GameList {
+            query: GameQuery::default(),
+            family_name: String::new(),
+            games: vec![],
+            problem: None,
+            asked: 0,
+            refresh: Timer::new(GAMES_EVERY, TimerMode::Repeating),
+        }
+    }
+}
+
+/// Lists the games that match `query` in place of the current ones, from now on.
+pub fn find_games(net: &Net, list: &mut GameList, query: GameQuery, family_name: String) {
+    list.query = query;
+    list.family_name = family_name;
+    ask_games(net, list);
+}
+
+fn ask_games(net: &Net, list: &mut GameList) {
+    list.asked += 1;
+    list.refresh.reset();
+    net.send(Request::Games {
+        query: list.query.clone(),
+        asked: list.asked,
+    });
+}
+
+/// Reads the list again every few seconds while it is on screen: connected, and no game open.
+fn refresh_games(
+    time: Res<Time>,
+    net: Res<Net>,
+    status: Res<ServerStatus>,
+    watch: Res<WatchStatus>,
+    mut list: ResMut<GameList>,
+) {
+    if watch.is_watching() || !matches!(status.connection, Connection::Ready(_)) {
+        return;
+    }
+    let list = list.bypass_change_detection();
+    if list.refresh.tick(time.delta()).just_finished() {
+        ask_games(&net, list);
     }
 }
 
@@ -764,6 +885,71 @@ mod tests {
     }
 
     #[test]
+    fn the_list_takes_the_answer_to_the_last_question_only() {
+        let (net, requests, replies) = Net::for_test_with_replies();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(ServerStatus {
+                server: "http://127.0.0.1:8080".into(),
+                connection: Connection::Connecting,
+                notices: vec![],
+                retry_in: None,
+            })
+            .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
+            .add_systems(PreUpdate, poll_network);
+        let open = |code: &str| OpenGame {
+            room_code: code.into(),
+            game_def_id: "hex-7".into(),
+            name: "Hex (7×7)".into(),
+            status: "waiting".into(),
+            seats: 2,
+            open_seats: 1,
+            players: vec![],
+            impulse_seat: None,
+            lobby: false,
+        };
+        {
+            let mut list = app.world_mut().resource_mut::<GameList>();
+            let query = GameQuery {
+                family: None,
+                open_seats: true,
+            };
+            find_games(&net, &mut list, query.clone(), String::new());
+            find_games(&net, &mut list, query, String::new());
+        }
+        assert_eq!(requests.try_iter().count(), 2);
+        for (asked, code) in [(2, "NEWER1"), (1, "OLDER1")] {
+            replies
+                .send(Reply::Games {
+                    asked,
+                    result: Ok(vec![open(code)]),
+                })
+                .unwrap();
+        }
+        // A new connection while the list is narrowed asks for the narrow list again, rather
+        // than show every game.
+        replies
+            .send(Reply::Connected(Snapshot {
+                server: "http://127.0.0.1:8080".into(),
+                version: "1".into(),
+                api_version: "1.2.0".into(),
+                defs: vec![],
+                games: vec![open("EVERY1")],
+            }))
+            .unwrap();
+        app.insert_resource(net);
+        app.update();
+        let list = app.world().resource::<GameList>();
+        let codes: Vec<&str> = list.games.iter().map(|g| g.room_code.as_str()).collect();
+        assert_eq!(codes, ["NEWER1"]);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::Games { asked: 3, .. })
+        ));
+    }
+
+    #[test]
     fn resigning_is_sent_for_this_clients_seat_and_a_refusal_is_shown() {
         let (net, requests, replies) = Net::for_test_with_replies();
         let mut app = App::new();
@@ -775,6 +961,7 @@ mod tests {
                 retry_in: None,
             })
             .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
             id: 3,
@@ -831,6 +1018,7 @@ mod tests {
                 retry_in: None,
             })
             .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);
         let id = {

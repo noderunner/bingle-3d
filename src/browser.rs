@@ -13,8 +13,8 @@ use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
 use crate::net::{
-    Connection, Net, Request, Resign, ServerStatus, Target, WatchStatus, reconnect, resign,
-    stop_watching, watch,
+    Connection, GAMES_EVERY, GameList, GameQuery, Net, Request, Resign, ServerStatus, Target,
+    WatchStatus, find_games, reconnect, resign, stop_watching, watch,
 };
 use crate::play;
 
@@ -25,7 +25,10 @@ impl Plugin for BrowserPlugin {
         app.add_systems(Startup, spawn_panel).add_systems(
             Update,
             (
-                rebuild.run_if(resource_changed::<ServerStatus>),
+                rebuild_status.run_if(resource_changed::<ServerStatus>),
+                rebuild_list.run_if(
+                    resource_changed::<ServerStatus>.or_eager(resource_changed::<GameList>),
+                ),
                 show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                 update_countdown,
                 colour_buttons,
@@ -82,6 +85,13 @@ pub(crate) enum Action {
     Resign,
     /// Not resigning after all.
     KeepPlaying,
+    /// List only the games with a free seat (or every one again).
+    FreeSeats(bool),
+    /// List only this game's family (or every game), named as `name`.
+    FindGames {
+        family: Option<String>,
+        name: String,
+    },
     /// A choice for the move being built that is not a click on the board.
     Choose(Gesture),
     /// Play the move shown.
@@ -142,20 +152,13 @@ fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
     ));
 }
 
-fn rebuild(
+fn rebuild_status(
     mut commands: Commands,
     status: Res<ServerStatus>,
     fonts: Res<UiFonts>,
     status_area: Single<Entity, With<StatusArea>>,
-    list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
-    let (list, mut scroll) = list_area.into_inner();
-    let keep_scroll = matches!(status.connection, Connection::Ready(_));
-    if !keep_scroll {
-        scroll.0 = Vec2::ZERO;
-    }
     let f = &*fonts;
-
     commands
         .entity(*status_area)
         .despawn_related::<Children>()
@@ -181,12 +184,29 @@ fn rebuild(
                 area.spawn(line(f.regular(13.0), colours::WARN, notice));
             }
         });
+}
 
+fn rebuild_list(
+    mut commands: Commands,
+    status: Res<ServerStatus>,
+    list: Res<GameList>,
+    fonts: Res<UiFonts>,
+    list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
+) {
+    let (area_id, mut scroll) = list_area.into_inner();
+    // A list read again keeps its place; a new connection starts at the top.
+    if !matches!(status.connection, Connection::Ready(_)) {
+        scroll.0 = Vec2::ZERO;
+    }
+    let f = &*fonts;
     commands
-        .entity(list)
+        .entity(area_id)
         .despawn_related::<Children>()
         .with_children(|area| match &status.connection {
-            Connection::Ready(snap) => game_lists(area, f, snap),
+            Connection::Ready(snap) => {
+                games_being_played(area, f, &list);
+                games_to_start(area, f, snap);
+            }
             _ => {
                 area.spawn(line(
                     f.regular(14.0),
@@ -238,16 +258,37 @@ fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem
     }
 }
 
-fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
-    area.spawn(heading(f, &format!("Open games ({})", snap.games.len())));
-    if snap.games.is_empty() {
-        area.spawn(line(
-            f.regular(14.0),
-            colours::MUTED,
-            "No open games right now.",
-        ));
+fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameList) {
+    area.spawn(heading(
+        f,
+        &format!("Games being played ({})", list.games.len()),
+    ));
+    area.spawn(line(f.regular(13.0), colours::MUTED, &describe_query(list)));
+    area.spawn(buttons()).with_children(|row| {
+        let (label, open_seats) = if list.query.open_seats {
+            ("Show full games too", false)
+        } else {
+            ("Only with a free seat", true)
+        };
+        row.spawn(button(f, label, Action::FreeSeats(open_seats)));
+        if list.query.family.is_some() {
+            row.spawn(button(
+                f,
+                "Every game",
+                Action::FindGames {
+                    family: None,
+                    name: String::new(),
+                },
+            ));
+        }
+    });
+    if let Some(problem) = &list.problem {
+        area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
     }
-    for game in &snap.games {
+    if list.games.is_empty() {
+        area.spawn(line(f.regular(14.0), colours::MUTED, "None right now."));
+    }
+    for game in &list.games {
         let (title, detail) = describe_game(game);
         area.spawn(card()).with_children(|card| {
             card.spawn(line(f.semibold(15.0), colours::TEXT, &title));
@@ -263,8 +304,27 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
             }
         });
     }
+}
 
-    area.spawn(heading(f, &format!("Games ({})", snap.defs.len())));
+/// Which games the list shows, in words.
+pub fn describe_query(list: &GameList) -> String {
+    let which = match &list.query.family {
+        Some(_) => format!("{} (any size or layout)", list.family_name),
+        None => "Every game".to_string(),
+    };
+    let seats = if list.query.open_seats {
+        "with a free seat"
+    } else {
+        "being played or waiting for players"
+    };
+    format!(
+        "{which}, {seats}; read again every {} s.",
+        GAMES_EVERY.as_secs()
+    )
+}
+
+fn games_to_start(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
+    area.spawn(heading(f, &format!("Start a game ({})", snap.defs.len())));
     let mut defs: Vec<&GameDef> = snap.defs.iter().collect();
     defs.sort_by(|a, b| a.name.cmp(&b.name));
     for def in defs {
@@ -295,6 +355,18 @@ fn game_lists(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
                             Action::WatchBots(def.id.clone()),
                         ));
                     }
+                });
+            }
+            if def.seats_required >= 2 {
+                card.spawn(buttons()).with_children(|row| {
+                    row.spawn(button(
+                        f,
+                        "Find games",
+                        Action::FindGames {
+                            family: Some(def.family.clone().unwrap_or_else(|| def.id.clone())),
+                            name: def.name.clone(),
+                        },
+                    ));
                 });
             }
         });
@@ -376,6 +448,8 @@ fn card() -> impl Bundle {
 pub(crate) fn buttons() -> impl Bundle {
     Node {
         column_gap: px(8),
+        row_gap: px(6),
+        flex_wrap: FlexWrap::Wrap,
         margin: UiRect::top(px(4)),
         ..default()
     }
@@ -409,6 +483,8 @@ fn on_activate(
     net: Res<Net>,
     mut status: ResMut<ServerStatus>,
     mut watching: ResMut<WatchStatus>,
+    mut list: ResMut<GameList>,
+    mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
@@ -448,6 +524,24 @@ fn on_activate(
             _ => watching.resign = Resign::Confirming,
         },
         Action::KeepPlaying => watching.resign = Resign::No,
+        Action::FreeSeats(open_seats) => {
+            let query = GameQuery {
+                open_seats: *open_seats,
+                ..list.query.clone()
+            };
+            let name = list.family_name.clone();
+            find_games(&net, &mut list, query, name);
+        }
+        Action::FindGames { family, name } => {
+            let query = GameQuery {
+                family: family.clone(),
+                ..list.query.clone()
+            };
+            find_games(&net, &mut list, query, name.clone());
+            for mut scroll in &mut list_scroll {
+                scroll.0 = Vec2::ZERO;
+            }
+        }
         Action::Choose(g) => play::gesture(&net, &mut watching, g),
         Action::Submit => play::submit(&net, &mut watching),
         Action::Undo => play::back(&mut watching),
@@ -511,6 +605,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(net)
             .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
             .insert_resource(ServerStatus {
                 server: "https://box:8443".into(),
                 connection,
@@ -537,6 +632,40 @@ mod tests {
         assert_eq!(
             app.world().resource::<ServerStatus>().connection,
             Connection::Connecting
+        );
+    }
+
+    #[test]
+    fn the_filters_ask_for_the_narrower_list_and_keep_each_other() {
+        let (mut app, requests) = app_with(Connection::Connecting);
+        let press = |app: &mut App, action: Action| {
+            let button = app.world_mut().spawn(action).observe(on_activate).id();
+            app.world_mut().trigger(Activate { entity: button });
+        };
+        press(&mut app, Action::FreeSeats(true));
+        press(
+            &mut app,
+            Action::FindGames {
+                family: Some("hex-11".into()),
+                name: "Hex (7×7)".into(),
+            },
+        );
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert!(
+            matches!(
+                &asked[..],
+                [
+                    Request::Games { query: first, asked: 1 },
+                    Request::Games { query: second, asked: 2 },
+                ] if *first == GameQuery { family: None, open_seats: true }
+                    && *second == GameQuery { family: Some("hex-11".into()), open_seats: true }
+            ),
+            "{asked:?}"
+        );
+        let list = app.world().resource::<GameList>();
+        assert_eq!(
+            describe_query(list),
+            "Hex (7×7) (any size or layout), with a free seat; read again every 5 s."
         );
     }
 

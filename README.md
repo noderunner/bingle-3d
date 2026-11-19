@@ -70,6 +70,9 @@ that is waiting for players takes a free seat in it. Your name is `name` in `con
 ("Player" by default); if somebody at the table already has it, you join as "Player 2". *Resign*
 gives up a game you are playing, after asking once more.
 
+The games being played are read again every few seconds while the list is open. *Only with a free
+seat* narrows it to games you could join, and *Find games* on a game to that game in every size.
+
 *Watch two bots* on a game in the list starts a game between two of the server's bots and shows
 it as they play; *Watch* on an open game shows that game. From the command line:
 
