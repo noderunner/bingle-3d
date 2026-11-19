@@ -849,6 +849,8 @@ mod tests {
                 },
                 game: Game {
                     game_def_id: "g".into(),
+                    status: "active".into(),
+                    invite_url: String::new(),
                     seats: vec![],
                 },
                 state: state(1, &["a1"]),

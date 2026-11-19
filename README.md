@@ -64,6 +64,12 @@ Hex, is a button on the panel. The client only offers what the server lists as l
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
 again.
 
+*Play a person* starts a game in which you have the first seat and the others wait for people: the
+panel shows the room code (and the game's web address) to send them. *Join* on a game in the list
+that is waiting for players takes a free seat in it. Your name is `name` in `config.toml`
+("Player" by default); if somebody at the table already has it, you join as "Player 2". *Resign*
+gives up a game you are playing, after asking once more.
+
 *Watch two bots* on a game in the list starts a game between two of the server's bots and shows
 it as they play; *Watch* on an open game shows that game. From the command line:
 
@@ -71,6 +77,8 @@ it as they play; *Watch* on an open game shows that game. From the command line:
 cargo run -- --watch-bots hex-11           # a new bot game of Hex (11×11), by its id
 cargo run -- --watch 7ZKMXP                # the game in this room
 cargo run -- --play-bot hex-7              # a new game of Hex (7×7) against the server's bot
+cargo run -- --host hex-7                  # a new game of Hex (7×7), waiting for a person
+cargo run -- --join 7ZKMXP                 # a free seat in this room's game (or watch it)
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
