@@ -5,6 +5,10 @@
 //! [`poll_network`] turns into the [`ServerStatus`] and [`WatchStatus`] resources the screens draw
 //! from.
 //!
+//! A game this client plays a seat of is watched too: its turn ([`crate::play::Turn`]) lives
+//! beside the table in [`WatchStatus`], and asks for the legal selections and sends the move
+//! through the same thread.
+//!
 //! While a game is watched, its WebSocket is read in the same loop, with a short timeout
 //! ([`socket::POLL`]), so requests are still answered in between and there is still one thread.
 
@@ -21,8 +25,9 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::config::Store;
+use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
-use api::{Event, GameState};
+use api::{Event, GameState, Selections};
 use session::{Opened, Problem, Session, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
@@ -68,6 +73,22 @@ pub enum Request {
     Watch { target: Target, watch: u64 },
     /// Read the watched game's state again (a move was missed).
     Reload { watch: u64 },
+    /// What the seat on impulse may select after `made`. `asked_at` is the turn's, and comes
+    /// back with the answer.
+    Selections {
+        watch: u64,
+        asked_at: u64,
+        made: Vec<String>,
+        ply: Option<u64>,
+    },
+    /// Play a whole move for the seat `player_name` sits at.
+    Play {
+        watch: u64,
+        asked_at: u64,
+        player_name: String,
+        notation: String,
+        ply: u64,
+    },
     /// Close the watched game's socket.
     StopWatching,
 }
@@ -77,6 +98,8 @@ pub enum Request {
 pub enum Target {
     /// A new match between two of the server's bots, in this game.
     Bots { game_def_id: String },
+    /// A new game in which this client plays the first seat and the server's bots the others.
+    AgainstBots { game_def_id: String },
     /// A game already being played.
     Room(String),
 }
@@ -84,10 +107,33 @@ pub enum Target {
 enum Reply {
     Connected(Snapshot),
     Failed(Problem),
-    Opened { watch: u64, opened: Box<Opened> },
-    Event { watch: u64, event: Box<Event> },
-    Reloaded { watch: u64, state: Box<GameState> },
-    WatchFailed { watch: u64, problem: Problem },
+    Opened {
+        watch: u64,
+        opened: Box<Opened>,
+    },
+    Event {
+        watch: u64,
+        event: Box<Event>,
+    },
+    Reloaded {
+        watch: u64,
+        state: Box<GameState>,
+    },
+    WatchFailed {
+        watch: u64,
+        problem: Problem,
+    },
+    Selections {
+        watch: u64,
+        asked_at: u64,
+        made: Vec<String>,
+        result: Result<Box<Selections>, Problem>,
+    },
+    Played {
+        watch: u64,
+        asked_at: u64,
+        result: Result<(), Problem>,
+    },
 }
 
 #[derive(Resource)]
@@ -115,13 +161,20 @@ impl Net {
     /// A `Net` with no thread behind it, and the receiving end of its requests.
     #[cfg(test)]
     pub fn for_test() -> (Self, Receiver<Request>) {
+        let (net, inbox, _) = Net::for_test_with_replies();
+        (net, inbox)
+    }
+
+    /// The same, with the sending end of its replies, to answer as the thread would.
+    #[cfg(test)]
+    fn for_test_with_replies() -> (Self, Receiver<Request>, Sender<Reply>) {
         let (requests, inbox) = mpsc::channel();
-        let (_, replies) = mpsc::channel();
+        let (outbox, replies) = mpsc::channel();
         let net = Net {
             requests,
             replies: Mutex::new(replies),
         };
-        (net, inbox)
+        (net, inbox, outbox)
     }
 
     pub fn send(&self, request: Request) {
@@ -186,6 +239,9 @@ fn handle(
                 Target::Bots { game_def_id } => session
                     .start_bot_match(&game_def_id)
                     .and_then(|code| session.open_game(&code)),
+                Target::AgainstBots { game_def_id } => session
+                    .start_game_against_bots(&game_def_id)
+                    .and_then(|code| session.open_game(&code)),
             };
             Some(match opened {
                 Ok((opened, socket)) => {
@@ -211,6 +267,40 @@ fn handle(
                     state: Box::new(state),
                 },
                 Err(problem) => Reply::WatchFailed { watch, problem },
+            })
+        }
+        Request::Selections {
+            watch,
+            asked_at,
+            made,
+            ply,
+        } => {
+            let w = watching.as_ref().filter(|w| w.watch == watch)?;
+            let result = session.selections(&w.room_code, &made, ply).map(Box::new);
+            Some(Reply::Selections {
+                watch,
+                asked_at,
+                made,
+                result,
+            })
+        }
+        Request::Play {
+            watch,
+            asked_at,
+            player_name,
+            notation,
+            ply,
+        } => {
+            let w = watching.as_ref().filter(|w| w.watch == watch)?;
+            // The moves come on the socket, as everybody else's do; the answer only says it
+            // was taken.
+            let result = session
+                .play(&w.room_code, &player_name, &notation, ply)
+                .map(drop);
+            Some(Reply::Played {
+                watch,
+                asked_at,
+                result,
             })
         }
         Request::StopWatching => {
@@ -316,12 +406,61 @@ fn poll_network(net: Res<Net>, mut status: ResMut<ServerStatus>, mut watch: ResM
                     .then(|| Timer::new(RETRY_AFTER, TimerMode::Once));
                 watch.problem = Some(problem);
             }
+            Ok(Reply::Selections {
+                watch: id,
+                asked_at,
+                made,
+                result,
+            }) if id == watch.id => {
+                let w = watch.bypass_change_detection();
+                let Some(turn) = w.turn.as_mut().filter(|t| {
+                    t.asked_at == asked_at
+                        && t.stage == crate::play::Stage::Asking
+                        && t.made_notations() == made
+                }) else {
+                    // For a question no longer asked: the player went back, or the game moved on.
+                    continue;
+                };
+                let outcome = match result {
+                    Ok(selections) => turn.answered(*selections),
+                    Err(problem) => {
+                        warn!("could not read the legal selections: {}", problem.message());
+                        turn.ask_failed(problem);
+                        Outcome::Changed
+                    }
+                };
+                watch.set_changed();
+                crate::play::follow(&net, &mut watch, outcome);
+            }
+            Ok(Reply::Played {
+                watch: id,
+                asked_at,
+                result,
+            }) if id == watch.id => {
+                let Err(problem) = result else {
+                    // Taken: the turn ends when the move arrives on the socket.
+                    continue;
+                };
+                let Some(turn) = watch.turn.as_mut().filter(|t| t.asked_at == asked_at) else {
+                    continue;
+                };
+                warn!("the move was refused: {}", problem.message());
+                // Refused because the game moved on: read where it stands.
+                let moved_on = matches!(problem, Problem::Refused { status: 409, .. });
+                turn.send_failed(problem);
+                ask(&net, &watch);
+                if moved_on {
+                    net.send(Request::Reload { watch: id });
+                }
+            }
             // For a watch that has since been replaced.
             Ok(
                 Reply::Opened { .. }
                 | Reply::Event { .. }
                 | Reply::Reloaded { .. }
-                | Reply::WatchFailed { .. },
+                | Reply::WatchFailed { .. }
+                | Reply::Selections { .. }
+                | Reply::Played { .. },
             ) => {}
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
@@ -381,6 +520,8 @@ pub struct WatchStatus {
     pub problem: Option<Problem>,
     /// When a lost game will be opened again by itself.
     pub retry_in: Option<Timer>,
+    /// This client's seat's impulse, while the game waits for it.
+    pub turn: Option<Turn>,
 }
 
 impl WatchStatus {
@@ -396,6 +537,7 @@ pub fn watch(net: &Net, status: &mut WatchStatus, target: Target) {
     status.table = None;
     status.problem = None;
     status.retry_in = None;
+    status.turn = None;
     net.send(Request::Watch {
         target,
         watch: status.id,
@@ -408,6 +550,7 @@ pub fn stop_watching(net: &Net, status: &mut WatchStatus) {
     status.table = None;
     status.problem = None;
     status.retry_in = None;
+    status.turn = None;
     net.send(Request::StopWatching);
 }
 
@@ -429,6 +572,35 @@ fn rewatch_later(time: Res<Time>, net: Res<Net>, mut status: ResMut<WatchStatus>
     }
 }
 
+/// Asks what the turn may select next, after the selections it has made.
+pub fn ask(net: &Net, status: &WatchStatus) {
+    if let Some(turn) = &status.turn {
+        net.send(Request::Selections {
+            watch: status.id,
+            asked_at: turn.asked_at,
+            made: turn.made_notations(),
+            ply: turn.ply,
+        });
+    }
+}
+
+/// Sends the turn's move, for the seat this client plays.
+pub fn play(net: &Net, status: &WatchStatus, notation: String, ply: u64) {
+    let (Some(turn), Some(table)) = (&status.turn, &status.table) else {
+        return;
+    };
+    let Some(player_name) = table.yours().map(|s| s.name.clone()) else {
+        return;
+    };
+    net.send(Request::Play {
+        watch: status.id,
+        asked_at: turn.asked_at,
+        player_name,
+        notation,
+        ply,
+    });
+}
+
 /// Connects again now, whatever the state.
 pub fn reconnect(net: &Net, status: &mut ServerStatus) {
     status.retry_in = None;
@@ -436,4 +608,212 @@ pub fn reconnect(net: &Net, status: &mut ServerStatus) {
         status.connection = Connection::Connecting;
     }
     net.send(Request::Connect);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::api::{Board, Game, GameInfo, GameSeat, Gesture, LegalSelection};
+    use crate::play::{self, Stage};
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn opened() -> Opened {
+        Opened {
+            room_code: "AB12CD".into(),
+            info: GameInfo {
+                id: "g".into(),
+                name: "A game".into(),
+                seats: vec![],
+                board: Board {
+                    kind: "hex".into(),
+                    positions: vec![],
+                },
+                actions: vec![],
+            },
+            game: Game {
+                game_def_id: "g".into(),
+                seats: vec![
+                    GameSeat {
+                        seat: 1,
+                        color: "red".into(),
+                        name: "Ana".into(),
+                        bot: String::new(),
+                        yours: true,
+                    },
+                    GameSeat {
+                        seat: 2,
+                        color: "blue".into(),
+                        name: "Bot".into(),
+                        bot: "mcts".into(),
+                        yours: false,
+                    },
+                ],
+            },
+            state: GameState {
+                status: "active".into(),
+                impulse_seat: Some(1),
+                move_seq: 2,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn place(cell: &str) -> LegalSelection {
+        LegalSelection {
+            notation: cell.into(),
+            action: "place".into(),
+            to: Some(cell.into()),
+            gestures: vec![
+                Gesture {
+                    kind: "piece".into(),
+                    value: "stone".into(),
+                },
+                Gesture::pos(cell),
+            ],
+        }
+    }
+
+    fn selections(made: &[&str], options: Vec<LegalSelection>) -> Selections {
+        Selections {
+            seat: 1,
+            ply: 2,
+            made: made.iter().map(|m| m.to_string()).collect(),
+            complete: options.is_empty(),
+            options,
+        }
+    }
+
+    fn stage(app: &App) -> Option<Stage> {
+        app.world()
+            .resource::<WatchStatus>()
+            .turn
+            .as_ref()
+            .map(|t| t.stage)
+    }
+
+    #[test]
+    fn a_turn_asks_the_server_enters_a_move_and_sends_it_once_confirmed() {
+        let (net, requests, replies) = Net::for_test_with_replies();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(net)
+            .insert_resource(ServerStatus {
+                server: "http://127.0.0.1:8080".into(),
+                connection: Connection::Connecting,
+                notices: vec![],
+                retry_in: None,
+            })
+            .init_resource::<WatchStatus>()
+            .add_systems(PreUpdate, poll_network)
+            .add_systems(Update, play::start_turn);
+        let id = {
+            let mut w = app.world_mut().resource_mut::<WatchStatus>();
+            w.id = 7;
+            w.table = Some(Table::new(opened()));
+            w.id
+        };
+        app.update();
+        assert_eq!(stage(&app), Some(Stage::Asking), "our seat is on impulse");
+        assert_eq!(
+            requests.try_recv(),
+            Ok(Request::Selections {
+                watch: id,
+                asked_at: 2,
+                made: vec![],
+                ply: None,
+            })
+        );
+
+        // An answer for an earlier turn is dropped.
+        let answer = |asked_at, made: &[&str], options| Reply::Selections {
+            watch: id,
+            asked_at,
+            made: made.iter().map(|m| m.to_string()).collect(),
+            result: Ok(Box::new(selections(made, options))),
+        };
+        replies.send(answer(1, &[], vec![place("a1")])).unwrap();
+        app.update();
+        assert_eq!(stage(&app), Some(Stage::Asking));
+
+        replies
+            .send(answer(2, &[], vec![place("a1"), place("b1")]))
+            .unwrap();
+        app.update();
+        assert_eq!(stage(&app), Some(Stage::Choosing));
+
+        // A click on a cell, as the board's observer makes it.
+        app.world_mut()
+            .run_system_once(|net: Res<Net>, mut watch: ResMut<WatchStatus>| {
+                play::gesture(&net, &mut watch, &Gesture::pos("b1"));
+            })
+            .unwrap();
+        assert_eq!(
+            requests.try_recv(),
+            Ok(Request::Selections {
+                watch: id,
+                asked_at: 2,
+                made: vec!["b1".into()],
+                ply: Some(2),
+            })
+        );
+        replies.send(answer(2, &["b1"], vec![])).unwrap();
+        app.update();
+        assert_eq!(stage(&app), Some(Stage::Ready), "shown, not yet sent");
+        assert!(requests.try_recv().is_err());
+
+        app.world_mut()
+            .run_system_once(|net: Res<Net>, mut watch: ResMut<WatchStatus>| {
+                play::submit(&net, &mut watch);
+            })
+            .unwrap();
+        assert_eq!(
+            requests.try_recv(),
+            Ok(Request::Play {
+                watch: id,
+                asked_at: 2,
+                player_name: "Ana".into(),
+                notation: "b1".into(),
+                ply: 2,
+            })
+        );
+        assert_eq!(stage(&app), Some(Stage::Sending));
+
+        // Refused because the game moved on: the turn starts again, and the state is read.
+        replies
+            .send(Reply::Played {
+                watch: id,
+                asked_at: 2,
+                result: Err(Problem::Refused {
+                    status: 409,
+                    message: "the game has moved on".into(),
+                }),
+            })
+            .unwrap();
+        app.update();
+        assert_eq!(stage(&app), Some(Stage::Asking));
+        let sent: Vec<Request> = requests.try_iter().collect();
+        assert_eq!(
+            sent,
+            [
+                Request::Selections {
+                    watch: id,
+                    asked_at: 2,
+                    made: vec![],
+                    ply: None,
+                },
+                Request::Reload { watch: id },
+            ]
+        );
+
+        // The bot's impulse: no turn.
+        app.world_mut()
+            .resource_mut::<WatchStatus>()
+            .table
+            .as_mut()
+            .unwrap()
+            .state
+            .impulse_seat = Some(2);
+        app.update();
+        assert_eq!(stage(&app), None);
+    }
 }

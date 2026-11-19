@@ -184,6 +184,20 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
     Ok((host, port))
 }
 
+/// A value for a URL's query, percent-encoded: everything but letters, digits and `-._~`, so that
+/// a move's notation (`blue@d4; black@f6`) or a player's name arrives as it was written.
+pub fn query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Whether a host is this machine: `localhost` (and names under it, which resolvers keep local),
 /// `127.0.0.0/8` or `::1`.
 fn is_loopback(host: &str) -> bool {
@@ -278,5 +292,16 @@ mod tests {
             ServerUrl::parse("https://:8080"),
             Err(UrlError::NoHost)
         ));
+    }
+
+    #[test]
+    fn query_values_are_percent_encoded() {
+        assert_eq!(query_value("d4"), "d4");
+        assert_eq!(
+            query_value("blue@d4; black@f6"),
+            "blue%40d4%3B%20black%40f6"
+        );
+        assert_eq!(query_value("a&b=c+d"), "a%26b%3Dc%2Bd");
+        assert_eq!(query_value("Bé"), "B%C3%A9");
     }
 }

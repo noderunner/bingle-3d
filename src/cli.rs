@@ -11,6 +11,7 @@ Options:
   --watch ROOM       watch the game in this room, once connected
   --watch-bots GAME  start a game between two of the server's bots and watch it
                      (GAME is a game definition's id, such as one the panel lists)
+  --play-bot GAME    start a game against the server's bots and play the first seat
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -37,6 +38,8 @@ pub struct Options {
 pub enum Watch {
     Room(String),
     Bots(String),
+    /// Play against the server's bots.
+    PlayBots(String),
 }
 
 impl Options {
@@ -73,11 +76,12 @@ impl Options {
                 }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
                 "--server" => opts.server = Some(value("an address")?),
-                "--watch" | "--watch-bots" if opts.watch.is_some() => {
-                    return Err("only one of --watch and --watch-bots, once".into());
+                "--watch" | "--watch-bots" | "--play-bot" if opts.watch.is_some() => {
+                    return Err("only one of --watch, --watch-bots and --play-bot, once".into());
                 }
                 "--watch" => opts.watch = Some(Watch::Room(value("a room code")?)),
                 "--watch-bots" => opts.watch = Some(Watch::Bots(value("a game's id")?)),
+                "--play-bot" => opts.watch = Some(Watch::PlayBots(value("a game's id")?)),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
         }
@@ -173,6 +177,15 @@ mod tests {
         );
         assert!(
             parse(&["--watch", "A", "--watch-bots", "b"])
+                .unwrap_err()
+                .contains("only one")
+        );
+        assert_eq!(
+            parse(&["--play-bot", "hex-7"]).unwrap().watch,
+            Some(Watch::PlayBots("hex-7".into()))
+        );
+        assert!(
+            parse(&["--play-bot", "a", "--watch", "B"])
                 .unwrap_err()
                 .contains("only one")
         );

@@ -1,5 +1,8 @@
 //! The panel beside the game being watched: what it is, who plays which seat, whose impulse it is
-//! or how it ended, and the way back to the list. It is rebuilt whenever [`WatchStatus`] changes.
+//! or how it ended, and the way back to the list. In a game this client plays, it also says what
+//! the player may do on their impulse and holds the buttons for it: choices that are not a click
+//! on the board (an action such as swapping sides), and playing the move shown or going back. It is
+//! rebuilt whenever [`WatchStatus`] changes.
 //!
 //! It also starts the watch that `--watch` or `--watch-bots` asked for, once the server is there.
 
@@ -8,7 +11,9 @@ use bevy::prelude::*;
 use crate::browser::{Action, button, buttons, colours, line};
 use crate::fonts::UiFonts;
 use crate::look::seat_colour;
+use crate::net::api::{GameInfo, Gesture};
 use crate::net::{Connection, Net, ServerStatus, Target, WatchStatus, watch};
+use crate::play::{Stage, Turn};
 use crate::table::Table;
 
 pub struct GamePanelPlugin {
@@ -86,10 +91,16 @@ fn rebuild(
         .despawn_related::<Children>()
         .with_children(|p| {
             match &watching.table {
-                Some(table) => game(p, f, table),
+                Some(table) => {
+                    game(p, f, table);
+                    if let Some(turn) = &watching.turn {
+                        your_turn(p, f, table, turn);
+                    }
+                }
                 None => {
                     let what = match &watching.target {
                         Some(Target::Bots { .. }) => "Starting a game between two bots…",
+                        Some(Target::AgainstBots { .. }) => "Starting a game against the bots…",
                         _ => "Opening the game…",
                     };
                     let colour = if watching.problem.is_some() {
@@ -112,11 +123,19 @@ fn rebuild(
             }
             p.spawn(buttons()).with_children(|row| {
                 if let Some(table) = watching.table.as_ref().filter(|t| t.finished()) {
-                    row.spawn(button(
-                        f,
-                        "Watch another",
-                        Action::WatchBots(table.info.id.clone()),
-                    ));
+                    if table.against_bots() {
+                        row.spawn(button(
+                            f,
+                            "Play again",
+                            Action::PlayBots(table.info.id.clone()),
+                        ));
+                    } else if table.yours().is_none() {
+                        row.spawn(button(
+                            f,
+                            "Watch another",
+                            Action::WatchBots(table.info.id.clone()),
+                        ));
+                    }
                 }
                 row.spawn(button(f, "Back to the games", Action::Back));
             });
@@ -125,10 +144,15 @@ fn rebuild(
 
 fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
     p.spawn(line(f.semibold(20.0), colours::TEXT, &table.info.name));
+    let doing = if table.yours().is_some() {
+        "playing"
+    } else {
+        "watching"
+    };
     p.spawn(line(
         f.regular(13.0),
         colours::MUTED,
-        &format!("Room {}  ·  watching", table.room_code),
+        &format!("Room {}  ·  {doing}", table.room_code),
     ));
     for seat in &table.info.seats {
         let to_move = !table.finished() && table.state.impulse_seat == Some(seat.seat);
@@ -155,6 +179,9 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
                 f.regular(14.0)
             };
             let mut text = format!("{}  —  {}", table.player(seat.seat), seat.label);
+            if table.yours().is_some_and(|s| s.seat == seat.seat) {
+                text.push_str("  · you");
+            }
             if won {
                 text.push_str("  · won");
             }
@@ -166,14 +193,108 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
     } else {
         colours::TEXT
     };
-    p.spawn(line(f.semibold(15.0), colour, &table.summary()));
+    let summary = if table.to_play() {
+        "Your move.".to_string()
+    } else {
+        table.summary()
+    };
+    p.spawn(line(f.semibold(15.0), colour, &summary));
+}
+
+/// What the player may do on their impulse.
+fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Turn) {
+    if let Some(problem) = &turn.problem {
+        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+    }
+    let hint = match turn.stage {
+        Stage::Asking => String::new(),
+        Stage::Choosing if !turn.targets().is_empty() => "Click a lit cell.".into(),
+        Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
+        Stage::Choosing => "There is nothing to play.".into(),
+        Stage::Ready => format!(
+            "Play {}? Enter plays it, Esc takes it back.",
+            turn.notation()
+        ),
+        Stage::Sending => format!("Playing {}…", turn.notation()),
+        Stage::Failed => "The server could not say what may be played.".into(),
+    };
+    if !hint.is_empty() {
+        p.spawn(line(f.regular(14.0), colours::TEXT, &hint));
+    }
+    let choices = turn.choices();
+    let can_go_back = turn.can_go_back();
+    if choices.is_empty() && !can_go_back && turn.stage != Stage::Failed {
+        return;
+    }
+    p.spawn(buttons()).with_children(|row| {
+        for choice in choices {
+            row.spawn(button(
+                f,
+                &choice_label(&table.info, &choice),
+                Action::Choose(choice.clone()),
+            ));
+        }
+        if turn.stage == Stage::Ready {
+            row.spawn(button(f, "Play", Action::Submit));
+        }
+        if can_go_back {
+            row.spawn(button(f, "Back", Action::Undo));
+        }
+        if turn.stage == Stage::Failed {
+            row.spawn(button(f, "Try again", Action::AskAgain));
+        }
+    });
+}
+
+/// What a button for a choice says: an action by the label the rules give it, anything else by
+/// its value.
+pub fn choice_label(info: &GameInfo, choice: &Gesture) -> String {
+    let named = (choice.kind == "action")
+        .then(|| info.actions.iter().find(|a| a.id == choice.value))
+        .flatten();
+    match named {
+        Some(action) => action.label.clone(),
+        None => {
+            let mut c = choice.value.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().chain(c).collect(),
+                None => choice.kind.clone(),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::net::Request;
+    use crate::net::api::{ActionDef, Board};
     use crate::net::session::Snapshot;
+
+    #[test]
+    fn a_choice_is_labelled_by_its_action_or_its_value() {
+        let info = GameInfo {
+            id: "g".into(),
+            name: "A game".into(),
+            seats: vec![],
+            board: Board {
+                kind: "hex".into(),
+                positions: vec![],
+            },
+            actions: vec![ActionDef {
+                id: "swap".into(),
+                label: "Swap sides".into(),
+            }],
+        };
+        let g = |kind: &str, value: &str| Gesture {
+            kind: kind.into(),
+            value: value.into(),
+        };
+        assert_eq!(choice_label(&info, &g("action", "swap")), "Swap sides");
+        assert_eq!(choice_label(&info, &g("action", "pass")), "Pass");
+        assert_eq!(choice_label(&info, &g("piece", "stone")), "Stone");
+        assert_eq!(choice_label(&info, &g("count", "3")), "3");
+    }
 
     #[test]
     fn the_watch_asked_for_starts_once_the_server_is_there() {

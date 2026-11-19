@@ -1,7 +1,7 @@
 //! A camera that orbits a point on the table: drag with the right or middle mouse button (or use
 //! the arrow keys) to go round, and the wheel to come closer.
 //!
-//! The left button is left free for the gestures that will pick pieces and positions (stage 4).
+//! The left button is left free for the gestures that pick pieces and positions (`play.rs`).
 //! Over a panel the wheel is the panel's, to scroll it, not the camera's.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -9,6 +9,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::picking::hover::HoverMap;
+use bevy::picking::mesh_picking::MeshPickingCamera;
 use bevy::prelude::*;
 
 use crate::board::BoardBuilt;
@@ -88,6 +89,8 @@ fn spawn_camera(mut commands: Commands) {
         }),
         orbit.transform(),
         orbit,
+        // The board's cells and pieces are picked through it.
+        MeshPickingCamera,
     ));
 }
 

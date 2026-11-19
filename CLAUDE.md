@@ -148,7 +148,8 @@ A game's own rules and its players' words keep their terms.
 
 - `src/main.rs`: options, then the app and its plugins. `src/cli.rs`: command-line options.
 - `src/net/`: the server. **All network I/O is on one thread** (`mod.rs`), with blocking calls; systems
-  send it `Request`s and draw from the `ServerStatus` and `WatchStatus` resources. The watched game's
+  send it `Request`s and draw from the `ServerStatus` and `WatchStatus` resources (the watched game,
+  and the turn of a seat this client plays). The watched game's
   WebSocket (`socket.rs`, tungstenite over our own TLS) is read in the same loop with a short
   timeout, so it stays one thread. `session.rs` makes the calls and turns every failure into a
   `Problem` worded for the player; `api.rs` holds the API's types and the version check;
@@ -168,7 +169,12 @@ A game's own rules and its players' words keep their terms.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. `src/look.rs`: generic defaults for
   how things look (a seat's colour). Do not read `shape`, `style` or other fields ADR 0124 moves to
-  `web.yaml`: they are leaving the API.
+  `web.yaml`: they are leaving the API. The board also lights the cells a click would be taken on
+  and shows the move being built as see-through pieces.
+- `src/play.rs`: playing a seat. `Turn` is the move being built from the server's legal selections,
+  narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
+  piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
+  picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/camera.rs`: the orbit camera. The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel

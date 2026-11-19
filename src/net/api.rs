@@ -101,6 +101,17 @@ pub struct GameInfo {
     #[serde(default, deserialize_with = "null_as_default")]
     pub seats: Vec<SeatDef>,
     pub board: Board,
+    /// The game's actions, for what a button that plays one says.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub actions: Vec<ActionDef>,
+}
+
+/// One of a game's actions (placing, stepping, swapping sides), as the rules name it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ActionDef {
+    pub id: String,
+    /// In words, such as "Swap sides".
+    pub label: String,
 }
 
 /// A seat of a game definition.
@@ -166,6 +177,92 @@ pub struct GameSeat {
     /// Empty while the seat is free.
     #[serde(default)]
     pub name: String,
+    /// The bot's id when a built-in bot plays the seat.
+    #[serde(default)]
+    pub bot: String,
+    /// The seat is this client's guest's own.
+    #[serde(default)]
+    pub yours: bool,
+}
+
+/// `POST /api/games`' body, for a game against the server's bots: `opponent` fills every seat but
+/// the creator's.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CreateGameRequest {
+    pub game_def_id: String,
+    pub player_name: String,
+    pub opponent: String,
+}
+
+/// `POST /api/games`' answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CreateGameResponse {
+    pub room_code: String,
+    pub seat: u32,
+}
+
+/// `GET /api/games/{code}/selections`: what the seat on impulse may select next, after the
+/// selections `made` (Bingle's ADR 0114).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Selections {
+    pub seat: u32,
+    /// The impulses played so far; a move sent with it is refused if the game has moved on.
+    pub ply: u64,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub made: Vec<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub options: Vec<LegalSelection>,
+    /// The selections made are a whole move, to send as one.
+    pub complete: bool,
+}
+
+/// One selection the seat may make, and the gestures that enter it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LegalSelection {
+    pub notation: String,
+    pub action: String,
+    /// The position it places on or moves to, when it has one.
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub gestures: Vec<Gesture>,
+}
+
+/// One thing a player does to enter a selection: a click on a position (`pos`), a choice of
+/// piece (`piece`), of a count (`count`) or of an action (`action`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
+pub struct Gesture {
+    pub kind: String,
+    pub value: String,
+}
+
+impl Gesture {
+    pub fn pos(id: &str) -> Self {
+        Gesture {
+            kind: "pos".into(),
+            value: id.into(),
+        }
+    }
+
+    /// A click on the board, rather than a choice from a list.
+    pub fn is_pos(&self) -> bool {
+        self.kind == "pos"
+    }
+}
+
+/// `POST /api/games/{code}/moves`' body: the whole move, its selections' notations joined by
+/// `; `, made against `ply`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MoveRequest {
+    pub player_name: String,
+    pub notation: String,
+    pub ply: u64,
+}
+
+/// `POST /api/games/{code}/moves`' answer. The moves themselves come on the game's socket.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MoveResponse {
+    pub state: GameState,
 }
 
 /// Where a game stands: the position and whose impulse it is, or how it ended. Read from
@@ -466,7 +563,10 @@ mod tests {
             Some("number") => json!(1.5),
             Some("boolean") => json!(true),
             Some("array") => match node.get("items") {
-                Some(items) if full => json!([instance(root, items, full, depth + 1)]),
+                // A type that lists its own kind (a move's selections are moves) ends somewhere.
+                Some(items) if full && depth < 10 => {
+                    json!([instance(root, items, full, depth + 1)])
+                }
                 _ => json!([]),
             },
             Some("object") | None if node.get("properties").is_some() => {
@@ -532,6 +632,9 @@ mod tests {
         reads::<BotMatchResponse>("POST /api/bot-matches");
         reads::<Game>("GET /api/games/{code}");
         reads::<GameState>("GET /api/games/{code}/state");
+        reads::<CreateGameResponse>("POST /api/games");
+        reads::<Selections>("GET /api/games/{code}/selections");
+        reads::<MoveResponse>("POST /api/games/{code}/moves");
         let root = schema();
         for full in [false, true] {
             serde_json::from_value::<ErrorBody>(instance(&root, &root["x-error"], full, 0))
@@ -561,26 +664,79 @@ mod tests {
         assert_eq!(acted_on, ["joined", "move", "state"]);
     }
 
-    #[test]
-    fn a_bot_match_request_has_what_the_schema_requires() {
+    /// Every field `sent` has is in the schema of `endpoint`'s request, and every field the schema
+    /// requires is sent.
+    fn sends(endpoint: &str, sent: Value) {
         let root = schema();
-        let node = &root["x-endpoints"]["POST /api/bot-matches"]["request"];
+        let node = &root["x-endpoints"][endpoint]["request"];
         let node = match node.get("$ref").and_then(Value::as_str) {
             Some(r) => &root["$defs"][r.strip_prefix("#/$defs/").unwrap()],
             None => node,
         };
-        let sent = serde_json::to_value(BotMatchRequest {
-            game_def_id: "g".into(),
-            bot_a: "a".into(),
-            bot_b: "b".into(),
-        })
-        .unwrap();
         let props = node["properties"].as_object().unwrap();
         for name in node["required"].as_array().unwrap() {
-            assert!(sent.get(name.as_str().unwrap()).is_some(), "{name} missing");
+            assert!(
+                sent.get(name.as_str().unwrap()).is_some(),
+                "{endpoint}: {name} missing"
+            );
         }
         for name in sent.as_object().unwrap().keys() {
-            assert!(props.contains_key(name), "{name} is not in the schema");
+            assert!(
+                props.contains_key(name),
+                "{endpoint}: {name} is not in the schema"
+            );
         }
+    }
+
+    #[test]
+    fn the_requests_have_what_the_schema_requires() {
+        fn json(v: impl Serialize) -> Value {
+            serde_json::to_value(v).unwrap()
+        }
+        sends(
+            "POST /api/bot-matches",
+            json(BotMatchRequest {
+                game_def_id: "g".into(),
+                bot_a: "a".into(),
+                bot_b: "b".into(),
+            }),
+        );
+        sends(
+            "POST /api/games",
+            json(CreateGameRequest {
+                game_def_id: "g".into(),
+                player_name: "Ana".into(),
+                opponent: "mcts".into(),
+            }),
+        );
+        sends(
+            "POST /api/games/{code}/moves",
+            json(MoveRequest {
+                player_name: "Ana".into(),
+                notation: "d4".into(),
+                ply: 3,
+            }),
+        );
+    }
+
+    #[test]
+    fn selections_read_as_the_server_sends_them() {
+        let s: Selections = serde_json::from_str(
+            r#"{"seat":2,"ply":1,"made":[],"options":[
+            {"notation":"a1","action":"place","piece":"stone","to":"a1",
+             "gestures":[{"kind":"piece","value":"stone"},{"kind":"pos","value":"a1"}]},
+            {"notation":"swap","action":"swap","gestures":[{"kind":"action","value":"swap"}]}],
+            "complete":false}"#,
+        )
+        .unwrap();
+        assert_eq!(s.ply, 1);
+        assert_eq!(s.options[0].to.as_deref(), Some("a1"));
+        assert!(s.options[0].gestures[1].is_pos());
+        assert_eq!(s.options[1].to, None);
+        let done: Selections = serde_json::from_str(
+            r#"{"seat":2,"ply":1,"made":["a1"],"options":[],"complete":true}"#,
+        )
+        .unwrap();
+        assert!(done.complete);
     }
 }

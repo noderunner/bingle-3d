@@ -4,16 +4,22 @@
 //!
 //! Nothing here names a game. A hex board's cells are hexagons and a grid's squares, and any other
 //! board's positions are round spots; the same code draws every board of each kind.
+//!
+//! While this client's seat is on impulse, the positions a click would be taken on are lit, and
+//! the move being built is shown as see-through pieces in the seat's colour: where its selections
+//! put something, and under the pointer, where a click would.
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
+use bevy::picking::Pickable;
 use bevy::prelude::*;
 
 use crate::look::seat_colour;
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
+use crate::play::{Hovering, Spot, Stage};
 use crate::table::Table;
 
 pub struct BoardPlugin;
@@ -24,6 +30,8 @@ impl Plugin for BoardPlugin {
             Update,
             (
                 sync_board.run_if(resource_changed::<WatchStatus>),
+                show_turn
+                    .run_if(resource_changed::<WatchStatus>.or_eager(resource_changed::<Hovering>)),
                 drop_pieces,
             )
                 .chain(),
@@ -147,6 +155,14 @@ struct PieceAt {
     piece: PieceOnBoard,
 }
 
+/// A cell of the board, which is lit while a click on it would be taken.
+#[derive(Component)]
+struct Cell(String);
+
+/// A see-through piece: part of the move being built, or where a click would put one.
+#[derive(Component)]
+struct Ghost;
+
 /// The mark on the cell of the last move.
 #[derive(Component)]
 struct LastMoveMark;
@@ -167,6 +183,11 @@ struct Kit {
     stone: Handle<Mesh>,
     stone_height: f32,
     materials: HashMap<String, Handle<StandardMaterial>>,
+    cell: Handle<StandardMaterial>,
+    /// A cell a click would be taken on.
+    target: Handle<StandardMaterial>,
+    /// A piece of the move being built, in this client's seat's colour.
+    ghost: Handle<StandardMaterial>,
 }
 
 fn sync_board(
@@ -254,6 +275,9 @@ fn place_pieces(
             Mesh3d(kit.stone.clone()),
             MeshMaterial3d(material),
             Transform::from_translation(Vec3::new(centre.x, start, centre.z)),
+            // A click on a piece is a click on where it stands.
+            Spot(at.cell.clone()),
+            Pickable::default(),
             at,
             ChildOf(root),
         ));
@@ -304,6 +328,12 @@ fn build_board(
         perceptual_roughness: 0.7,
         ..default()
     });
+    let target = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.92, 0.80),
+        emissive: LinearRgba::rgb(0.10, 0.12, 0.05),
+        perceptual_roughness: 0.6,
+        ..default()
+    });
 
     let root = commands
         .spawn((
@@ -346,6 +376,9 @@ fn build_board(
             Mesh3d(cell_mesh.clone()),
             MeshMaterial3d(cell.clone()),
             Transform::from_translation(*centre + Vec3::Y * BASE_HEIGHT),
+            Cell(id.clone()),
+            Spot(id.clone()),
+            Pickable::default(),
             ChildOf(root),
         ));
     }
@@ -366,10 +399,24 @@ fn build_board(
     ));
 
     let stone_height = pitch * 0.28;
+    let yours = table.yours();
+    let ghost = materials.add(StandardMaterial {
+        base_color: seat_colour(
+            yours.map_or("", |s| s.color.as_str()),
+            yours.map_or(1, |s| s.seat),
+        )
+        .with_alpha(0.5),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
     let kit = Kit {
         stone: meshes.add(Cylinder::new(pitch * 0.40, stone_height)),
         stone_height,
         materials: seat_materials(&table.info, materials),
+        cell,
+        target,
+        ghost,
     };
     (root, kit)
 }
@@ -391,6 +438,59 @@ fn seat_materials(
             (s.color.clone(), handle)
         })
         .collect()
+}
+
+/// Lights the cells a click would be taken on, and shows the move being built.
+fn show_turn(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    hovering: Res<Hovering>,
+    roots: Query<(Entity, &Kit), With<BoardRoot>>,
+    mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
+    ghosts: Query<Entity, With<Ghost>>,
+) {
+    for ghost in &ghosts {
+        commands.entity(ghost).despawn();
+    }
+    let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
+        return;
+    };
+    let turn = watch.turn.as_ref();
+    let targets = turn.map(|t| t.targets()).unwrap_or_default();
+    for (cell, mut material) in &mut cells {
+        let wanted = if targets.contains(&cell.0) {
+            &kit.target
+        } else {
+            &kit.cell
+        };
+        if material.0 != *wanted {
+            material.0 = wanted.clone();
+        }
+    }
+    let Some(turn) = turn else { return };
+    let mut shown: Vec<&str> = match turn.stage {
+        Stage::Asking | Stage::Ready | Stage::Sending => turn.placed().collect(),
+        Stage::Choosing | Stage::Failed => Vec::new(),
+    };
+    if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c)) {
+        shown.push(cell);
+    }
+    let layout = Layout::new(&table.info.board.positions);
+    for cell in shown {
+        let Some(centre) = layout.centres.get(cell) else {
+            continue;
+        };
+        let below = table.state.state.cells.get(cell).map_or(0, Vec::len);
+        let y = SURFACE + kit.stone_height * (below as f32 + 0.5);
+        commands.spawn((
+            Name::new(format!("Ghost at {cell}")),
+            Ghost,
+            Mesh3d(kit.stone.clone()),
+            MeshMaterial3d(kit.ghost.clone()),
+            Transform::from_translation(Vec3::new(centre.x, y, centre.z)),
+            ChildOf(root),
+        ));
+    }
 }
 
 fn drop_pieces(
@@ -476,7 +576,8 @@ mod tests {
             app.add_plugins((MinimalPlugins, AssetPlugin::default(), BoardPlugin))
                 .init_asset::<Mesh>()
                 .init_asset::<StandardMaterial>()
-                .init_resource::<WatchStatus>();
+                .init_resource::<WatchStatus>()
+                .init_resource::<Hovering>();
             app
         }
 
@@ -515,6 +616,7 @@ mod tests {
                         kind: "hex".into(),
                         positions: hex3(),
                     },
+                    actions: vec![],
                 },
                 game: Game {
                     game_def_id: "g".into(),

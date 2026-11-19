@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 3 done; stage 4 next (2026-11-17). The desktop client comes first: Hex, a game
+Status: stage 4 under way: a game can be played against the server's bots (2026-11-19). The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -89,7 +89,7 @@ README, this plan, `.gitignore`.
   tried again every 5 s; `--server` for one run. Changing the server from inside the client waits
   for the game browser (stage 5), which needs text entry.
 
-### Stage 3: watch Hex (done)
+### Stage 3: watch Hex (done, #5)
 
 - Build the board from Hex's game definition: its positions, their hex coordinates and the board's
   layout, with generic defaults for the pieces (shape by type, colour by seat). Nothing in the code
@@ -107,9 +107,10 @@ README, this plan, `.gitignore`.
   rings the last move. The camera frames each new board. *Watch two bots* on any two-player game
   in the list, *Watch* on a game in progress, and `--watch-bots GAME` / `--watch ROOM`. The bots
   are the server's MCTS bot when it has one (then minimax, tactical, or the first listed).
-- **Not yet**: which edges each seat must join in Hex is only in words in the API (seat labels,
-  `win_rules`); [bingle#216](https://github.com/noderunner/bingle/issues/216) asks for it as data,
-  and until then the edges are drawn plain. The socket is reopened after 5 s if it drops mid-game.
+- **Not yet**: which edges each seat must join in Hex is only in words in API 1.1 (seat labels,
+  `win_rules`); [bingle#216](https://github.com/noderunner/bingle/issues/216) added it as data in
+  API 1.2, and until the client targets 1.2 the edges are drawn plain. The socket is reopened
+  after 5 s if it drops mid-game.
 
 ### Stage 4: play Hex
 
@@ -119,6 +120,22 @@ README, this plan, `.gitignore`.
 - Join a game by room code; play a person over the WebSocket.
 - Resign, the swap rule, and the end of the game as the server reports it.
 - **Done when** a whole game of Hex can be played against a bot and against the web page.
+- As built so far (first pull request: playing the bots). *Play a bot* in the list, or
+  `--play-bot GAME`, makes a game with `opponent` set to the server's strongest bot, the player in
+  the first seat under the name in `config.toml` (`name`, "Player" by default). The client knows
+  its seat from `GET /api/games/{code}`'s `yours`, and opens the game's socket as that seat's
+  player (`role=player`, with the guest key), so the seat shows as connected; *Watch* on a game of
+  one's own therefore takes the seat again. On its impulse the client reads `selections`, and
+  `src/play.rs` narrows them by gestures as the web page's move builder does: a click on a
+  position also makes the choices before it that only one selection allows (the stone, in Hex),
+  and a choice that is not a position (swapping sides) is a button. Each selection made asks the
+  server what may follow (`made`, `ply`); the move that ends the impulse is shown as see-through
+  pieces and waits for a second click, Enter or *Play*, and Esc or Backspace goes back. The move is
+  sent whole, by notation, with its `ply`; it arrives on the socket like everyone else's. A move
+  refused because the game moved on reads the state again. API 1.1 still covers all of it.
+- **Next**: resign; join a game by its room code (`--join ROOM` first, since text entry waits for
+  the game browser); play a person; and Hex's edges, which API 1.2 gives as data (`goals`,
+  bingle#216, done) and the board can now draw.
 
 ### Stage 5: a game browser
 

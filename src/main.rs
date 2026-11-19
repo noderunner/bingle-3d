@@ -1,7 +1,8 @@
 //! Bingle 3D: a native client for the Bingle game server.
 //!
-//! Stage 3 of docs/plan.md: a panel that connects to a Bingle server and lists its games, and a
-//! table in 3D on which a game can be watched, drawn from the API alone.
+//! Stage 4 of docs/plan.md: a panel that connects to a Bingle server and lists its games, and a
+//! table in 3D on which a game can be watched, or played against the server's bots, from the API
+//! alone.
 
 mod board;
 mod browser;
@@ -13,10 +14,12 @@ mod game_panel;
 mod hud;
 mod look;
 mod net;
+mod play;
 mod run_limit;
 mod scene;
 mod table;
 
+use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
@@ -42,6 +45,13 @@ fn main() -> AppExit {
         }),
         ..default()
     }))
+    // Only what is marked `Pickable` (the board's cells and pieces) is picked, from cameras marked
+    // for it, so the table and the lights' meshes never get in the way of a click.
+    .add_plugins(MeshPickingPlugin)
+    .insert_resource(MeshPickingSettings {
+        require_markers: true,
+        ..default()
+    })
     .add_plugins((
         fonts::FontsPlugin,
         scene::ScenePlugin,
@@ -52,10 +62,12 @@ fn main() -> AppExit {
         },
         browser::BrowserPlugin,
         board::BoardPlugin,
+        play::PlayPlugin,
         game_panel::GamePanelPlugin {
             on_start: opts.watch.clone().map(|w| match w {
                 cli::Watch::Room(code) => net::Target::Room(code),
                 cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
+                cli::Watch::PlayBots(game_def_id) => net::Target::AgainstBots { game_def_id },
             }),
         },
     ));

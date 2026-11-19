@@ -16,11 +16,12 @@ use ureq::unversioned::transport::{ConnectProxyConnector, Connector, TcpConnecto
 use rustls::ClientConfig;
 
 use super::api::{
-    self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, ErrorBody, Game, GameDef,
-    GameInfo, GameState, GuestKey, Index, OpenGame, OpenGames,
+    self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, CreateGameRequest,
+    CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameState, GuestKey, Index,
+    MoveRequest, MoveResponse, OpenGame, OpenGames, Selections,
 };
-use super::server_url::{Scheme, ServerUrl};
-use super::socket::{self, Socket};
+use super::server_url::{Scheme, ServerUrl, query_value};
+use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
 use crate::config::Store;
 
@@ -210,9 +211,71 @@ impl Session {
         Ok(made.room_code)
     }
 
+    /// Makes a game in which this client's guest plays the first seat and the server's bots
+    /// every other, and returns its room.
+    pub fn start_game_against_bots(&mut self, game_def_id: &str) -> Result<String, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        let bot = pick_bot(&bots).ok_or_else(|| Problem::Refused {
+            status: 404,
+            message: "the server has no bots to play".into(),
+        })?;
+        let body = serde_json::to_value(CreateGameRequest {
+            game_def_id: game_def_id.to_string(),
+            player_name: self.store.player_name().to_string(),
+            opponent: bot.to_string(),
+        })
+        .expect("a game request is JSON");
+        let made: CreateGameResponse = self.as_guest(&url, "POST", "/api/games", Some(&body))?;
+        Ok(made.room_code)
+    }
+
+    /// What the seat on impulse may select after the selections `made`, at `ply` once known.
+    pub fn selections(
+        &mut self,
+        room_code: &str,
+        made: &[String],
+        ply: Option<u64>,
+    ) -> Result<Selections, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let mut path = format!(
+            "/api/games/{room_code}/selections?made={}",
+            query_value(&made.join("; "))
+        );
+        if let Some(ply) = ply {
+            path.push_str(&format!("&ply={ply}"));
+        }
+        self.get_as_guest(&url, &path)
+    }
+
+    /// Plays a whole move for the seat that `player_name` sits at, against `ply`.
+    pub fn play(
+        &mut self,
+        room_code: &str,
+        player_name: &str,
+        notation: &str,
+        ply: u64,
+    ) -> Result<GameState, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(MoveRequest {
+            player_name: player_name.to_string(),
+            notation: notation.to_string(),
+            ply,
+        })
+        .expect("a move is JSON");
+        let made: MoveResponse = self.as_guest(
+            &url,
+            "POST",
+            &format!("/api/games/{room_code}/moves"),
+            Some(&body),
+        )?;
+        Ok(made.state)
+    }
+
     /// Everything needed to draw a game: its definition, who sits where, and where it stands.
     /// The socket is opened first, so that no move is missed between the two: one played in
-    /// between is either in the state read after it, or arrives on the socket.
+    /// between is either in the state read after it, or arrives on the socket. It is opened for
+    /// the player of a seat this guest holds, if there is one, and as a spectator otherwise.
     pub fn open_game(&mut self, room_code: &str) -> Result<(Opened, Socket), Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         if !valid_room_code(room_code) {
@@ -230,7 +293,15 @@ impl Session {
                 info
             }
         };
-        let socket = Socket::open(&url, room_code, self.tls.clone())
+        let key = self.guest_key(&url)?;
+        let role = match game.seats.iter().find(|s| s.yours) {
+            Some(seat) => Role::Player {
+                name: &seat.name,
+                key: &key,
+            },
+            None => Role::Spectator,
+        };
+        let socket = Socket::open(&url, room_code, role, self.tls.clone())
             .map_err(|e| self.socket_problem(&url, e))?;
         let state = self.state(room_code)?;
         let opened = Opened {
@@ -697,6 +768,56 @@ mod tests {
             err.message().contains("Is Bingle running"),
             "{}",
             err.message()
+        );
+    }
+
+    #[test]
+    fn a_game_against_the_bots_is_made_asked_about_and_played_as_the_guest() {
+        let (addr, seen) = serve(Box::new(|req: &Seen| {
+            match (req.method.as_str(), req.path.as_str()) {
+                ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                ("GET", "/api/bots") => (
+                    200,
+                    r#"[{"id":"random","label":"Random"},{"id":"mcts","label":"MCTS"}]"#.into(),
+                ),
+                ("POST", "/api/games") => (
+                    200,
+                    r#"{"room_code":"AB12CD","seat":1,"color":"red","status":"active"}"#.into(),
+                ),
+                ("GET", p) if p.starts_with("/api/games/AB12CD/selections?") => (
+                    200,
+                    r#"{"seat":1,"ply":3,"made":["blue@d4"],"options":[],"complete":true}"#.into(),
+                ),
+                ("POST", "/api/games/AB12CD/moves") => (
+                    200,
+                    r#"{"move":{"seq":4},"state":{"status":"active","move_seq":4,"impulse_seat":2}}"#
+                        .into(),
+                ),
+                _ => (404, r#"{"error":"api: no such endpoint"}"#.into()),
+            }
+        }));
+        let mut s = session(&addr);
+        assert_eq!(s.start_game_against_bots("hex-7").unwrap(), "AB12CD");
+        let answer = s
+            .selections("AB12CD", &["blue@d4".into(), "black@f6".into()], Some(3))
+            .unwrap();
+        assert!(answer.complete);
+        assert_eq!(s.selections("AB12CD", &[], None).unwrap().ply, 3);
+        let state = s.play("AB12CD", "Player", "d4", 3).unwrap();
+        assert_eq!(state.move_seq, 4);
+
+        let seen = seen.lock().unwrap();
+        let paths: Vec<&str> = seen.iter().map(|r| r.path.as_str()).collect();
+        assert!(
+            paths.contains(&"/api/games/AB12CD/selections?made=blue%40d4%3B%20black%40f6&ply=3"),
+            "the selections made are joined and encoded: {paths:?}"
+        );
+        assert!(paths.contains(&"/api/games/AB12CD/selections?made="));
+        assert!(
+            seen.iter()
+                .filter(|r| r.path != "/api/guest")
+                .all(|r| r.auth.as_deref() == Some("Bearer bgg_new")),
+            "every call is the guest's: {seen:?}"
         );
     }
 

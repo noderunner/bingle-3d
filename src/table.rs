@@ -5,7 +5,7 @@
 //! is older than what it has is ignored, and one that skips ahead (a move missed) makes it load
 //! the game again rather than trust a picture with a hole in it.
 
-use crate::net::api::{Event, Game, GameInfo, GameState};
+use crate::net::api::{Event, Game, GameInfo, GameSeat, GameState};
 use crate::net::session::Opened;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +71,24 @@ impl Table {
         self.state = state;
         self.last_move = None;
         true
+    }
+
+    /// The seat this client plays, if it has one.
+    pub fn yours(&self) -> Option<&GameSeat> {
+        self.game.seats.iter().find(|s| s.yours)
+    }
+
+    /// The game is waiting for this client's seat.
+    pub fn to_play(&self) -> bool {
+        self.state.status == "active"
+            && self
+                .yours()
+                .is_some_and(|s| self.state.impulse_seat == Some(s.seat))
+    }
+
+    /// A game against the server's bots, which can be played again.
+    pub fn against_bots(&self) -> bool {
+        self.yours().is_some() && self.game.seats.iter().any(|s| !s.bot.is_empty())
     }
 
     pub fn finished(&self) -> bool {
@@ -196,6 +214,7 @@ mod tests {
                     kind: "hex".into(),
                     positions: vec![],
                 },
+                actions: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),
@@ -203,6 +222,8 @@ mod tests {
                     seat: 1,
                     color: "red".into(),
                     name: "Ana".into(),
+                    bot: String::new(),
+                    yours: true,
                 }],
             },
             state: state(move_seq, &[("a1", "red")]),
@@ -286,5 +307,20 @@ mod tests {
         t.state.end_reason = String::new();
         assert_eq!(t.summary(), "A draw between Ana and Blue.");
         assert!(t.finished());
+    }
+
+    #[test]
+    fn the_seat_this_client_plays_is_to_play_only_on_its_impulse() {
+        let mut t = table(0);
+        assert_eq!(t.yours().map(|s| s.seat), Some(1));
+        assert!(t.to_play());
+        t.state.impulse_seat = Some(2);
+        assert!(!t.to_play());
+        t.state.impulse_seat = Some(1);
+        t.state.status = "finished".into();
+        assert!(!t.to_play());
+        t.game.seats[0].yours = false;
+        assert_eq!(t.yours(), None);
+        assert!(!t.against_bots());
     }
 }
