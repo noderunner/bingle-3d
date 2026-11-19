@@ -1,6 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 4 under way: a game can be played against the server's bots or a person (2026-11-19). The desktop client comes first: Hex, a game
+Status: stage 5 under way: a game can be played against the server's bots or a person, and the
+games being played can be found (2026-11-19). Stage 4's last check, a whole game against the web
+page by hand, is the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -164,6 +166,13 @@ README, this plan, `.gitignore`.
   has more than Hex drawn well in 3D (any other game is drawn from defaults).
 - **Done when** a game made in the browser can be found and joined from the client, and the other
   way round.
+- As built so far (finding games). The list of games being played is read again every 5 s while
+  it is on screen (connected, no game open), and only redrawn when it changed. *Only with a free
+  seat* asks for `open_seats=1`; *Find games* on a game asks for its `family` (its id when it has
+  none), so it lists every size of that game, and *Every game* clears it. A new connection keeps
+  the filters. A waiting game with a seat free has *Join*, one being played *Watch*.
+- **Next**: create a game with its options and wait in its lobby; the games list grouped by
+  family, as it is long (48 on Bingle today).
 
 ### Stage 6: accounts
 

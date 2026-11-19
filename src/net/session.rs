@@ -15,6 +15,7 @@ use ureq::unversioned::transport::{ConnectProxyConnector, Connector, TcpConnecto
 
 use rustls::ClientConfig;
 
+use super::GameQuery;
 use super::api::{
     self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, CreateGameRequest,
     CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameSeat, GameState, GuestKey, Index,
@@ -243,6 +244,13 @@ impl Session {
         .expect("a game request is JSON");
         let made: CreateGameResponse = self.as_guest(&url, "POST", "/api/games", Some(&body))?;
         Ok(made.room_code)
+    }
+
+    /// The unfinished games that match `query`, newest change first.
+    pub fn games(&mut self, query: &GameQuery) -> Result<Vec<OpenGame>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let list: OpenGames = self.get_as_guest(&url, &games_path(query))?;
+        Ok(list.games)
     }
 
     /// Takes an open seat in the game in this room, if it is waiting for players and this client
@@ -584,6 +592,19 @@ pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
 }
 
 /// Room codes are letters and digits, which keeps them safe to put in a path.
+/// `GET /api/games` for `query`, with as many games as the server lists at once.
+pub fn games_path(query: &GameQuery) -> String {
+    let mut path = "/api/games?limit=60".to_string();
+    if let Some(family) = &query.family {
+        path.push_str("&family=");
+        path.push_str(&query_value(family));
+    }
+    if query.open_seats {
+        path.push_str("&open_seats=1");
+    }
+    path
+}
+
 /// `name`, or the first of "name 2", "name 3"… that nobody at the table goes by.
 pub fn free_name(name: &str, seats: &[GameSeat]) -> String {
     let taken = |n: &str| seats.iter().any(|s| s.name.eq_ignore_ascii_case(n));
@@ -953,6 +974,18 @@ mod tests {
             posts,
             ["/api/games/WAIT01/join", "/api/games/BUSY01/resign"],
             "a game already playing, or with a seat of this guest's, is only watched"
+        );
+    }
+
+    #[test]
+    fn the_games_asked_for_are_narrowed_in_the_query() {
+        assert_eq!(games_path(&GameQuery::default()), "/api/games?limit=60");
+        assert_eq!(
+            games_path(&GameQuery {
+                family: Some("hex 11".into()),
+                open_seats: true,
+            }),
+            "/api/games?limit=60&family=hex%2011&open_seats=1"
         );
     }
 
