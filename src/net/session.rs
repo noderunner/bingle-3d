@@ -576,7 +576,7 @@ fn agent(tls: Arc<ClientConfig>) -> Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
 
@@ -605,18 +605,26 @@ mod tests {
                 let method = parts.next().unwrap_or_default().to_string();
                 let path = parts.next().unwrap_or_default().to_string();
                 let mut auth = None;
+                let mut length = 0;
                 loop {
                     let mut header = String::new();
                     reader.read_line(&mut header).unwrap();
                     if header.trim().is_empty() {
                         break;
                     }
-                    if let Some((name, value)) = header.split_once(':')
-                        && name.eq_ignore_ascii_case("authorization")
-                    {
-                        auth = Some(value.trim().to_string());
+                    if let Some((name, value)) = header.split_once(':') {
+                        if name.eq_ignore_ascii_case("authorization") {
+                            auth = Some(value.trim().to_string());
+                        }
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
                     }
                 }
+                // Read the body before answering, as a server does: closing with some of it
+                // unread resets the connection, and the client may see that instead.
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
                 let req = Seen { method, path, auth };
                 let (status, body) = handler(&req);
                 log.lock().unwrap().push(req);
