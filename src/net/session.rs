@@ -15,7 +15,6 @@ use ureq::unversioned::transport::{ConnectProxyConnector, Connector, TcpConnecto
 
 use rustls::ClientConfig;
 
-use super::GameQuery;
 use super::api::{
     self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, CreateGameRequest,
     CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameSeat, GameState, GuestKey, Index,
@@ -25,6 +24,7 @@ use super::api::{
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
+use super::{GameQuery, GameSettings, TimeControl};
 use crate::config::Store;
 
 /// What a server has, once connected.
@@ -230,20 +230,45 @@ impl Session {
         self.create_game(game_def_id, None)
     }
 
+    /// A new game as the player set it up: their seat, a bot or nobody in each other one, and
+    /// how it is timed.
+    pub fn start_game(&mut self, settings: &GameSettings) -> Result<String, Problem> {
+        let request = new_game_request(settings, self.store.player_name());
+        self.send_new_game(request)
+    }
+
     fn create_game(
         &mut self,
         game_def_id: &str,
         opponent: Option<String>,
     ) -> Result<String, Problem> {
+        let request = CreateGameRequest::new(game_def_id, self.store.player_name(), opponent);
+        self.send_new_game(request)
+    }
+
+    fn send_new_game(&mut self, request: CreateGameRequest) -> Result<String, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        let body = serde_json::to_value(CreateGameRequest {
-            game_def_id: game_def_id.to_string(),
-            player_name: self.store.player_name().to_string(),
-            opponent,
-        })
-        .expect("a game request is JSON");
+        let body = serde_json::to_value(request).expect("a game request is JSON");
         let made: CreateGameResponse = self.as_guest(&url, "POST", "/api/games", Some(&body))?;
         Ok(made.room_code)
+    }
+
+    /// What setting up a game of this needs: its seats, and the bots that can fill them.
+    pub fn game_setup(&mut self, game_def_id: &str) -> Result<(GameInfo, Vec<BotInfo>), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let info = self.game_info(&url, game_def_id)?;
+        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        Ok((info, bots))
+    }
+
+    fn game_info(&mut self, url: &ServerUrl, game_def_id: &str) -> Result<GameInfo, Problem> {
+        if let Some(info) = self.infos.get(game_def_id) {
+            return Ok(info.clone());
+        }
+        let info: GameInfo =
+            self.get_as_guest(url, &format!("/api/game-defs/{}", query_value(game_def_id)))?;
+        self.infos.insert(game_def_id.to_string(), info.clone());
+        Ok(info)
     }
 
     /// The unfinished games that match `query`, newest change first.
@@ -348,15 +373,7 @@ impl Session {
             return Err(not_a_room_code(room_code));
         }
         let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
-        let info = match self.infos.get(&game.game_def_id) {
-            Some(info) => info.clone(),
-            None => {
-                let info: GameInfo =
-                    self.get_as_guest(&url, &format!("/api/game-defs/{}", game.game_def_id))?;
-                self.infos.insert(info.id.clone(), info.clone());
-                info
-            }
-        };
+        let info = self.game_info(&url, &game.game_def_id)?;
         let key = self.guest_key(&url)?;
         let role = match game.seats.iter().find(|s| s.yours) {
             Some(seat) => Role::Player {
@@ -592,6 +609,29 @@ pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
 }
 
 /// Room codes are letters and digits, which keeps them safe to put in a path.
+/// `POST /api/games`' body for a game set up as `settings`.
+pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGameRequest {
+    let (clock_seconds, clock_increment_seconds, move_time_seconds) = match settings.time {
+        TimeControl::None => (None, None, None),
+        TimeControl::Clock { seconds, increment } => {
+            (Some(seconds), (increment > 0).then_some(increment), None)
+        }
+        TimeControl::PerMove { seconds } => (None, None, Some(seconds)),
+    };
+    CreateGameRequest {
+        seat: (settings.seat != 1).then_some(settings.seat),
+        seat_bots: settings
+            .bots
+            .iter()
+            .map(|(seat, bot)| (seat.to_string(), bot.clone()))
+            .collect(),
+        clock_seconds,
+        clock_increment_seconds,
+        move_time_seconds,
+        ..CreateGameRequest::new(&settings.game_def_id, player_name, None)
+    }
+}
+
 /// `GET /api/games` for `query`, with as many games as the server lists at once.
 pub fn games_path(query: &GameQuery) -> String {
     let mut path = "/api/games?limit=60".to_string();
@@ -668,6 +708,7 @@ fn agent(tls: Arc<ClientConfig>) -> Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
@@ -986,6 +1027,41 @@ mod tests {
                 open_seats: true,
             }),
             "/api/games?limit=60&family=hex%2011&open_seats=1"
+        );
+    }
+
+    #[test]
+    fn a_game_set_up_by_the_player_asks_for_its_seats_bots_and_time() {
+        let settings = GameSettings {
+            game_def_id: "hex-7".into(),
+            seat: 2,
+            bots: [(1, "mcts".to_string())].into(),
+            time: TimeControl::Clock {
+                seconds: 600,
+                increment: 5,
+            },
+        };
+        let sent = serde_json::to_value(new_game_request(&settings, "Ana")).unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({
+                "game_def_id": "hex-7",
+                "player_name": "Ana",
+                "seat": 2,
+                "seat_bots": {"1": "mcts"},
+                "clock_seconds": 600,
+                "clock_increment_seconds": 5,
+            })
+        );
+        let plain = GameSettings {
+            seat: 1,
+            bots: BTreeMap::new(),
+            time: TimeControl::PerMove { seconds: 60 },
+            ..settings
+        };
+        assert_eq!(
+            serde_json::to_value(new_game_request(&plain, "Ana")).unwrap(),
+            serde_json::json!({"game_def_id": "hex-7", "player_name": "Ana", "move_time_seconds": 60})
         );
     }
 

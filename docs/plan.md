@@ -171,8 +171,20 @@ README, this plan, `.gitignore`.
   seat* asks for `open_seats=1`; *Find games* on a game asks for its `family` (its id when it has
   none), so it lists every size of that game, and *Every game* clears it. A new connection keeps
   the filters. A waiting game with a seat free has *Join*, one being played *Watch*.
-- **Next**: create a game with its options and wait in its lobby; the games list grouped by
-  family, as it is long (48 on Bingle today).
+- A new game set up by the player (*New game…* on a game, or `--new-game GAME`): the player's
+  seat, a person (an open seat) or one of `GET /api/bots` in each other seat (`seat`,
+  `seat_bots`), and the time: no clock, a game clock (`clock_seconds`,
+  `clock_increment_seconds`) or a time a move (`move_time_seconds`), from a few presets, since
+  there is no text entry yet. The game's own setup choices (`options`) are left out: Hex has
+  none, and the kinds there are belong to other games.
+- Clocks: each seat's time is beside it on the panel. The time of the seat on impulse is
+  `impulse_deadline` less `server_time`, so this machine's clock does not matter, and is counted
+  down between reports; a game clock's other seats show what they have left. Under 10 s it turns
+  amber.
+- **Next**: the lobby (a game that waits for its host's *Start*; add a bot to a seat, change
+  seats, leave, remove). Its calls (`/start`, `/seat`, `/leave`, `/remove`, `/bots`) are in
+  Bingle's `docs/api.md` but not its schema, so they are raised with Bingle first. Then the games
+  list grouped by family, as it is long (48 on Bingle today).
 
 ### Stage 6: accounts
 

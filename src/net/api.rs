@@ -208,6 +208,36 @@ pub struct Game {
     /// A link to the game's page, to send to somebody who should join it.
     #[serde(default)]
     pub invite_url: String,
+    /// Each seat's time, in a game played with a clock.
+    #[serde(default)]
+    pub clock: Option<Clock>,
+    /// When the seat on impulse runs out of time (RFC 3339), in a timed game, and the server's
+    /// time when it said so.
+    #[serde(default)]
+    pub impulse_deadline: String,
+    #[serde(default)]
+    pub server_time: String,
+    /// The time each move may take, in a game timed by the move.
+    #[serde(default)]
+    pub move_time_seconds: Option<u64>,
+}
+
+/// A game clock: what each seat has left, and whose time is running.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Clock {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub seats: Vec<SeatClock>,
+    #[serde(default)]
+    pub running: Option<u32>,
+    #[serde(default)]
+    pub increment_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SeatClock {
+    pub seat: u32,
+    pub initial_seconds: u64,
+    pub seconds_left: f64,
 }
 
 impl Game {
@@ -242,6 +272,36 @@ pub struct CreateGameRequest {
     pub player_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opponent: Option<String>,
+    /// The creator's seat (the first, when left out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seat: Option<u32>,
+    /// A built-in bot in each of these seats, by seat number; the others stay open.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub seat_bots: BTreeMap<String, String>,
+    /// A game clock: each seat's time, and what a seat gains each time it hands the turn on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_increment_seconds: Option<u64>,
+    /// The time each move may take.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_time_seconds: Option<u64>,
+}
+
+impl CreateGameRequest {
+    /// The creator in the first seat, the others open or filled by `opponent`, and no clock.
+    pub fn new(game_def_id: &str, player_name: &str, opponent: Option<String>) -> Self {
+        CreateGameRequest {
+            game_def_id: game_def_id.to_string(),
+            player_name: player_name.to_string(),
+            opponent,
+            seat: None,
+            seat_bots: BTreeMap::new(),
+            clock_seconds: None,
+            clock_increment_seconds: None,
+            move_time_seconds: None,
+        }
+    }
 }
 
 /// `POST /api/games/{code}/join`'s body: take an open seat.
@@ -360,6 +420,15 @@ pub struct GameState {
     /// Why it ended, as a word ("connection", "resign").
     #[serde(default)]
     pub end_reason: String,
+    /// The clock after the change, in a game played with one (events carry it; the state
+    /// endpoint does not).
+    #[serde(default)]
+    pub clock: Option<Clock>,
+    /// As in [`Game`]: when the seat on impulse runs out of time, and the server's time then.
+    #[serde(default)]
+    pub impulse_deadline: String,
+    #[serde(default)]
+    pub server_time: String,
 }
 
 /// The full position document's cells: each position's stack, bottom first.
@@ -789,18 +858,21 @@ mod tests {
         );
         sends(
             "POST /api/games",
-            json(CreateGameRequest {
-                game_def_id: "g".into(),
-                player_name: "Ana".into(),
-                opponent: Some("mcts".into()),
-            }),
+            json(CreateGameRequest::new("g", "Ana", Some("mcts".into()))),
+        );
+        sends(
+            "POST /api/games",
+            json(CreateGameRequest::new("g", "Ana", None)),
         );
         sends(
             "POST /api/games",
             json(CreateGameRequest {
-                game_def_id: "g".into(),
-                player_name: "Ana".into(),
-                opponent: None,
+                seat: Some(2),
+                seat_bots: [("1".to_string(), "random".to_string())].into(),
+                clock_seconds: Some(300),
+                clock_increment_seconds: Some(3),
+                move_time_seconds: Some(60),
+                ..CreateGameRequest::new("g", "Ana", None)
             }),
         );
         sends(

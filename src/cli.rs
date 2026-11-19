@@ -15,6 +15,7 @@ Options:
   --host GAME        start a game, play the first seat and wait for people to join it
   --join ROOM        take an open seat in the game in this room (or watch it, if it
                      has none)
+  --new-game GAME    open the form that sets up a new game of GAME
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -34,6 +35,8 @@ pub struct Options {
     pub server: Option<String>,
     /// What to watch once connected.
     pub watch: Option<Watch>,
+    /// The game to set up a new game of, once connected.
+    pub new_game: Option<String>,
     pub help: bool,
 }
 
@@ -95,6 +98,7 @@ impl Options {
                 "--watch-bots" => opts.watch = Some(Watch::Bots(value("a game's id")?)),
                 "--play-bot" => opts.watch = Some(Watch::PlayBots(value("a game's id")?)),
                 "--host" => opts.watch = Some(Watch::Host(value("a game's id")?)),
+                "--new-game" => opts.new_game = Some(value("a game's id")?),
                 "--join" => opts.watch = Some(Watch::Join(value("a room code")?)),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
@@ -215,6 +219,10 @@ mod tests {
             parse(&["--join", "AB12CD", "--host", "hex-7"])
                 .unwrap_err()
                 .contains("only one")
+        );
+        assert_eq!(
+            parse(&["--new-game", "hex-7"]).unwrap().new_game,
+            Some("hex-7".into())
         );
         assert!(parse(&["--watch"]).unwrap_err().contains("needs"));
     }
