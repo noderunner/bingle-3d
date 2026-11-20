@@ -88,6 +88,119 @@ pub struct LogoutResponse {
     pub kind: String,
 }
 
+/// `GET /api/friends`: an account's friends, requests and game invitations.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct FriendsList {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub friends: Vec<Friend>,
+    /// Asked by them, to be answered.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub incoming: Vec<Friend>,
+    /// Asked by this account, not answered yet.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub outgoing: Vec<Friend>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub invites: Vec<FriendInvite>,
+}
+
+/// A friend, or somebody a request is between.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Friend {
+    pub handle: String,
+    /// What the list calls them ("@ana").
+    pub name: String,
+    /// They can be seen to be here (only ever true for a friend).
+    #[serde(default)]
+    pub online: bool,
+}
+
+/// An invitation to a game, from a friend.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FriendInvite {
+    pub room: String,
+    /// The game's name.
+    pub game: String,
+    /// Who invited ("@ana").
+    pub from: String,
+    /// "pending", "accepted" or "declined".
+    pub status: String,
+    /// News of the game, shown until dismissed.
+    #[serde(default)]
+    pub notice: String,
+}
+
+impl FriendInvite {
+    pub fn pending(&self) -> bool {
+        self.status == "pending"
+    }
+}
+
+/// The body of the friends calls: who (`request`, `answer`, `remove`, `invite`), which game
+/// (`invite`, `invite-answer`, `dismiss`), and the answer (`answer`, `invite-answer`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct FriendBody {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub handle: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub room: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accept: Option<bool>,
+}
+
+/// `GET` and `PUT /api/friends/settings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FriendSettings {
+    /// Friend requests are mailed too.
+    pub mail_requests: bool,
+    /// Friends see when the account is here (Bingle's ADR 0106).
+    pub show_presence: bool,
+    /// Friends may invite the account to games.
+    pub accept_invites: bool,
+}
+
+/// `POST /api/here`'s body: here, or (`false`) gone.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HereRequest {
+    pub here: bool,
+}
+
+/// `POST /api/here`'s answer: who else is here. The client reads only that it was taken.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HereResponse {}
+
+/// The answer of the calls that only say they were done.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OkResponse {
+    pub ok: bool,
+}
+
+/// A message on `GET /ws-dm`, the account's own socket, of the kinds the client acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountEvent {
+    /// The first message: the account's address.
+    Ready,
+    /// The friends list changed: read it again.
+    Friends,
+    /// A kind this client skips (messages and calls, badges, and any added later).
+    Other(String),
+}
+
+impl AccountEvent {
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        let env: Envelope = serde_json::from_str(text)?;
+        Ok(match env.kind.as_str() {
+            "ready" => AccountEvent::Ready,
+            "friends" => AccountEvent::Friends,
+            other => AccountEvent::Other(other.to_string()),
+        })
+    }
+}
+
 /// `POST /api/guest`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GuestKey {
@@ -935,6 +1048,20 @@ mod tests {
         reads::<SessionTokenResponse>("POST /auth/second");
         reads::<Me>("GET /auth/me");
         reads::<LogoutResponse>("POST /auth/logout");
+        reads::<FriendsList>("GET /api/friends");
+        reads::<FriendSettings>("GET /api/friends/settings");
+        reads::<FriendSettings>("PUT /api/friends/settings");
+        reads::<HereResponse>("POST /api/here");
+        for call in [
+            "request",
+            "answer",
+            "remove",
+            "invite",
+            "invite-answer",
+            "dismiss",
+        ] {
+            reads::<OkResponse>(&format!("POST /api/friends/{call}"));
+        }
         for call in ["start", "seat", "leave", "remove"] {
             reads::<GameStatus>(&format!("POST /api/games/{{code}}/{call}"));
         }
@@ -1070,6 +1197,38 @@ mod tests {
                 ..CreateGameRequest::new("g", "Ana", None)
             }),
         );
+        for body in [
+            FriendBody {
+                handle: "bo".into(),
+                ..Default::default()
+            },
+            FriendBody {
+                handle: "bo".into(),
+                accept: Some(true),
+                ..Default::default()
+            },
+            FriendBody {
+                handle: "bo".into(),
+                room: "AB12CD".into(),
+                ..Default::default()
+            },
+            FriendBody {
+                room: "AB12CD".into(),
+                accept: Some(false),
+                ..Default::default()
+            },
+        ] {
+            sends("POST /api/friends/request", json(body));
+        }
+        sends(
+            "PUT /api/friends/settings",
+            json(FriendSettings {
+                mail_requests: false,
+                show_presence: true,
+                accept_invites: true,
+            }),
+        );
+        sends("POST /api/here", json(HereRequest { here: false }));
         sends(
             "POST /auth/login",
             json(LoginRequest {
@@ -1096,6 +1255,28 @@ mod tests {
                 ply: 3,
             }),
         );
+    }
+
+    #[test]
+    fn the_account_events_the_client_acts_on_read_as_the_schema_describes_them() {
+        let root = schema();
+        let arms = root["$defs"]["DirectWebSocketEvent"]["oneOf"]
+            .as_array()
+            .expect("the events are a oneOf");
+        let mut acted_on = Vec::new();
+        for arm in arms {
+            let kind = arm["properties"]["type"]["const"].as_str().unwrap();
+            for full in [false, true] {
+                let text = instance(&root, arm, full, 0).to_string();
+                let event = AccountEvent::parse(&text)
+                    .unwrap_or_else(|e| panic!("cannot read a {kind} event ({e}): {text}"));
+                if !matches!(event, AccountEvent::Other(_)) {
+                    acted_on.push(kind);
+                }
+            }
+        }
+        acted_on.dedup();
+        assert_eq!(acted_on, ["ready", "friends"]);
     }
 
     #[test]

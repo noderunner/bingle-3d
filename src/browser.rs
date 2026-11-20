@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use crate::families::{Family, families};
 use crate::fonts::UiFonts;
+use crate::friends::FriendAction;
 use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
@@ -172,6 +173,8 @@ pub(crate) enum Action {
     UseRecoveryCode(bool),
     /// End the account's session.
     SignOut,
+    /// On the friends panel (`friends.rs` acts on it).
+    Friends(FriendAction),
 }
 
 fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
@@ -753,6 +756,7 @@ fn on_activate(
             }
         }
         Action::SignOut => net.send(Request::SignOut),
+        Action::Friends(_) => {}
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.

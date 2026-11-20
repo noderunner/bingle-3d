@@ -1,7 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 6 under way: a game can be played against the server's bots or a person, found,
-set up and started from its lobby, and the player can sign in to an account (2026-11-19).
+Status: stage 7 under way: a game can be played against the server's bots or a person, found,
+set up and started from its lobby; the player can sign in to an account, and has friends
+(2026-11-19).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
@@ -239,6 +240,23 @@ Friends, direct messages and calls need a signed-in account (ADR 0105); a guest 
 - Direct messages between friends, over the same socket.
 - **Done when** two clients, or the client and the web page, can befriend each other, see each
   other come online, and invite each other to a game.
+- As built (friends). While an account is signed in, the network thread opens its own socket,
+  `/ws-dm`, with the session token, and reads it in the same loop as the game's (opened again
+  5 s after it drops); a `friends` event (it carries nothing) reads the list again, as does the
+  socket opening. The thread also says the account is here (`POST /here`) every minute, since
+  the server forgets it after two and a half; signing out says it has gone. Whether a friend is
+  online is never pushed, only worked out when the list is read, so while the panel is open the
+  list is read every 10 s, as Bingle's page does every 8.
+- The friends panel stands on the right while signed in, during a game too. Closed, it is one
+  button that counts what waits (requests in, invitations not answered). Open: invitations
+  (*Join* accepts and joins the game, as *Join* on the list does; *Decline*; *Dismiss* for news
+  of one answered), requests in (*Accept*, *Decline*), friends with a dot for online (*Remove*,
+  asked twice; *Invite* while this client has a seat in a game that has not started), requests
+  out (*Cancel*), a handle field to ask somebody, and the three settings (`show_presence`,
+  `accept_invites`, `mail_requests`). `--friends` opens it at start.
+- **Next**: direct messages between friends, over the same socket (`dm` events, `/dm/threads`,
+  `/dm/history`, `POST /dm`; writing needs the account to be here, which it now is). Then, later,
+  a seat kept for a friend on the new game form (`reserved_seats`, Bingle's ADR 0107).
 
 ### Stage 8: voice chat
 

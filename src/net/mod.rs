@@ -11,6 +11,9 @@
 //!
 //! While a game is watched, its WebSocket is read in the same loop, with a short timeout
 //! ([`socket::POLL`]), so requests are still answered in between and there is still one thread.
+//! So is the signed-in account's own socket (`/ws-dm`), which says when its friends list changes;
+//! and while an account is signed in, the thread tells the server every minute that it is here,
+//! so that its friends see it online.
 
 pub mod api;
 pub mod server_url;
@@ -20,16 +23,20 @@ pub mod tls;
 
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
 use crate::config::Store;
 use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
-use api::{BotInfo, Event, GameInfo, GameState, OpenGame, Selections};
+use api::{
+    AccountEvent, BotInfo, Event, FriendSettings, FriendsList, GameInfo, GameState, OpenGame,
+    Selections,
+};
 use std::collections::BTreeMap;
 
+use crate::friends::{self, Friends};
 use crate::new_game::NewGame;
 use crate::sign_in::Signing;
 use session::{Code, Opened, Problem, Session, SignIn, Snapshot};
@@ -63,6 +70,7 @@ impl Plugin for NetPlugin {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(
                 Update,
@@ -119,6 +127,30 @@ pub enum Request {
     SecondFactor { pending: String, code: Code },
     /// End the account's session.
     SignOut,
+    /// Read the account's friends list.
+    Friends,
+    /// Change the friends list, or answer an invitation.
+    Friend(FriendCall),
+    /// Read the friends settings, or change them to these.
+    FriendSettings(Option<FriendSettings>),
+}
+
+/// What a signed-in account can do with its friends list. The server decides whether it may (a
+/// game it has a seat in, a friend who takes invitations).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FriendCall {
+    /// Ask this handle to be a friend.
+    Ask(String),
+    /// Answer their request.
+    Answer { handle: String, accept: bool },
+    /// No longer friends, or take back a request.
+    Remove(String),
+    /// Invite a friend to a game this account has a seat in.
+    Invite { handle: String, room: String },
+    /// Answer an invitation to a game.
+    AnswerInvite { room: String, accept: bool },
+    /// Put away an invitation, or its news.
+    Dismiss(String),
 }
 
 /// A new game as the player set it up.
@@ -237,6 +269,13 @@ enum Reply {
     },
     SignIn(Result<SignIn, Problem>),
     SignedOut(Result<(), Problem>),
+    Friends(Result<FriendsList, Problem>),
+    /// A friends call was made; the list as it stands afterwards, or why it was not.
+    FriendDone {
+        call: FriendCall,
+        result: Result<FriendsList, Problem>,
+    },
+    FriendSettings(Result<FriendSettings, Problem>),
 }
 
 #[derive(Resource)]
@@ -297,12 +336,22 @@ struct Watching {
 /// Ends when the app drops its sender, or stops listening.
 fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
     let mut watching: Option<Watching> = None;
+    let mut account = AccountLink::default();
     loop {
-        let request = if watching.is_some() {
+        // With a socket to read, the inbox is only looked at between reads; signed in without
+        // one (waiting to open it again), it is waited on a little, so that the account is still
+        // looked after; otherwise there is nothing to do until a request comes.
+        let request = if watching.is_some() || account.socket.is_some() {
             match inbox.try_recv() {
                 Ok(r) => Some(r),
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        } else if session.has_account() {
+            match inbox.recv_timeout(ACCOUNT_WAIT) {
+                Ok(r) => Some(r),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
         } else {
             match inbox.recv() {
@@ -310,18 +359,105 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
                 Err(_) => break,
             }
         };
-        let reply = match request {
-            Some(request) => handle(&mut session, &mut watching, request),
-            None => read_socket(&session, &mut watching),
+        let replies = match request {
+            Some(request) => handle(&mut session, &mut watching, request)
+                .into_iter()
+                .collect(),
+            None => {
+                let mut replies: Vec<Reply> =
+                    read_socket(&session, &mut watching).into_iter().collect();
+                replies.extend(account.tick(&mut session, Instant::now()));
+                replies
+            }
         };
-        if let Some(reply) = reply
-            && outbox.send(reply).is_err()
-        {
+        if replies.into_iter().any(|r| outbox.send(r).is_err()) {
             break;
         }
     }
     if let Some(w) = watching {
         w.socket.close();
+    }
+    if let Some(s) = account.socket {
+        s.close();
+    }
+}
+
+/// How often a signed-in account says it is here: the server forgets it after two and a half
+/// minutes.
+pub const HERE_EVERY: Duration = Duration::from_secs(60);
+
+/// How long the thread waits for a request when it has no socket to read but an account to
+/// look after.
+const ACCOUNT_WAIT: Duration = Duration::from_millis(250);
+
+/// The signed-in account's own socket, and when it last said it was here, on the network thread.
+#[derive(Default)]
+struct AccountLink {
+    socket: Option<Socket>,
+    /// When to open the socket again, after it failed.
+    retry_at: Option<Instant>,
+    /// When to say next that the account is here; `None` until it is signed in.
+    here_at: Option<Instant>,
+}
+
+impl AccountLink {
+    /// Keeps the socket open and the account here while it is signed in, and lets both go once
+    /// it is not. Reports a friends list read again (the socket opened, or said it changed).
+    fn tick(&mut self, session: &mut Session, now: Instant) -> Option<Reply> {
+        if !session.has_account() {
+            if let Some(s) = self.socket.take() {
+                s.close();
+            }
+            self.retry_at = None;
+            self.here_at = None;
+            return None;
+        }
+        if self.here_at.is_none_or(|t| now >= t) {
+            if let Err(problem) = session.here(true) {
+                warn!("saying the account is here: {}", problem.message());
+            }
+            self.here_at = Some(now + HERE_EVERY);
+        }
+        let Some(socket) = self.socket.as_mut() else {
+            if self.retry_at.is_some_and(|t| now < t) {
+                return None;
+            }
+            return match session.account_socket() {
+                Ok(Some(socket)) => {
+                    info!("the account's socket is open");
+                    self.socket = Some(socket);
+                    self.retry_at = None;
+                    // Whatever changed while it was closed.
+                    Some(Reply::Friends(session.friends()))
+                }
+                Ok(None) => None,
+                Err(problem) => {
+                    warn!("the account's socket: {}", problem.message());
+                    self.retry_at = Some(now + RETRY_AFTER);
+                    None
+                }
+            };
+        };
+        match socket.next() {
+            Ok(None) => None,
+            Ok(Some(text)) => match AccountEvent::parse(&text) {
+                Ok(AccountEvent::Friends) => {
+                    info!("the friends list changed");
+                    Some(Reply::Friends(session.friends()))
+                }
+                Ok(_) => None,
+                Err(e) => {
+                    warn!("skipped an account event this client cannot read: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                warn!("the account's socket closed: {e}");
+                self.socket = None;
+                self.retry_at = Some(now + RETRY_AFTER);
+                None
+            }
+        }
     }
 }
 
@@ -456,6 +592,12 @@ fn handle(
             Some(Reply::SignIn(session.second_factor(&pending, &code)))
         }
         Request::SignOut => Some(Reply::SignedOut(session.sign_out())),
+        Request::Friends => Some(Reply::Friends(session.friends())),
+        Request::Friend(call) => {
+            let result = session.friend(&call).and_then(|()| session.friends());
+            Some(Reply::FriendDone { call, result })
+        }
+        Request::FriendSettings(new) => Some(Reply::FriendSettings(session.friend_settings(new))),
     }
 }
 
@@ -520,6 +662,7 @@ fn poll_network(
     mut list: ResMut<GameList>,
     mut new_game: ResMut<NewGame>,
     mut signing: ResMut<Signing>,
+    mut friends: ResMut<Friends>,
 ) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -696,6 +839,30 @@ fn poll_network(
                 signing.signed_out(result);
                 reconnect(&net, &mut status);
             }
+            Ok(Reply::Friends(result)) => {
+                if let Err(problem) = &result {
+                    warn!("reading the friends list: {}", problem.message());
+                }
+                if friends.bypass_change_detection().read(result) {
+                    friends.set_changed();
+                }
+            }
+            Ok(Reply::FriendDone { call, result }) => {
+                if let Err(problem) = &result {
+                    warn!("friends: {}", problem.message());
+                }
+                if result.is_ok() {
+                    friends::accepted(&net, &mut watch, &call);
+                }
+                friends.done(&call, result);
+            }
+            Ok(Reply::FriendSettings(result)) => match result {
+                Ok(settings) => friends.settings = Some(settings),
+                Err(problem) => {
+                    warn!("friends settings: {}", problem.message());
+                    friends.problem = Some(problem);
+                }
+            },
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
                 // The connection lists every game; a narrower list is asked for again.
@@ -1081,6 +1248,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let open = |code: &str| OpenGame {
             room_code: code.into(),
@@ -1150,6 +1318,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
             id: 3,
@@ -1207,6 +1376,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut waiting = Table::new(opened());
         waiting.state.status = "waiting".into();
@@ -1282,6 +1452,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);
         let id = {
