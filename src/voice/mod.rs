@@ -15,6 +15,7 @@
 pub mod audio;
 pub mod check;
 pub mod devices;
+mod echo;
 mod peer;
 pub mod signal;
 
@@ -31,6 +32,7 @@ use rusty_opus::{Application, OpusEncoder};
 
 use audio::{Capture, FRAME, Mixer, RATE, SharedMixer, Speaking, rms};
 use devices::Choice;
+use echo::Cleaner;
 use peer::{Network, Peer};
 pub use signal::Signal;
 
@@ -198,6 +200,9 @@ struct Call {
     mixer: SharedMixer,
     muted: bool,
     deafened: bool,
+    /// What the microphone hears is cleaned while there is a microphone (`echo`); what is pushed
+    /// into the capture by other means (the tests) goes as it is.
+    cleaner: Option<Cleaner>,
     out: Vec<Event>,
 }
 
@@ -214,6 +219,7 @@ fn run(
         mixer,
         muted: false,
         deafened: false,
+        cleaner: cleaner_for(&setup.microphone),
         out: Vec::new(),
     };
     let mut streams = devices::open(
@@ -231,6 +237,7 @@ fn run(
         }
     };
     let mut frame = [0.0; FRAME];
+    let mut played = Vec::new();
     let mut packet = [0u8; 1500];
     let mut frames: u32 = 0;
     let mut me = Speaking::default();
@@ -260,9 +267,18 @@ fn run(
         for peer in call.peers.values_mut() {
             peer.drive(now, &call.mixer, &mut call.out);
         }
+        // What the speaker played first, so the canceller knows it before it hears it back.
+        audio::lock(&call.mixer).take_played(&mut played);
+        if let Some(c) = &mut call.cleaner {
+            c.played(&played);
+        }
         // Whatever the microphone has caught, a frame at a time, paced by its clock.
         while capture.take_frame(&mut frame) {
             frames = frames.wrapping_add(1);
+            // Cleaned even when muted, so the canceller keeps up with the room.
+            if let Some(c) = &mut call.cleaner {
+                c.clean(&mut frame);
+            }
             let silent = call.muted || call.deafened;
             if let Some(speaking) = me.hear(if silent { 0.0 } else { rms(&frame) }) {
                 call.out.push(Event::Speaking {
@@ -346,6 +362,7 @@ impl Call {
                 microphone,
                 speaker,
             } => {
+                self.cleaner = cleaner_for(&microphone);
                 return Some(devices::open(
                     &microphone,
                     &speaker,
@@ -361,6 +378,10 @@ impl Call {
 
 /// The sockets' address and the STUN servers, looked up once at the start of a call. TURN relays
 /// are not used yet.
+fn cleaner_for(microphone: &Choice) -> Option<Cleaner> {
+    (*microphone != Choice::Off).then(Cleaner::new)
+}
+
 fn network(setup: &Setup) -> Network {
     if setup.loopback {
         return Network {

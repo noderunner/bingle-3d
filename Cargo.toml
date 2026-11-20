@@ -23,6 +23,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rusty-opus = "1.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Echo cancellation, noise suppression and gain for the microphone: WebRTC's audio processing, in Rust.
+sonora = "0.3.0"
 toml = "1.2.1"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 ureq = { version = "~3.5.2", default-features = false, features = ["json"] }
