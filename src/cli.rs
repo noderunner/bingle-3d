@@ -23,6 +23,9 @@ Options:
                      are ringing (signed in)
   --voice            join the voice chat of the game you play, once seated
   --no-audio-devices open no microphone and no speaker in a call (for tests)
+  --relay-only       connect calls only through the server's relay (TURN), as a
+                     browser's iceTransportPolicy \"relay\": to try the relay, or to
+                     keep your address from the others
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
   --frames N         quit after N frames (for scripts and CI)
@@ -58,6 +61,8 @@ pub struct Options {
     pub voice: bool,
     /// Calls open no microphone and no speaker.
     pub no_audio_devices: bool,
+    /// Calls connect only through the server's relay.
+    pub relay_only: bool,
     /// Try the microphone and the speaker, then quit.
     pub voice_check: bool,
     pub help: bool,
@@ -102,6 +107,7 @@ impl Options {
                 "--voice-check" => opts.voice_check = true,
                 "--call" => opts.call = Some(value("a friend's handle")?),
                 "--no-audio-devices" => opts.no_audio_devices = true,
+                "--relay-only" => opts.relay_only = true,
                 "--voice" => opts.voice = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--frames" => {
@@ -263,6 +269,7 @@ mod tests {
         assert!(!parse(&[]).unwrap().voice_check);
         assert_eq!(parse(&["--call=bob"]).unwrap().call, Some("bob".into()));
         assert!(parse(&["--no-audio-devices"]).unwrap().no_audio_devices);
+        assert!(parse(&["--relay-only"]).unwrap().relay_only);
         assert!(parse(&["--voice"]).unwrap().voice);
     }
 

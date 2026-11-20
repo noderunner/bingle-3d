@@ -18,6 +18,7 @@ pub fn run() -> Result<(), String> {
     let setup = |microphone, speaker| Setup {
         ice_servers: Vec::new(),
         loopback: true,
+        relay_only: false,
         microphone,
         speaker,
     };

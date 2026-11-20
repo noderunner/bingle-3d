@@ -303,7 +303,7 @@ a browser puts in each message and what the page expects of the other end.
   their description kept; an offer from a new connection of the other end (a new certificate)
   answered on a new one; in a game's call, after a failure, the side that offers restarts ICE
   1.5 s later, up to three times, and the other sends `retry`. Host candidates and STUN's
-  server-reflexive ones; TURN relays come with the calls that receive them. The microphone and the
+  server-reflexive ones, and TURN relays (below). The microphone and the
   speaker are cpal's, any rate and channels, resampled to and from the call's; the voices are
   mixed with a little queued each (40 ms) and a volume each. Speaking (the page's level, held
   300 ms) is reported for each person and for this end. Devices are chosen by cpal's id, since
@@ -329,7 +329,7 @@ a browser puts in each message and what the page expects of the other end.
   (the one declining never joined), so a call rings for at most a minute and then says *No
   answer*; and an event sent to an account before its socket listens is lost, so the network
   thread now opens the account's socket before it says the account is here (a friend who sees
-  it online may ring at once). TURN relays are not used yet: STUN and host candidates only.
+  it online may ring at once).
 - Tested: the call's steps without Bevy (ringing, answering, refusal, declining, ringing out,
   a second caller while busy, the order the server must take an answer in), the requests'
   shapes against a fake server, the types against the 1.6 schema, a call starting a real
@@ -378,7 +378,27 @@ a browser puts in each message and what the page expects of the other end.
   speech never is. Tested by a voice-like signal heard back 50 ms later at half its level (lowered
   by more than 20 dB in ten seconds), a voice passing when nothing plays, and the mixer's copy of
   what it played.
-- **Next**: TURN relays for players behind strict NATs; by ear, a call on speakers.
+- As built (TURN relays, `src/voice/relay.rs`). The `turn:` servers among the ICE servers, with
+  the credentials Bingle makes for each call (coturn's `use-auth-secret`), give each connection
+  an allocation on its own socket, through rtc's TURN client (sans I/O, like the rest): the
+  relayed address is trickled as a relay candidate, what comes from the relay server is the
+  relay's to read and its packets reach the connection as arriving at the relayed address, and
+  what the connection sends from that address goes through the relay (the first packets to a new
+  address are dropped while the relay is asked to let it through; ICE sends its checks again).
+  The relay refreshes the allocation and its permissions, binds channels, and gives the
+  allocation back when the call ends. The first relay is used, as browsers use them all; relays
+  reached over TCP or TLS (`?transport=tcp`, `turns:`) are not, yet, for networks that let no UDP
+  out at all. `--relay-only` offers only the relay's candidate (a browser's
+  `iceTransportPolicy: "relay"`), to try a relay or to keep one's address from the others; with
+  no relay offered, it says so, and a relay that refuses fails the call.
+- Tested: the relays found among the ICE servers (UDP only, with credentials), relay only with no
+  relay, a relay refusing, and two engines that may only use a relay talking through a small TURN
+  server in the tests (`fake_turn.rs`: a 401 then the allocation, permissions, channels, Send
+  and Data indications, refreshes), sound both ways and every packet relayed. Not tried here
+  against coturn or a browser through one (the agent's sandbox runs no container): the
+  maintainer's to try.
+- **Next**: a relay reached over TCP or TLS, if players need it; by ear, a call on speakers and
+  one through coturn.
 
 ### After that
 

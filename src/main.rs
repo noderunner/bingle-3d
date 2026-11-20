@@ -90,10 +90,12 @@ fn main() -> AppExit {
         call::CallPlugin {
             no_devices: opts.no_audio_devices,
             call: opts.call.clone(),
+            relay_only: opts.relay_only,
         },
         voice_chat::VoiceChatPlugin {
             no_devices: opts.no_audio_devices,
             join: opts.voice,
+            relay_only: opts.relay_only,
         },
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,

@@ -217,7 +217,9 @@ A game's own rules and its players' words keep their terms.
   buffer, the mix (keeping a copy of what it played) and a resampler, with no devices; `echo.rs`
   the microphone's sound cleaned as a browser cleans it (echo cancellation, noise suppression,
   gain), with what was played as the reference; `devices.rs` cpal's microphone and speaker;
-  `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
+  `relay.rs` a TURN relay
+  for one connection, on its socket (rtc's TURN client), `fake_turn.rs` a TURN server for the
+  tests; `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
   open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
   host's sound): run clients with `--no-audio-devices`.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.

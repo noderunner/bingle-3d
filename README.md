@@ -105,10 +105,17 @@ to settle at the start of a call. `--voice-check` tries them: for ten seconds yo
 hear yourself, through a voice connection on your own machine, with no server and no window. It
 lists the devices it can see.
 
+Players connect directly where their networks allow it. Where one does not (a strict NAT, some
+mobile and office networks), the call goes through the server's TURN relay, when the server has
+one (Bingle's `BINGLE_RTC_TURN_URLS`; relays reached over UDP for now). `--relay-only` sends
+every call through the relay, as a browser's `iceTransportPolicy: "relay"`: to try it, or to keep
+your address from the others in the call.
+
 ```sh
 cargo run -- --host hex-7 --voice          # host a game, and join its voice chat once seated
 cargo run -- --call ana                    # ring the friend @ana once she is online (or answer her)
 cargo run -- --voice-check                 # hear your microphone through your speaker
+cargo run -- --host hex-7 --voice --relay-only   # the same call, only through the relay
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
