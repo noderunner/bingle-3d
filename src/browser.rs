@@ -864,6 +864,7 @@ mod tests {
             .init_resource::<NewGame>()
             .init_resource::<ChosenMembers>()
             .init_resource::<Signing>()
+            .init_resource::<crate::call::DirectCalling>()
             .insert_resource(ServerStatus {
                 server: "https://box:8443".into(),
                 connection,

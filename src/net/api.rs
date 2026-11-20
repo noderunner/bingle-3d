@@ -12,11 +12,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 /// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
 /// 1.2 the regions each seat must connect (`goals`), 1.4 the lobby's calls (`start`, `seat`,
-/// `leave`, `remove`, `bots`) to the schema, and 1.5 the sign-in that answers with a session
-/// token, for a client that is not a browser.
+/// `leave`, `remove`, `bots`) to the schema, 1.5 the sign-in that answers with a session
+/// token, for a client that is not a browser, and 1.6 voice chat's calls and events.
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 5,
+    minor: 6,
     patch: 0,
 };
 
@@ -211,6 +211,63 @@ pub struct HereRequest {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct HereResponse {}
 
+/// `POST /api/dm/call`'s body: ring (or answer) `to`, or, with `join` false, hang up.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DirectCallRequest {
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub to: String,
+    pub join: bool,
+}
+
+/// `POST /api/dm/signal`'s body: one WebRTC message for the person called, `data` in the form a
+/// browser's `RTCPeerConnection` uses (`voice::Signal`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DirectSignalRequest {
+    pub to: String,
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
+/// `GET /api/rtc/config`: the ICE servers for a call. TURN credentials expire, so it is read
+/// again for each call.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RtcConfig {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub ice_servers: Vec<IceServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct IceServer {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub credential: Option<String>,
+}
+
+/// A `dm-call` event: somebody rings (or has answered), or a call has ended.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DirectCall {
+    /// "ring" or "end".
+    pub kind: String,
+    /// Their address.
+    pub from: String,
+    #[serde(default)]
+    pub name: String,
+    /// It ended because they joined another call.
+    #[serde(default)]
+    pub dropped: bool,
+}
+
+/// A `dm-rtc` event: one WebRTC message from the person called.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct DirectSignal {
+    pub from: String,
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
 /// The answer of the calls that only say they were done.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct OkResponse {
@@ -218,7 +275,7 @@ pub struct OkResponse {
 }
 
 /// A message on `GET /ws-dm`, the account's own socket, of the kinds the client acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AccountEvent {
     /// The first message: the account's own address, the one others write to.
     Ready { address: String },
@@ -226,7 +283,11 @@ pub enum AccountEvent {
     Friends,
     /// A direct message, from a friend or sent by this account (from here or elsewhere).
     Message(DirectMessage),
-    /// A kind this client skips (calls, badges, and any added later).
+    /// A call rings, or ends.
+    Call(DirectCall),
+    /// A WebRTC message of a call.
+    Signal(DirectSignal),
+    /// A kind this client skips (badges, and any added later).
     Other(String),
 }
 
@@ -251,6 +312,8 @@ impl AccountEvent {
             },
             "friends" => AccountEvent::Friends,
             "dm" => AccountEvent::Message(serde_json::from_value(env.data)?),
+            "dm-call" => AccountEvent::Call(serde_json::from_value(env.data)?),
+            "dm-rtc" => AccountEvent::Signal(serde_json::from_value(env.data)?),
             other => AccountEvent::Other(other.to_string()),
         })
     }
@@ -917,7 +980,7 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.5.0")), Compatible);
+        assert_eq!(compatibility(Some("1.6.0")), Compatible);
         assert_eq!(compatibility(Some("1.7.2")), Compatible);
         assert_eq!(
             compatibility(Some("1.0.9")),
@@ -938,6 +1001,11 @@ mod tests {
             compatibility(Some("1.4.1")),
             ServerTooOld(Some("1.4.1".into())),
             "1.4 has no sign-in for a client that is not a browser"
+        );
+        assert_eq!(
+            compatibility(Some("1.5.0")),
+            ServerTooOld(Some("1.5.0".into())),
+            "1.5's schema has no calls"
         );
         assert_eq!(compatibility(Some("2.0.0")), ClientTooOld("2.0.0".into()));
         assert_eq!(
@@ -1008,7 +1076,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.5.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.6.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -1135,6 +1203,9 @@ mod tests {
         reads::<HereResponse>("POST /api/here");
         reads::<DirectMessage>("POST /api/dm");
         reads::<DirectHistory>("POST /api/dm/history");
+        reads::<OkResponse>("POST /api/dm/call");
+        reads::<OkResponse>("POST /api/dm/signal");
+        reads::<RtcConfig>("GET /api/rtc/config");
         for call in [
             "request",
             "answer",
@@ -1320,6 +1391,26 @@ mod tests {
                 text: "hello".into(),
             }),
         );
+        for body in [
+            DirectCallRequest {
+                to: "addr".into(),
+                join: true,
+            },
+            DirectCallRequest {
+                to: String::new(),
+                join: false,
+            },
+        ] {
+            sends("POST /api/dm/call", json(body));
+        }
+        sends(
+            "POST /api/dm/signal",
+            json(DirectSignalRequest {
+                to: "addr".into(),
+                kind: "retry".into(),
+                data: serde_json::json!({}),
+            }),
+        );
         sends(
             "POST /api/dm/history",
             json(DirectHistoryRequest {
@@ -1373,7 +1464,7 @@ mod tests {
             }
         }
         acted_on.dedup();
-        assert_eq!(acted_on, ["ready", "dm", "friends"]);
+        assert_eq!(acted_on, ["ready", "dm", "dm-call", "dm-rtc", "friends"]);
     }
 
     #[test]

@@ -26,6 +26,7 @@ use super::api::{
     Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
+use super::api::{DirectCallRequest, DirectSignalRequest, IceServer, RtcConfig};
 use super::api::{DirectHistory, DirectHistoryRequest, DirectMessage, DirectMessageRequest};
 use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
 use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
@@ -441,6 +442,44 @@ impl Session {
         .expect("a history request is JSON");
         let history: DirectHistory = self.as_me(&url, "POST", "/api/dm/history", Some(&body))?;
         Ok(history.messages)
+    }
+
+    /// Rings a friend at their address (or answers them, when they rang first); with `join`
+    /// false, hangs up the call this account is in.
+    pub fn direct_call(&mut self, to: &str, join: bool) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(DirectCallRequest {
+            to: if join { to.to_string() } else { String::new() },
+            join,
+        })
+        .expect("a call is JSON");
+        let _: OkResponse = self.as_me(&url, "POST", "/api/dm/call", Some(&body))?;
+        Ok(())
+    }
+
+    /// Relays one WebRTC message to the person this account is calling.
+    pub fn direct_signal(
+        &mut self,
+        to: &str,
+        kind: &str,
+        data: serde_json::Value,
+    ) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(DirectSignalRequest {
+            to: to.to_string(),
+            kind: kind.to_string(),
+            data,
+        })
+        .expect("a signal is JSON");
+        let _: OkResponse = self.as_me(&url, "POST", "/api/dm/signal", Some(&body))?;
+        Ok(())
+    }
+
+    /// The ICE servers for a call.
+    pub fn ice_servers(&mut self) -> Result<Vec<IceServer>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let config: RtcConfig = self.get_as_me(&url, "/api/rtc/config")?;
+        Ok(config.ice_servers)
     }
 
     /// Opens the signed-in account's own socket, `/ws-dm`. `None` when nobody is signed in.
@@ -1141,7 +1180,7 @@ fn agent(tls: Arc<ClientConfig>) -> Agent {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Read, Write};
@@ -1149,17 +1188,17 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Debug, Clone)]
-    struct Seen {
-        method: String,
-        path: String,
-        auth: Option<String>,
-        body: String,
+    pub(crate) struct Seen {
+        pub(crate) method: String,
+        pub(crate) path: String,
+        pub(crate) auth: Option<String>,
+        pub(crate) body: String,
     }
 
-    type Handler = dyn Fn(&Seen) -> (u16, String) + Send + Sync;
+    pub(crate) type Handler = dyn Fn(&Seen) -> (u16, String) + Send + Sync;
 
     /// A plain HTTP server on loopback that answers with `handler` and records what it was asked.
-    fn serve(handler: Box<Handler>) -> (String, Arc<Mutex<Vec<Seen>>>) {
+    pub(crate) fn serve(handler: Box<Handler>) -> (String, Arc<Mutex<Vec<Seen>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));
@@ -1212,7 +1251,7 @@ mod tests {
         (addr, seen)
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.5.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.6.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1239,7 +1278,7 @@ mod tests {
         })
     }
 
-    fn session(addr: &str) -> Session {
+    pub(crate) fn session(addr: &str) -> Session {
         Session::new(Some(addr), Store::load(None))
     }
 
@@ -1248,7 +1287,7 @@ mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.5.0");
+        assert_eq!(snap.api_version, "1.6.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
@@ -1544,7 +1583,7 @@ mod tests {
 
     /// A Bingle with accounts: "ana" signs in with her password ("pw") and, when `second` is set,
     /// a code ("123456"); her session is `bgs_ana` until it is ended.
-    fn accounts(second: bool, ended: Arc<Mutex<bool>>) -> Box<Handler> {
+    pub(crate) fn accounts(second: bool, ended: Arc<Mutex<bool>>) -> Box<Handler> {
         Box::new(move |req: &Seen| {
             let auth = req.auth.as_deref().unwrap_or_default();
             let body: serde_json::Value = serde_json::from_str(&req.body).unwrap_or_default();
@@ -1806,6 +1845,59 @@ mod tests {
                 ("/api/dm/history".to_string(), json!({"with": "a"})),
             ],
             "a message is sent trimmed, to the friend's address"
+        );
+    }
+
+    #[test]
+    fn a_call_rings_signals_and_hangs_up_as_the_account() {
+        let ended = Arc::new(Mutex::new(false));
+        let inner = accounts(false, ended);
+        let (addr, seen) = serve(Box::new(move |req: &Seen| {
+            let signed_in = req.auth.as_deref() == Some("Bearer bgs_ana");
+            match (req.method.as_str(), req.path.as_str()) {
+                ("POST", "/api/dm/call" | "/api/dm/signal") if signed_in => {
+                    (200, r#"{"ok":true}"#.into())
+                }
+                ("GET", "/api/rtc/config") if signed_in => (
+                    200,
+                    r#"{"ice_servers":[{"urls":["stun:stun.example.com:3478"]},
+                    {"urls":["turn:turn.example.com"],"username":"u","credential":"c"}]}"#
+                        .into(),
+                ),
+                _ => inner(req),
+            }
+        }));
+        let mut s = session(&addr);
+        s.sign_in("ana", "pw").unwrap();
+        let servers = s.ice_servers().unwrap();
+        assert_eq!(servers[0].urls, ["stun:stun.example.com:3478"]);
+        assert_eq!(servers[1].credential.as_deref(), Some("c"));
+        s.direct_call("a", true).unwrap();
+        s.direct_signal("a", "retry", serde_json::json!({}))
+            .unwrap();
+        s.direct_call("a", false).unwrap();
+        let seen = seen.lock().unwrap();
+        let sent: Vec<(String, serde_json::Value)> = seen
+            .iter()
+            .filter(|r| r.path.starts_with("/api/dm"))
+            .map(|r| (r.path.clone(), serde_json::from_str(&r.body).unwrap()))
+            .collect();
+        use serde_json::json;
+        assert_eq!(
+            sent,
+            [
+                ("/api/dm/call".into(), json!({"to": "a", "join": true})),
+                (
+                    "/api/dm/signal".into(),
+                    json!({"to": "a", "kind": "retry", "data": {}})
+                ),
+                ("/api/dm/call".into(), json!({"join": false})),
+            ]
+        );
+        assert!(
+            seen.iter()
+                .filter(|r| r.path.starts_with("/api/dm") || r.path == "/api/rtc/config")
+                .all(|r| r.auth.as_deref() == Some("Bearer bgs_ana"))
         );
     }
 

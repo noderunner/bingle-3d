@@ -19,6 +19,9 @@ Options:
   --sign-in          open the form that signs in to an account
   --friends          open the friends panel (signed in)
   --talk HANDLE      open the conversation with this friend (signed in)
+  --call HANDLE      ring this friend once they are online, or answer them if they
+                     are ringing (signed in)
+  --no-audio-devices open no microphone and no speaker in a call (for tests)
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
   --frames N         quit after N frames (for scripts and CI)
@@ -48,6 +51,10 @@ pub struct Options {
     pub friends: bool,
     /// Open the conversation with this friend at start.
     pub talk: Option<String>,
+    /// Ring this friend at start.
+    pub call: Option<String>,
+    /// Calls open no microphone and no speaker.
+    pub no_audio_devices: bool,
     /// Try the microphone and the speaker, then quit.
     pub voice_check: bool,
     pub help: bool,
@@ -90,6 +97,8 @@ impl Options {
                 "--sign-in" => opts.sign_in = true,
                 "--friends" => opts.friends = true,
                 "--voice-check" => opts.voice_check = true,
+                "--call" => opts.call = Some(value("a friend's handle")?),
+                "--no-audio-devices" => opts.no_audio_devices = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--frames" => {
                     let v = value("a number of frames")?;
@@ -248,6 +257,8 @@ mod tests {
         assert_eq!(parse(&["--talk", "bob"]).unwrap().talk, Some("bob".into()));
         assert!(parse(&["--voice-check"]).unwrap().voice_check);
         assert!(!parse(&[]).unwrap().voice_check);
+        assert_eq!(parse(&["--call=bob"]).unwrap().call, Some("bob".into()));
+        assert!(parse(&["--no-audio-devices"]).unwrap().no_audio_devices);
     }
 
     #[test]

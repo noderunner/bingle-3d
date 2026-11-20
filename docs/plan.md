@@ -51,7 +51,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.5.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.6.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
@@ -313,8 +313,30 @@ a browser puts in each message and what the page expects of the other end.
   offer answered and the engine's offer answered (0 packets lost, the tone heard at its level).
   `--voice-check` plays the microphone back through the speaker over a connection on this
   machine, to try the devices.
+- As built (calls between friends, `src/call.rs`). *Call* beside each friend who is online
+  rings them (`POST /dm/call` with `join`); their client or page rings, and *Answer* is the same
+  call. Each end hears the other join as a `dm-call` ring on the account's socket, and the call
+  is on: the ICE servers are read (`GET /rtc/config`, for each call, since TURN credentials
+  expire), the lower address offers, and the engine's messages go through `/dm/signal` and come
+  back as `dm-rtc`, those that come before the connection starts kept for it. The side that
+  answers starts only once the server has taken its answer, since a signal before both have
+  joined is refused. *Hang up* is `join` false, heard at the other end as a `dm-call` end (with
+  `dropped` when they joined another call). The call shows above the friends panel, open or
+  closed: *X is calling* with *Answer* and *Decline*, *Calling X…*, *Connecting to X…*, *In a call
+  with X* (and *speaking*), with *Mute* and *Hang up*. A `retry` from the other end is answered
+  with a new offer; the client does not retry by itself, as the page does not.
+- Two things the server does not do, worked around here: declining tells the caller nothing
+  (the one declining never joined), so a call rings for at most a minute and then says *No
+  answer*; and an event sent to an account before its socket listens is lost, so the network
+  thread now opens the account's socket before it says the account is here (a friend who sees
+  it online may ring at once). TURN relays are not used yet: STUN and host candidates only.
+- Tested: the call's steps without Bevy (ringing, answering, refusal, declining, ringing out,
+  a second caller while busy, the order the server must take an answer in), the requests'
+  shapes against a fake server, the types against the 1.6 schema, a call starting a real
+  connection that offers, and by hand two clients calling each other through a Bingle on
+  loopback (`--call`, with `--no-audio-devices`), both connected.
 - **Done when** a player in the client and one on the web page can talk during a game.
-- **Next**: calls between friends.
+- **Next**: the game's voice chat.
 
 ### After that
 

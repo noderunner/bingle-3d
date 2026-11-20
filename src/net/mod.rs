@@ -31,11 +31,12 @@ use crate::config::Store;
 use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
 use api::{
-    AccountEvent, BotInfo, DirectMessage, Event, FriendSettings, FriendsList, GameInfo, GameState,
-    OpenGame, Selections,
+    AccountEvent, BotInfo, DirectCall, DirectMessage, DirectSignal, Event, FriendSettings,
+    FriendsList, GameInfo, GameState, IceServer, OpenGame, Selections,
 };
 use std::collections::BTreeMap;
 
+use crate::call::DirectCalling;
 use crate::friends::{self, Friends};
 use crate::new_game::NewGame;
 use crate::sign_in::Signing;
@@ -70,6 +71,7 @@ impl Plugin for NetPlugin {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(
@@ -137,6 +139,16 @@ pub enum Request {
     Messages { with: String },
     /// Write to this address.
     Write { to: String, text: String },
+    /// Ring a friend at this address, or answer them; with `join` false, hang up.
+    Call { to: String, join: bool },
+    /// The ICE servers for a call about to start.
+    IceServers,
+    /// One WebRTC message for the friend called.
+    Signal {
+        to: String,
+        kind: String,
+        data: serde_json::Value,
+    },
 }
 
 /// What a signed-in account can do with its friends list. The server decides whether it may (a
@@ -294,6 +306,17 @@ enum Reply {
     },
     /// A message arrived on the account's socket.
     Message(Box<DirectMessage>),
+    /// A call was rung, answered or hung up (`join`), or why not.
+    Called {
+        to: String,
+        join: bool,
+        result: Result<(), Problem>,
+    },
+    IceServers(Result<Vec<IceServer>, Problem>),
+    /// A call rang or ended, on the account's socket.
+    CallEvent(DirectCall),
+    /// A WebRTC message of a call, on the account's socket.
+    CallSignal(Box<DirectSignal>),
 }
 
 #[derive(Resource)]
@@ -430,32 +453,35 @@ impl AccountLink {
             self.here_at = None;
             return None;
         }
+        // The socket first: once the account says it is here, friends may ring it, and what the
+        // server sends before the socket listens is lost.
+        let mut opened = false;
+        if self.socket.is_none() && !self.retry_at.is_some_and(|t| now < t) {
+            match session.account_socket() {
+                Ok(Some(socket)) => {
+                    info!("the account's socket is open");
+                    self.socket = Some(socket);
+                    self.retry_at = None;
+                    opened = true;
+                }
+                Ok(None) => {}
+                Err(problem) => {
+                    warn!("the account's socket: {}", problem.message());
+                    self.retry_at = Some(now + RETRY_AFTER);
+                }
+            }
+        }
         if self.here_at.is_none_or(|t| now >= t) {
             if let Err(problem) = session.here(true) {
                 warn!("saying the account is here: {}", problem.message());
             }
             self.here_at = Some(now + HERE_EVERY);
         }
-        let Some(socket) = self.socket.as_mut() else {
-            if self.retry_at.is_some_and(|t| now < t) {
-                return None;
-            }
-            return match session.account_socket() {
-                Ok(Some(socket)) => {
-                    info!("the account's socket is open");
-                    self.socket = Some(socket);
-                    self.retry_at = None;
-                    // Whatever changed while it was closed.
-                    Some(Reply::Friends(session.friends()))
-                }
-                Ok(None) => None,
-                Err(problem) => {
-                    warn!("the account's socket: {}", problem.message());
-                    self.retry_at = Some(now + RETRY_AFTER);
-                    None
-                }
-            };
-        };
+        if opened {
+            // Whatever changed while it was closed.
+            return Some(Reply::Friends(session.friends()));
+        }
+        let socket = self.socket.as_mut()?;
         match socket.next() {
             Ok(None) => None,
             Ok(Some(text)) => match AccountEvent::parse(&text) {
@@ -465,6 +491,8 @@ impl AccountLink {
                 }
                 Ok(AccountEvent::Ready { address }) => Some(Reply::AccountAddress(address)),
                 Ok(AccountEvent::Message(message)) => Some(Reply::Message(Box::new(message))),
+                Ok(AccountEvent::Call(call)) => Some(Reply::CallEvent(call)),
+                Ok(AccountEvent::Signal(signal)) => Some(Reply::CallSignal(Box::new(signal))),
                 Ok(AccountEvent::Other(_)) => None,
                 Err(e) => {
                     warn!("skipped an account event this client cannot read: {e}");
@@ -626,6 +654,23 @@ fn handle(
             result: session.write(&to, &text),
             to,
         }),
+        Request::Call { to, join } => Some(Reply::Called {
+            result: session.direct_call(&to, join),
+            to,
+            join,
+        }),
+        Request::IceServers => Some(Reply::IceServers(session.ice_servers())),
+        Request::Signal { to, kind, data } => {
+            // A message the other end does not need any more (the call ended) is refused; the
+            // call itself says so.
+            if let Err(problem) = session.direct_signal(&to, &kind, data) {
+                info!(
+                    "a {kind} for the call was not relayed: {}",
+                    problem.message()
+                );
+            }
+            None
+        }
     }
 }
 
@@ -683,6 +728,8 @@ pub enum Connection {
 /// How long to wait before trying an unreachable server again.
 pub const RETRY_AFTER: Duration = Duration::from_secs(5);
 
+// A system: each resource it fills is a parameter.
+#[allow(clippy::too_many_arguments)]
 fn poll_network(
     net: Res<Net>,
     mut status: ResMut<ServerStatus>,
@@ -691,6 +738,7 @@ fn poll_network(
     mut new_game: ResMut<NewGame>,
     mut signing: ResMut<Signing>,
     mut friends: ResMut<Friends>,
+    mut call: ResMut<DirectCalling>,
 ) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -905,6 +953,17 @@ fn poll_network(
             },
             Ok(Reply::Written { to, result }) => friends.written(&to, result),
             Ok(Reply::Message(message)) => friends.received(*message),
+            Ok(Reply::Called { to, join, result }) => {
+                if let Err(problem) = &result {
+                    warn!("the call: {}", problem.message());
+                }
+                call.called(&net, &to, join, result);
+            }
+            Ok(Reply::IceServers(result)) => {
+                call.ice_servers(&net, friends.address.as_deref(), result)
+            }
+            Ok(Reply::CallEvent(event)) => call.event(&net, event),
+            Ok(Reply::CallSignal(signal)) => call.signal(*signal),
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
                 // The connection lists every game; a narrower list is asked for again.
@@ -1189,6 +1248,7 @@ mod tests {
     use crate::net::api::{Board, Game, GameInfo, GameSeat, Gesture, LegalSelection};
     use crate::play::{self, Stage};
     use bevy::ecs::system::RunSystemOnce;
+    use std::sync::Arc;
 
     fn opened() -> Opened {
         Opened {
@@ -1291,6 +1351,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let open = |code: &str| OpenGame {
@@ -1329,7 +1390,7 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.5.0".into(),
+                api_version: "1.6.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
                 account: None,
@@ -1362,6 +1423,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
@@ -1420,6 +1482,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut waiting = Table::new(opened());
@@ -1496,6 +1559,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);
@@ -1608,5 +1672,31 @@ mod tests {
             .impulse_seat = Some(2);
         app.update();
         assert_eq!(stage(&app), None);
+    }
+
+    #[test]
+    fn the_account_listens_before_it_says_it_is_here() {
+        use session::tests::{Seen, accounts, serve, session};
+        let inner = accounts(false, Arc::new(Mutex::new(false)));
+        let (addr, seen) = serve(Box::new(move |req: &Seen| match req.path.as_str() {
+            "/api/here" => (200, r#"{"people":[]}"#.into()),
+            "/api/friends" => (
+                200,
+                r#"{"friends":[],"incoming":[],"outgoing":[],"invites":[]}"#.into(),
+            ),
+            _ => inner(req),
+        }));
+        let mut s = session(&addr);
+        s.sign_in("ana", "pw").unwrap();
+        AccountLink::default().tick(&mut s, Instant::now());
+        let paths: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.path.clone())
+            .filter(|p| p == "/ws-dm" || p == "/api/here")
+            .collect();
+        // A friend who sees the account here may ring it at once: the socket must be listening.
+        assert_eq!(paths, ["/ws-dm", "/api/here"]);
     }
 }

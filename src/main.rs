@@ -6,6 +6,7 @@
 
 mod board;
 mod browser;
+mod call;
 mod camera;
 mod cli;
 mod clock;
@@ -24,7 +25,7 @@ mod run_limit;
 mod scene;
 mod sign_in;
 mod table;
-// The engine of stage 8's calls; the calls themselves (PRs 2 and 3) use what `--voice-check` does not.
+// The engine of stage 8's calls; a game's call (stage 8's PR 3) uses what friends' calls do not.
 #[allow(dead_code)]
 mod voice;
 
@@ -84,8 +85,12 @@ fn main() -> AppExit {
         },
         sign_in::SignInPlugin,
         friends::FriendsPlugin {
-            open: opts.friends || opts.talk.is_some(),
+            open: opts.friends || opts.talk.is_some() || opts.call.is_some(),
             talk: opts.talk.clone(),
+        },
+        call::CallPlugin {
+            no_devices: opts.no_audio_devices,
+            call: opts.call.clone(),
         },
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,
