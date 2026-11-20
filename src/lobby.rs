@@ -2,6 +2,9 @@
 //! move to an open seat, put one of the server's bots in it, or leave; the host may also clear
 //! another seat and, in a game that waits for them, start it once every seat is taken.
 //!
+//! A seat kept for a friend (Bingle's ADR 0107) waits for them: nobody else may sit there, and
+//! the host cannot give it up from here (`/release` is not in the API's schema yet).
+//!
 //! [`offers`] is what the panel offers, with no Bevy in it; [`draw`] puts it on the game's panel.
 //! The server decides what is allowed and says no otherwise: the offers only leave out what it
 //! would certainly refuse.
@@ -20,6 +23,10 @@ pub struct Offers {
     /// What can be done with each seat, those with nothing to offer left out.
     pub seats: Vec<SeatOffers>,
     pub start: Start,
+    /// The friends open seats are kept for, by handle.
+    pub kept: Vec<String>,
+    /// Some open seat is anybody's (not kept for a friend).
+    pub open_to_anybody: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,11 +59,21 @@ pub fn offers(table: &Table) -> Option<Offers> {
     let hosting = table.hosting();
     let mine = table.yours().map(|s| s.seat);
     let mut seats = Vec::new();
+    let mut kept = Vec::new();
     for def in &table.info.seats {
         let seat = def.seat;
         let mut calls = Vec::new();
         let label;
-        if table.is_open(seat) {
+        if let Some(friend) = table.game.kept_for(seat).filter(|_| table.is_open(seat)) {
+            // Only they may sit there; there is nothing to do with it but wait.
+            kept.push(friend.handle.clone());
+            seats.push(SeatOffers {
+                seat,
+                label: format!("{}: kept for @{}", def.label, friend.handle),
+                calls,
+            });
+            continue;
+        } else if table.is_open(seat) {
             label = def.label.clone();
             calls.push(("Sit here".to_string(), LobbyCall::Sit(seat)));
             for bot in &table.bots {
@@ -91,7 +108,12 @@ pub fn offers(table: &Table) -> Option<Offers> {
                 .map(|s| table.player(s)),
         ),
     };
-    Some(Offers { seats, start })
+    Some(Offers {
+        seats,
+        start,
+        kept,
+        open_to_anybody: table.open_to_anybody(),
+    })
 }
 
 /// The lobby on the game's panel, with why the server last said no, if it did.
@@ -106,15 +128,29 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: O
     ));
     for seat in &offers.seats {
         p.spawn(line(f.regular(13.0), colours::MUTED, &seat.label));
+        if seat.calls.is_empty() {
+            continue;
+        }
         p.spawn(buttons()).with_children(|row| {
             for (label, call) in &seat.calls {
                 row.spawn(chip(f, label, Action::Lobby(call.clone()), false));
             }
         });
     }
+    if !offers.kept.is_empty() {
+        let who: Vec<String> = offers.kept.iter().map(|h| format!("@{h}")).collect();
+        p.spawn(line(
+            f.regular(13.0),
+            colours::TEXT,
+            &format!("Waiting for {}: they are invited.", who.join(" and ")),
+        ));
+    }
     let how = match &offers.start {
         Start::WhenFull => "The game starts once every seat is taken.".to_string(),
         Start::Ready => "Every seat is taken.".to_string(),
+        Start::SeatsOpen if !offers.open_to_anybody => {
+            "You can start once they have sat down.".to_string()
+        }
         Start::SeatsOpen => "Every seat must be taken before you can start: wait for \
                              somebody to join, or put a bot in a seat."
             .to_string(),
@@ -181,6 +217,7 @@ mod tests {
                 move_time_seconds: None,
                 lobby,
                 host_seat: Some(host_seat),
+                reservations: vec![],
             },
             state: GameState {
                 status: "waiting".into(),
@@ -200,6 +237,41 @@ mod tests {
             .find(|s| s.seat == seat)
             .map(|s| s.calls.iter().map(|(_, c)| c.clone()).collect())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_seat_kept_for_a_friend_waits_for_them_and_offers_nothing() {
+        use crate::net::api::Reservation;
+        let mut t = table(true, 1, vec![seat(1, "Ana", "", true)]);
+        t.game.reservations = vec![Reservation {
+            seat: 2,
+            handle: "bob".into(),
+            yours: false,
+        }];
+        let o = offers(&t).unwrap();
+        assert_eq!(calls(&o, 2), [], "nobody else may sit there");
+        assert_eq!(o.seats[0].label, "Seat 2: kept for @bob");
+        assert_eq!(calls(&o, 3).len(), 2, "the other open seat is anybody's");
+        assert_eq!(o.kept, ["bob"]);
+        assert!(o.open_to_anybody);
+        assert_eq!(o.start, Start::SeatsOpen);
+        assert!(t.open_to_anybody(), "seat 3 is open to anybody");
+        t.game.reservations.push(Reservation {
+            seat: 3,
+            handle: "cy".into(),
+            yours: false,
+        });
+        assert!(
+            !t.open_to_anybody(),
+            "no room code for anybody to join with"
+        );
+        t.game.reservations.pop();
+
+        // Bob took it: an ordinary seat at the table, the host's to clear.
+        t.game.seats.push(seat(2, "bob", "", false));
+        let o = offers(&t).unwrap();
+        assert_eq!(calls(&o, 2), [LobbyCall::Remove(2)]);
+        assert!(o.kept.is_empty());
     }
 
     #[test]

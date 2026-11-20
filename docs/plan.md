@@ -264,8 +264,19 @@ Friends, direct messages and calls need a signed-in account (ADR 0105); a guest 
   The server keeps no record of what was read, so unread messages are those that arrived while
   their conversation was not open; they count on *Write* (*Write · 2*) and in the closed panel's
   *waiting*. `--talk HANDLE` opens a conversation at start.
-- **Next**: the "done when", by hand against the web page. Then, later, a seat kept for a friend
-  on the new game form (`reserved_seats`, Bingle's ADR 0107).
+- A seat kept for a friend (Bingle's ADR 0107). Signed in, each seat of the new game form also
+  offers the account's friends (`@bob`); a friend has one seat at most. The game is made with
+  `reserved_seats`; the server then keeps it waiting for its creator's *Start* (the form shows
+  *When I say* chosen and says why) and invites the friend. In the lobby a kept seat reads *kept
+  for @bob*, offers nothing (nobody else may sit there), and the host is told it can start once
+  they have sat down; the room code is only offered while some open seat is anybody's. The games
+  list says *a seat is kept for you*, and *Join* (or *Join* on the invitation) takes it, the
+  server giving that seat first. A game whose open seats are all kept for others is only
+  watched, rather than refused. Reservations do not come with `state` events: a friend sitting
+  down is seen as the seat being taken.
+- Not built: the host giving a kept seat up (`POST /games/{code}/release`), which is in Bingle's
+  `docs/api.md` but not its schema, so it is for Bingle first.
+- **Next**: the "done when", by hand against the web page; then stage 8.
 
 ### Stage 8: voice chat
 

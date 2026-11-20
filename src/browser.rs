@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use crate::families::{Family, families};
 use crate::fonts::UiFonts;
-use crate::friends::FriendAction;
+use crate::friends::{FriendAction, Friends};
 use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
@@ -51,7 +51,8 @@ impl Plugin for BrowserPlugin {
                             .or_eager(resource_changed::<GameList>)
                             .or_eager(resource_changed::<NewGame>)
                             .or_eager(resource_changed::<ChosenMembers>)
-                            .or_eager(resource_changed::<Signing>),
+                            .or_eager(resource_changed::<Signing>)
+                            .or_eager(resource_changed::<Friends>),
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
@@ -279,6 +280,7 @@ fn rebuild_list(
     new_game: Res<NewGame>,
     chosen: Res<ChosenMembers>,
     signing: Res<Signing>,
+    friends: Res<Friends>,
     fonts: Res<UiFonts>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
@@ -301,7 +303,16 @@ fn rebuild_list(
                 sign_in::draw(area, f, signing.form.as_ref().unwrap());
             }
             Connection::Ready(snap) => match &new_game.form {
-                Some(form) => new_game::draw(area, f, form),
+                Some(form) => {
+                    // A seat can be kept for a friend only by an account that has them.
+                    let handles: Vec<String> = match (&snap.account, &friends.list) {
+                        (Some(_), Some(list)) => {
+                            list.friends.iter().map(|x| x.handle.clone()).collect()
+                        }
+                        _ => vec![],
+                    };
+                    new_game::draw(area, f, form, &handles)
+                }
                 None => {
                     games_being_played(area, f, &list);
                     games_to_start(area, f, snap, &chosen);
@@ -518,6 +529,7 @@ pub fn describe_game(game: &OpenGame) -> (String, String) {
         names.join(" vs ")
     };
     let state = match game.status.as_str() {
+        "waiting" if game.reserved_for_you => "a seat is kept for you".to_string(),
         "waiting" if game.open_seats > 0 => format!(
             "waiting for players: {} of {} {} free",
             game.open_seats,
@@ -973,6 +985,7 @@ mod tests {
                 .collect(),
             impulse_seat: None,
             lobby: false,
+            reserved_for_you: false,
         }
     }
 
@@ -1000,6 +1013,13 @@ mod tests {
             describe_game(&full).1,
             "Ana vs Bo  —  waiting for its host to start it"
         );
+    }
+
+    #[test]
+    fn a_seat_kept_for_this_viewer_is_said() {
+        let mut kept = game("waiting", 2, &[("Ana", "")]);
+        kept.reserved_for_you = true;
+        assert_eq!(describe_game(&kept).1, "Ana  —  a seat is kept for you");
     }
 
     #[test]

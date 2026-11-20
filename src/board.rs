@@ -857,6 +857,7 @@ mod tests {
                     move_time_seconds: None,
                     lobby: false,
                     host_seat: None,
+                    reservations: vec![],
                     seats: vec![],
                 },
                 state: state(1, &["a1"]),

@@ -258,7 +258,7 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
 
 /// While a game this client is in waits for players: how somebody else joins it.
 fn waiting_for_players(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
-    if table.state.status != "waiting" || table.yours().is_none() || !table.game.has_open_seat() {
+    if table.state.status != "waiting" || table.yours().is_none() || !table.open_to_anybody() {
         return;
     }
     p.spawn(line(

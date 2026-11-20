@@ -168,6 +168,8 @@ pub struct GameSettings {
     pub time: TimeControl,
     /// It waits for this client's start, even once every seat is taken.
     pub lobby: bool,
+    /// Seats kept for friends, by seat: their handles (signed in only).
+    pub reserved: BTreeMap<u32, String>,
 }
 
 /// What a player at the table may do before the game starts. The server decides whether they
@@ -1213,6 +1215,7 @@ mod tests {
                 move_time_seconds: None,
                 lobby: false,
                 host_seat: Some(1),
+                reservations: vec![],
                 seats: vec![
                     GameSeat {
                         seat: 1,
@@ -1300,6 +1303,7 @@ mod tests {
             players: vec![],
             impulse_seat: None,
             lobby: false,
+            reserved_for_you: false,
         };
         {
             let mut list = app.world_mut().resource_mut::<GameList>();

@@ -305,6 +305,9 @@ pub struct OpenGame {
     /// It waits for its host to start it, even with every seat filled.
     #[serde(default)]
     pub lobby: bool,
+    /// A seat is kept for this viewer, a friend of the game's creator.
+    #[serde(default)]
+    pub reserved_for_you: bool,
 }
 
 /// A taken seat, as `GET /api/games` lists it (these field names are capitalised on the wire).
@@ -455,6 +458,19 @@ pub struct Game {
     /// starts. Absent when no person sits.
     #[serde(default)]
     pub host_seat: Option<u32>,
+    /// The seats kept for friends of the creator (Bingle's ADR 0107).
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub reservations: Vec<Reservation>,
+}
+
+/// A seat kept for a friend.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Reservation {
+    pub seat: u32,
+    pub handle: String,
+    /// It is kept for this viewer.
+    #[serde(default)]
+    pub yours: bool,
 }
 
 /// A game clock: what each seat has left, and whose time is running.
@@ -476,11 +492,16 @@ pub struct SeatClock {
 }
 
 impl Game {
-    /// A seat nobody plays yet, a person or a bot.
-    pub fn has_open_seat(&self) -> bool {
-        self.seats
-            .iter()
-            .any(|s| s.name.is_empty() && s.bot.is_empty())
+    /// The friend `seat` is kept for, if it is kept for somebody.
+    pub fn kept_for(&self, seat: u32) -> Option<&Reservation> {
+        self.reservations.iter().find(|r| r.seat == seat)
+    }
+
+    /// A seat this viewer may take: open, and not kept for somebody else.
+    pub fn has_seat_for_me(&self) -> bool {
+        self.seats.iter().any(|s| {
+            s.name.is_empty() && s.bot.is_empty() && self.kept_for(s.seat).is_none_or(|r| r.yours)
+        })
     }
 }
 
@@ -524,6 +545,10 @@ pub struct CreateGameRequest {
     /// Wait for the creator's start, even with every seat taken.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub lobby: bool,
+    /// Seats kept for friends of the creator, by seat number: their handles. The server then
+    /// keeps the game waiting for its creator's start, and invites them.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub reserved_seats: BTreeMap<String, String>,
 }
 
 impl CreateGameRequest {
@@ -539,6 +564,7 @@ impl CreateGameRequest {
             clock_increment_seconds: None,
             move_time_seconds: None,
             lobby: false,
+            reserved_seats: BTreeMap::new(),
         }
     }
 }
@@ -1251,6 +1277,7 @@ mod tests {
             "POST /api/games",
             json(CreateGameRequest {
                 lobby: true,
+                reserved_seats: [("2".to_string(), "bob".to_string())].into(),
                 ..CreateGameRequest::new("g", "Ana", None)
             }),
         );
