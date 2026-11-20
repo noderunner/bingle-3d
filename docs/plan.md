@@ -1,8 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 7 under way: a game can be played against the server's bots or a person, found,
-set up and started from its lobby; the player can sign in to an account, and has friends
-(2026-11-19).
+Status: stage 9 under way: a game can be played against the server's bots or a person, found,
+set up and started from its lobby; the player can sign in to an account, has friends and can talk
+to them; Hex has a look of its own, made by the asset pipeline (2026-11-20).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
@@ -54,6 +54,9 @@ being changed:
 | API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.6.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
+| Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
+| Textures | JPEG, given mipmaps by the client when they load (`src/textures.rs`); the room's light as prefiltered KTX2 cubemaps | Bevy 0.20 makes no mipmaps, and lossless KTX2 with them is ten times the size; Bevy's runtime-filtered environment light filters every frame |
+| Appearance | TOML files in `assets/appearance/`, one per game (or family of variants), by game id | Data, never code; `toml` is already a dependency. Replaces "RON or YAML" in the plan before |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
 ## Stages
@@ -400,15 +403,37 @@ a browser puts in each message and what the page expects of the other end.
 - **Next**: a relay reached over TCP or TLS, if players need it; by ear, a call on speakers and
   one through coturn.
 
+### Stage 9: a table worth looking at
+
+The first hand-made look, Hex's, and the pipeline that makes it, so that more can follow (decision 8).
+
+- The pipeline (`assets-src/README.md`): `bash scripts/assets.sh` runs Blender headless on the
+  scripts in `assets-src/blender/`, which fetch the CC0 sources listed in `sources.toml` (checked
+  by SHA-256) and write `assets/`. `previews` renders the assets in Cycles for a person to look
+  at. Blender is Flathub's, on the host (it renders on the GPU there); the toolbox has none.
+- The room: an HDR photograph of a room (Poly Haven, CC0), filtered by the pipeline into the
+  diffuse and specular cubemaps Bevy's `EnvironmentMapLight` reads, on every 3D camera, turned so
+  its windows are on the key light's side. A wooden table.
+- Every board is wood (teak), each cell its own tile over grooves of darker wood, the grain mapped
+  by position so it runs on across cells; every piece is a lens-shaped stone modelled in Blender.
+  These are the generic defaults (`look.rs`), for every game.
+- The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
+  seat's pieces and goal edges are made of, and each seat's colour in the panels. Hex's: slate and
+  clamshell stones, the slate side's edges stained ebony and the shell side's in maple.
+- As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
+  each material using one is built again (Bevy does not rebuild a material when its image
+  changes). Bevy's `jpeg` feature is the only new code (zune-jpeg).
+- **Next**: the maintainer's eye on it, on the GPU; then per-piece models (a piece kind per
+  model), and a look for the next game.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
   reserves and pools; tints, badges and counters by name; card zones for card games.
 - More games: square boards, points and stacks (Go, Tak), drawn from their definitions.
-- Appearance: a per-game appearance file read by this client only (name and format to be decided:
-  likely RON or YAML, data and never code), with models, materials and camera for that game;
-  hand-made looks for a few games that reward it; the private overlay's games' appearance loaded
-  from a configured folder, without this repository naming them (decision 2).
+- Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
+  reward it; the private overlay's games' appearance loaded from a configured folder, without
+  this repository naming them (decision 2).
 - Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
   tutorials and puzzles.
 
@@ -461,3 +486,12 @@ Settled 2026-11-20:
    network I/O being on the network thread: a frame must go every 20 ms, and that thread waits on
    blocking calls. It shares nothing with the network thread but channels; the signalling still
    goes through the network thread, as every call to the server does.
+
+Settled 2026-11-20, with the maintainer:
+
+8. **Assets are made by scripts, from CC0 sources.** Blender (pinned to 5.3) runs headless on
+   Python scripts in `assets-src/`; textures and light are scanned CC0 material (Poly Haven),
+   fetched by URL and SHA-256, never committed as sources; models and procedural textures are
+   made by the scripts. What they make is committed in `assets/` and compiled into the binary
+   (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a teak
+   board, the goal edges stained to match the stones.

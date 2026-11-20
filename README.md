@@ -119,8 +119,14 @@ cargo run -- --host hex-7 --voice --relay-only   # the same call, only through t
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
-as squares, pieces as stones in their seat's colour, and the edges a seat must connect (its
-`goals`) as strips in its colour. The client needs a Bingle whose API is 1.6 or newer.
+as squares, in wood on a wooden table, lit by a real room's light; pieces as stones in their
+seat's colour, and the edges a seat must connect (its `goals`) as strips stained in its colour.
+A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
+clamshell stones. The client needs a Bingle whose API is 1.6 or newer.
+
+The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
+make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
+the client does not need Blender: what the scripts make is committed.
 
 ## Connecting to a server
 

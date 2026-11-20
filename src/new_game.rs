@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 
-use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::appearance::Appearances;
+use crate::browser::{Action, button, buttons, chip, colours, line, seat_dot};
 use crate::fonts::UiFonts;
-use crate::look::seat_colour;
 use crate::net::api::{BotInfo, GameInfo};
 use crate::net::session::Problem;
 use crate::net::{GameSettings, TimeControl};
@@ -182,7 +182,13 @@ impl Form {
 
 /// The form, in place of the lists. `friends` are the handles of the signed-in account's
 /// friends, who a seat can be kept for (none for a guest).
-pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, friends: &[String]) {
+pub fn draw(
+    area: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    form: &Form,
+    friends: &[String],
+    appearances: &Appearances,
+) {
     area.spawn(line(
         f.semibold(17.0),
         colours::TEXT,
@@ -227,15 +233,9 @@ pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, friends: 
                     ..default()
                 })
                 .with_children(|row| {
-                    row.spawn((
-                        Node {
-                            width: px(12),
-                            height: px(12),
-                            border_radius: BorderRadius::all(px(6)),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                        BackgroundColor(seat_colour(&seat.color, seat.seat)),
+                    row.spawn(seat_dot(
+                        appearances.seat_colour(&form.def_id, &seat.color, seat.seat),
+                        12.0,
                     ));
                     row.spawn(line(f.semibold(14.0), colours::TEXT, &seat.label));
                 });

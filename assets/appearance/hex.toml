@@ -1,0 +1,50 @@
+# How this client draws Hex (Bingle's ADR 0124: the server says what things are, and each client
+# decides how they look). Data only: nothing here changes the rules, and a game with no file like
+# this one is drawn by the generic defaults in `src/look.rs`.
+#
+# Slate and shell stones on a teak board, each side's edges stained to match its stones.
+
+# The games this file is for, by the id the server gives them.
+games = ["hex-7", "hex-9", "hex-11", "hex-13"]
+
+# Each piece, by the id the game gives it: the model it is drawn as.
+[pieces.stone]
+model = "models/stone.glb"
+
+# Each seat, by its colour word, which is a name and not a colour: what its pieces are made of,
+# what the edges it must connect are stained, and its colour in the panels.
+[seats.red]
+pieces = "slate"
+goal = "ebony"
+colour = [0.13, 0.13, 0.14]
+
+[seats.blue]
+pieces = "shell"
+goal = "maple"
+colour = [0.92, 0.91, 0.87]
+
+# Materials. `albedo` is a texture, or `wood` one of the woods in `src/look.rs`; `tint` (sRGB)
+# multiplies its colour, as a stain does. Polish is a clear coat over the material.
+[materials.slate]
+albedo = "textures/stone/slate_albedo.jpg"
+roughness = 0.45
+reflectance = 0.3
+clearcoat = 0.5
+clearcoat_roughness = 0.1
+
+[materials.shell]
+albedo = "textures/stone/shell_albedo.jpg"
+roughness = 0.25
+clearcoat = 0.6
+clearcoat_roughness = 0.08
+
+[materials.ebony]
+wood = "teak"
+tint = [0.20, 0.13, 0.09]
+clearcoat = 0.5
+clearcoat_roughness = 0.2
+
+[materials.maple]
+wood = "maple"
+clearcoat = 0.5
+clearcoat_roughness = 0.2

@@ -1,5 +1,8 @@
-# Cargo build output
+# Cargo build output, and the asset pipeline's downloads and previews
 /target/
+
+# Python's compiled modules, from the asset pipeline's scripts
+__pycache__/
 
 # Editors and OS
 .idea/

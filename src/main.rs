@@ -4,6 +4,8 @@
 //! table in 3D on which a game can be watched, or played against the server's bots, from the API
 //! alone.
 
+mod appearance;
+mod assets;
 mod board;
 mod browser;
 mod call;
@@ -25,6 +27,7 @@ mod run_limit;
 mod scene;
 mod sign_in;
 mod table;
+mod textures;
 mod voice;
 mod voice_chat;
 
@@ -70,6 +73,12 @@ fn main() -> AppExit {
         require_markers: true,
         ..default()
     })
+    // The files the scene is drawn with, and how each game looks.
+    .add_plugins((
+        assets::AssetsPlugin,
+        textures::TexturesPlugin,
+        appearance::AppearancePlugin,
+    ))
     .add_plugins((
         fonts::FontsPlugin,
         scene::ScenePlugin,

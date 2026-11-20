@@ -5,6 +5,10 @@
 //! Nothing here names a game. A hex board's cells are hexagons and a grid's squares, and any other
 //! board's positions are round spots; the same code draws every board of each kind.
 //!
+//! How it looks comes from `look.rs`: a wooden board, its cells raised a little over grooves of
+//! darker wood, and stones in each seat's colour. A game's appearance file (`appearance.rs`) may
+//! choose the pieces' model and what each seat's pieces and goal edges are made of instead.
+//!
 //! A seat's goal is drawn from the game's `goals` and the board's `regions`: a strip in the seat's
 //! colour along the outer sides of each region the seat must connect (a hex board's edges), and a
 //! neutral one for a goal every seat shares. Only `connect` goals are drawn; any other type is
@@ -18,10 +22,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::time::Duration;
 
+use bevy::ecs::system::SystemParam;
+use bevy::gltf::GltfAssetLabel;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 
-use crate::look::seat_colour;
+use crate::appearance::{Appearance, Appearances};
+use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
 use crate::play::{Hovering, Spot, Stage};
@@ -172,6 +179,9 @@ struct Ghost;
 #[derive(Component)]
 struct LastMoveMark;
 
+/// How thick the piece model is (`assets-src/blender/stones.py`), at the full pitch.
+const STONE_THICKNESS: f32 = 0.0088;
+
 /// A piece on its way down to where it was played.
 #[derive(Component)]
 struct Dropping {
@@ -187,6 +197,8 @@ const DROP_TIME: Duration = Duration::from_millis(280);
 struct Kit {
     stone: Handle<Mesh>,
     stone_height: f32,
+    /// The model is made for the full pitch; a smaller board's pieces are smaller.
+    stone_scale: f32,
     materials: HashMap<String, Handle<StandardMaterial>>,
     cell: Handle<StandardMaterial>,
     /// A cell a click would be taken on.
@@ -195,11 +207,42 @@ struct Kit {
     ghost: Handle<StandardMaterial>,
 }
 
+/// What a board is drawn with: where its meshes and materials go, where its files come from, and
+/// the game's own look, if it has one.
+struct Tools<'a> {
+    server: &'a AssetServer,
+    meshes: &'a mut Assets<Mesh>,
+    materials: &'a mut Assets<StandardMaterial>,
+    look: Option<&'a Appearance>,
+}
+
+impl Tools<'_> {
+    fn material(&mut self, spec: &MaterialSpec) -> Handle<StandardMaterial> {
+        self.materials.add(spec.build(self.server))
+    }
+
+    /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
+    fn piece_material(&self, colour: &str, seat: u32) -> MaterialSpec {
+        self.look
+            .and_then(|l| l.material(l.seats.get(colour).and_then(|s| s.pieces.as_ref())))
+            .cloned()
+            .unwrap_or_else(|| look::piece(seat_colour(colour, seat)))
+    }
+}
+
+/// The resources a board is drawn with, as one system parameter.
+#[derive(SystemParam)]
+struct Drawing<'w> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    server: Res<'w, AssetServer>,
+    appearances: Res<'w, Appearances>,
+}
+
 fn sync_board(
     mut commands: Commands,
     watch: Res<WatchStatus>,
-    // Together, to keep the argument count within clippy's limit.
-    (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
+    mut drawing: Drawing,
     roots: Query<(Entity, &BoardRoot, &Kit)>,
     pieces: Query<(Entity, &PieceAt)>,
     mut marks: Query<(&mut Transform, &mut Visibility), With<LastMoveMark>>,
@@ -219,7 +262,19 @@ fn sync_board(
             commands.entity(old).despawn();
         }
         let layout = Layout::new(&table.info.board.positions);
-        let kit = build_board(&mut commands, &mut meshes, &mut materials, table, &layout);
+        let Drawing {
+            meshes,
+            materials,
+            server,
+            appearances,
+        } = &mut drawing;
+        let mut tools = Tools {
+            server,
+            meshes,
+            materials,
+            look: appearances.for_game(&table.info.id),
+        };
+        let kit = build_board(&mut commands, &mut tools, table, &layout);
         built.write(BoardBuilt { size: layout.size });
         // A board just built shows the position as it is, without dropping every piece.
         let root = kit.0;
@@ -279,7 +334,9 @@ fn place_pieces(
             Name::new(format!("{} at {}", at.piece.piece, at.cell)),
             Mesh3d(kit.stone.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(Vec3::new(centre.x, start, centre.z)),
+            Transform::from_translation(Vec3::new(centre.x, start, centre.z))
+                .with_rotation(Quat::from_rotation_y(yaw(&at.cell, at.layer)))
+                .with_scale(Vec3::splat(kit.stone_scale)),
             // A click on a piece is a click on where it stands.
             Spot(at.cell.clone()),
             Pickable::default(),
@@ -293,6 +350,17 @@ fn place_pieces(
             });
         }
     }
+}
+
+/// How far a piece is turned about its axis: the same for the same place, and different from
+/// place to place, so no two stones' grain or lines lie the same way.
+fn yaw(cell: &str, layer: usize) -> f32 {
+    // FNV-1a: small, and the same everywhere.
+    let mut h: u32 = 0x811c_9dc5;
+    for b in cell.bytes().chain(std::iter::once(layer as u8)) {
+        h = (h ^ b as u32).wrapping_mul(0x0100_0193);
+    }
+    (h % 3600) as f32 / 3600.0 * TAU
 }
 
 /// Every piece of the position, bottom of each stack first.
@@ -314,31 +382,19 @@ fn wanted_pieces(table: &Table) -> Vec<PieceAt> {
 
 fn build_board(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    tools: &mut Tools,
     table: &Table,
     layout: &Layout,
 ) -> (Entity, Kit) {
     let shape = CellShape::of(&table.info.board);
     let pitch = layout.pitch;
-    let base_mesh = meshes.add(shape.mesh(pitch, 1.0, BASE_HEIGHT));
-    let cell_mesh = meshes.add(shape.mesh(pitch, 0.9, CELL_HEIGHT));
-    let base = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.42, 0.30, 0.20),
-        perceptual_roughness: 0.8,
-        ..default()
-    });
-    let cell = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.86, 0.80, 0.68),
-        perceptual_roughness: 0.7,
-        ..default()
-    });
-    let target = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.92, 0.80),
-        emissive: LinearRgba::rgb(0.10, 0.12, 0.05),
-        perceptual_roughness: 0.6,
-        ..default()
-    });
+    let cell_mesh = shape.mesh(pitch, 0.94, CELL_HEIGHT);
+    let base = tools.material(&look::groove());
+    let board = look::board();
+    let cell = tools.material(&board);
+    let mut lit = board.build(tools.server);
+    lit.emissive = LinearRgba::rgb(0.10, 0.12, 0.05);
+    let target = tools.materials.add(lit);
 
     let root = commands
         .spawn((
@@ -351,36 +407,53 @@ fn build_board(
         ))
         .id();
     // Round spots stand on one slab; hexagons and squares make their own base, which keeps the
-    // board's outline (a hex board's rhombus, say).
-    if shape == CellShape::Spot {
+    // board's outline (a hex board's rhombus, say). Either way it is one mesh, its grain
+    // running on from cell to cell.
+    let base_mesh = if shape == CellShape::Spot {
         let (lo, hi) = layout.centres.values().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(lo, hi), c| (lo.min(*c), hi.max(*c)),
         );
-        if lo.x.is_finite() {
+        lo.x.is_finite().then(|| {
             let size = hi - lo + Vec3::splat(pitch);
-            commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(size.x, BASE_HEIGHT, size.z))),
-                MeshMaterial3d(base.clone()),
-                Transform::from_translation((lo + hi) / 2.0 + Vec3::Y * BASE_HEIGHT / 2.0),
-                ChildOf(root),
-            ));
-        }
+            Cuboid::new(size.x, BASE_HEIGHT, size.z)
+                .mesh()
+                .build()
+                .translated_by((lo + hi) / 2.0 + Vec3::Y * BASE_HEIGHT / 2.0)
+        })
+    } else {
+        let one = shape.mesh(pitch, 1.0, BASE_HEIGHT);
+        layout
+            .centres
+            .values()
+            .fold(None, |all: Option<Mesh>, centre| {
+                let next = one.clone().translated_by(*centre);
+                Some(match all {
+                    None => next,
+                    Some(mut all) => {
+                        if let Err(e) = all.merge(&next) {
+                            warn!("the board's base: {e}");
+                        }
+                        all
+                    }
+                })
+            })
+    };
+    if let Some(mesh) = base_mesh {
+        commands.spawn((
+            Name::new("Board"),
+            Mesh3d(tools.meshes.add(look::world_uvs(mesh, Vec3::ZERO))),
+            MeshMaterial3d(base),
+            ChildOf(root),
+        ));
     }
     for (id, centre) in &layout.centres {
-        if shape != CellShape::Spot {
-            commands.spawn((
-                Mesh3d(base_mesh.clone()),
-                MeshMaterial3d(base.clone()),
-                Transform::from_translation(*centre),
-                ChildOf(root),
-            ));
-        }
+        let at = *centre + Vec3::Y * BASE_HEIGHT;
         commands.spawn((
             Name::new(format!("Cell {id}")),
-            Mesh3d(cell_mesh.clone()),
+            Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
             MeshMaterial3d(cell.clone()),
-            Transform::from_translation(*centre + Vec3::Y * BASE_HEIGHT),
+            Transform::from_translation(at),
             Cell(id.clone()),
             Spot(id.clone()),
             Pickable::default(),
@@ -388,9 +461,9 @@ fn build_board(
         ));
     }
 
-    draw_goals(commands, meshes, materials, root, table, layout, shape);
+    draw_goals(commands, tools, root, table, layout, shape);
 
-    let mark = materials.add(StandardMaterial {
+    let mark = tools.materials.add(StandardMaterial {
         base_color: Color::srgb(0.98, 0.84, 0.30),
         emissive: LinearRgba::rgb(0.6, 0.45, 0.1),
         ..default()
@@ -398,32 +471,42 @@ fn build_board(
     commands.spawn((
         Name::new("Last move"),
         LastMoveMark,
-        Mesh3d(meshes.add(Torus::new(pitch * 0.40, pitch * 0.47))),
+        Mesh3d(tools.meshes.add(Torus::new(pitch * 0.40, pitch * 0.47))),
         MeshMaterial3d(mark),
         Transform::default(),
         Visibility::Hidden,
         ChildOf(root),
     ));
 
-    let stone_height = pitch * 0.28;
+    // Every piece is drawn as one model for now, whatever its kind: the generic stone, or the
+    // one the game's appearance gives.
+    let model = tools
+        .look
+        .and_then(|l| l.pieces.values().next())
+        .map_or(look::PIECE_MODEL, |p| p.model.as_str());
+    let stone = tools.server.load(
+        GltfAssetLabel::Primitive {
+            mesh: 0,
+            primitive: 0,
+        }
+        .from_asset(crate::assets::path(model)),
+    );
+    let stone_scale = pitch / PITCH;
     let yours = table.yours();
-    let ghost = materials.add(StandardMaterial {
-        base_color: seat_colour(
-            yours.map_or("", |s| s.color.as_str()),
-            yours.map_or(1, |s| s.seat),
-        )
-        .with_alpha(0.5),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.35,
-        ..default()
-    });
+    let mut ghost = yours
+        .map(|s| tools.piece_material(&s.color, s.seat))
+        .unwrap_or_else(|| look::piece(seat_colour("", 1)))
+        .build(tools.server);
+    ghost.base_color = ghost.base_color.with_alpha(0.5);
+    ghost.alpha_mode = AlphaMode::Blend;
     let kit = Kit {
-        stone: meshes.add(Cylinder::new(pitch * 0.40, stone_height)),
-        stone_height,
-        materials: seat_materials(&table.info, materials),
+        stone,
+        stone_height: STONE_THICKNESS * stone_scale,
+        stone_scale,
+        materials: seat_materials(&table.info, tools),
         cell,
         target,
-        ghost,
+        ghost: tools.materials.add(ghost),
     };
     (root, kit)
 }
@@ -596,8 +679,7 @@ fn outward(cells: &[Vec2], middle: Vec2) -> Option<Vec2> {
 
 fn draw_goals(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    tools: &mut Tools,
     root: Entity,
     table: &Table,
     layout: &Layout,
@@ -609,39 +691,42 @@ fn draw_goals(
     }
     let height = SURFACE * 0.9;
     // A little longer than the side, so that strips meet round a hex board's zigzag edge.
-    let mesh = meshes.add(Cuboid::new(
-        strips[0].length * 1.12,
-        height,
-        layout.pitch * STRIP_WIDTH,
-    ));
+    let strip = Cuboid::new(strips[0].length * 1.12, height, layout.pitch * STRIP_WIDTH)
+        .mesh()
+        .build();
     let mut by_seat: HashMap<Option<u32>, Handle<StandardMaterial>> = HashMap::new();
-    for strip in strips {
-        let material = by_seat
-            .entry(strip.seat)
-            .or_insert_with(|| {
-                let colour = match strip
+    for goal in strips {
+        let material = match by_seat.get(&goal.seat) {
+            Some(m) => m.clone(),
+            None => {
+                let seat = goal
                     .seat
-                    .and_then(|s| table.info.seats.iter().find(|d| d.seat == s))
-                {
-                    Some(seat) => seat_colour(&seat.color, seat.seat),
-                    // A goal every seat shares.
-                    None => Color::srgb(0.25, 0.22, 0.20),
-                };
-                materials.add(StandardMaterial {
-                    base_color: colour,
-                    perceptual_roughness: 0.5,
-                    ..default()
-                })
-            })
-            .clone();
-        // The strip's length runs along the side, square to the way it faces.
-        let along = strip.normal.perp();
+                    .and_then(|s| table.info.seats.iter().find(|d| d.seat == s));
+                let spec = seat
+                    .and_then(|seat| {
+                        let look = tools.look?;
+                        look.material(look.seats.get(&seat.color)?.goal.as_ref())
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| {
+                        look::goal(seat.map(|seat| seat_colour(&seat.color, seat.seat)))
+                    });
+                let m = tools.material(&spec);
+                by_seat.insert(goal.seat, m.clone());
+                m
+            }
+        };
+        // The strip's length runs along the side, square to the way it faces. Its mesh is put
+        // where it goes, so the wood is mapped by where it is.
+        let along = goal.normal.perp();
+        let mesh = strip
+            .clone()
+            .rotated_by(Quat::from_rotation_y(f32::atan2(-along.y, along.x)))
+            .translated_by(goal.centre + Vec3::Y * height / 2.0);
         commands.spawn((
-            Name::new(format!("Goal: {}", strip.region)),
-            Mesh3d(mesh.clone()),
+            Name::new(format!("Goal: {}", goal.region)),
+            Mesh3d(tools.meshes.add(look::world_uvs(mesh, Vec3::ZERO))),
             MeshMaterial3d(material),
-            Transform::from_translation(strip.centre + Vec3::Y * height / 2.0)
-                .with_rotation(Quat::from_rotation_y(f32::atan2(-along.y, along.x))),
             ChildOf(root),
         ));
     }
@@ -649,19 +734,12 @@ fn draw_goals(
 
 /// One material per seat colour word. A piece in a colour no seat plays is drawn in the default
 /// material, which no seat uses.
-fn seat_materials(
-    info: &GameInfo,
-    materials: &mut Assets<StandardMaterial>,
-) -> HashMap<String, Handle<StandardMaterial>> {
+fn seat_materials(info: &GameInfo, tools: &mut Tools) -> HashMap<String, Handle<StandardMaterial>> {
     info.seats
         .iter()
         .map(|s| {
-            let handle = materials.add(StandardMaterial {
-                base_color: seat_colour(&s.color, s.seat),
-                perceptual_roughness: 0.35,
-                ..default()
-            });
-            (s.color.clone(), handle)
+            let spec = tools.piece_material(&s.color, s.seat);
+            (s.color.clone(), tools.material(&spec))
         })
         .collect()
 }
@@ -713,7 +791,9 @@ fn show_turn(
             Ghost,
             Mesh3d(kit.stone.clone()),
             MeshMaterial3d(kit.ghost.clone()),
-            Transform::from_translation(Vec3::new(centre.x, y, centre.z)),
+            Transform::from_translation(Vec3::new(centre.x, y, centre.z))
+                .with_rotation(Quat::from_rotation_y(yaw(cell, below)))
+                .with_scale(Vec3::splat(kit.stone_scale)),
             ChildOf(root),
         ));
     }
@@ -803,6 +883,8 @@ mod tests {
             app.add_plugins((MinimalPlugins, AssetPlugin::default(), BoardPlugin))
                 .init_asset::<Mesh>()
                 .init_asset::<StandardMaterial>()
+                .init_asset::<Image>()
+                .init_resource::<Appearances>()
                 .init_resource::<WatchStatus>()
                 .init_resource::<Hovering>();
             app
