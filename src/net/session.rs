@@ -565,7 +565,9 @@ impl Session {
             return Err(not_a_room_code(room_code));
         }
         let game: Game = self.get_as_me(&url, &format!("/api/games/{room_code}"))?;
-        if game.status != "waiting" || game.seats.iter().any(|s| s.yours) || !game.has_open_seat() {
+        // A seat kept for somebody else cannot be taken: such a game is only watched.
+        if game.status != "waiting" || game.seats.iter().any(|s| s.yours) || !game.has_seat_for_me()
+        {
             return Ok(());
         }
         // A seat goes by its player's name, so the name must not be one already at the table.
@@ -1055,6 +1057,11 @@ pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGam
         clock_increment_seconds,
         move_time_seconds,
         lobby: settings.lobby,
+        reserved_seats: settings
+            .reserved
+            .iter()
+            .map(|(seat, handle)| (seat.to_string(), handle.clone()))
+            .collect(),
         ..CreateGameRequest::new(&settings.game_def_id, player_name, None)
     }
 }
@@ -1404,8 +1411,19 @@ mod tests {
             let game = |status: &str, seats: &str| {
                 format!(r#"{{"game_def_id":"hex-7","status":"{status}","seats":[{seats}]}}"#)
             };
+            let kept = |yours: bool| {
+                format!(
+                    r#"{{"game_def_id":"hex-7","status":"waiting","seats":[{ana},{open}],"reservations":[{{"seat":2,"handle":"bob","yours":{yours}}}]}}"#
+                )
+            };
             match (req.method.as_str(), req.path.as_str()) {
                 ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                ("GET", "/api/games/KEPT01") => (200, kept(false)),
+                ("GET", "/api/games/KEPT02") => (200, kept(true)),
+                ("POST", "/api/games/KEPT02/join") => (
+                    200,
+                    r#"{"role":"player","seat":2,"color":"blue","status":"waiting"}"#.into(),
+                ),
                 ("GET", "/api/games/WAIT01") => (200, game("waiting", &format!("{ana},{open}"))),
                 ("GET", "/api/games/BUSY01") => (
                     200,
@@ -1430,7 +1448,7 @@ mod tests {
             }
         }));
         let mut s = session(&addr);
-        for code in ["WAIT01", "BUSY01", "MINE01"] {
+        for code in ["WAIT01", "BUSY01", "MINE01", "KEPT01", "KEPT02"] {
             s.join_game(code).unwrap();
         }
         assert!(matches!(
@@ -1447,8 +1465,13 @@ mod tests {
             .collect();
         assert_eq!(
             posts,
-            ["/api/games/WAIT01/join", "/api/games/BUSY01/resign"],
-            "a game already playing, or with a seat of this guest's, is only watched"
+            [
+                "/api/games/WAIT01/join",
+                "/api/games/KEPT02/join",
+                "/api/games/BUSY01/resign"
+            ],
+            "a game already playing, with a seat of this guest's, or whose open seat is kept for \
+             somebody else, is only watched; a seat kept for this viewer is taken"
         );
     }
 
@@ -1809,6 +1832,7 @@ mod tests {
                 increment: 5,
             },
             lobby: true,
+            reserved: [(3, "bob".to_string())].into(),
         };
         let sent = serde_json::to_value(new_game_request(&settings, "Ana")).unwrap();
         assert_eq!(
@@ -1821,6 +1845,7 @@ mod tests {
                 "clock_seconds": 600,
                 "clock_increment_seconds": 5,
                 "lobby": true,
+                "reserved_seats": {"3": "bob"},
             })
         );
         let plain = GameSettings {
@@ -1828,6 +1853,7 @@ mod tests {
             bots: BTreeMap::new(),
             time: TimeControl::PerMove { seconds: 60 },
             lobby: false,
+            reserved: BTreeMap::new(),
             ..settings
         };
         assert_eq!(

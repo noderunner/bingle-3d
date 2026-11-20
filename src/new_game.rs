@@ -1,6 +1,8 @@
 //! Setting up a new game: the player's seat, who plays each of the others (a built-in bot, or
 //! nobody yet, for a person to join), how the game is timed, and whether it starts by itself once
-//! every seat is taken or waits in its lobby for the player's start.
+//! every seat is taken or waits in its lobby for the player's start. Signed in, a seat can also
+//! be kept for a friend (Bingle's ADR 0107): the server then keeps the game waiting for the
+//! player's start, and invites the friend.
 //!
 //! [`Form`] is the setup with no Bevy in it; [`draw`] puts it on the list panel in place of the
 //! lists while it is open. What the form needs from the server (the game's seats, the bots) is
@@ -36,6 +38,8 @@ pub struct Form {
     pub mine: u32,
     /// Who plays each seat that is not this client's: nobody, until somebody joins, unless set.
     bots_at: BTreeMap<u32, String>,
+    /// Seats kept for friends, by handle; a friend has one seat at most.
+    friends_at: BTreeMap<u32, String>,
     pub time: TimeControl,
     /// Wait for this client's start, rather than start once every seat is taken.
     pub lobby: bool,
@@ -48,6 +52,8 @@ pub enum Fill {
     /// Nobody yet: the seat waits for a person.
     Open,
     Bot(String),
+    /// Kept for this friend, by handle.
+    Friend(String),
 }
 
 /// The ways to time a game the form offers, by what they are called.
@@ -88,6 +94,7 @@ impl Form {
             problem: None,
             mine: 1,
             bots_at: BTreeMap::new(),
+            friends_at: BTreeMap::new(),
             time: TimeControl::None,
             lobby: false,
         }
@@ -100,6 +107,7 @@ impl Form {
         self.info = Some(info);
         self.bots = bots;
         self.bots_at.clear();
+        self.friends_at.clear();
         self.problem = None;
     }
 
@@ -107,35 +115,55 @@ impl Form {
         if seat == self.mine {
             return Fill::You;
         }
+        if let Some(friend) = self.friends_at.get(&seat) {
+            return Fill::Friend(friend.clone());
+        }
         match self.bots_at.get(&seat) {
             Some(bot) => Fill::Bot(bot.clone()),
             None => Fill::Open,
         }
     }
 
-    /// Who plays `seat` from now on. Taking another seat leaves the old one open; this client's
-    /// seat cannot be left without one.
+    /// Who plays `seat` from now on. Taking another seat leaves the old one open, and keeping a
+    /// seat for a friend takes them from any other; this client's seat cannot be left without
+    /// one.
     pub fn set(&mut self, seat: u32, fill: Fill) {
+        if fill != Fill::You && seat == self.mine {
+            return;
+        }
+        self.bots_at.remove(&seat);
+        self.friends_at.remove(&seat);
         match fill {
-            Fill::You => {
-                self.bots_at.remove(&seat);
-                self.mine = seat;
-            }
-            _ if seat == self.mine => {}
-            Fill::Open => {
-                self.bots_at.remove(&seat);
-            }
+            Fill::You => self.mine = seat,
+            Fill::Open => {}
             Fill::Bot(bot) => {
                 self.bots_at.insert(seat, bot);
+            }
+            Fill::Friend(handle) => {
+                self.friends_at.retain(|_, h| *h != handle);
+                self.friends_at.insert(seat, handle);
             }
         }
     }
 
-    /// Some seat waits for a person to join.
+    /// Some seat waits for a person to join: anybody, or a friend it is kept for.
     pub fn waits_for_people(&self) -> bool {
-        self.info
-            .as_ref()
-            .is_some_and(|info| info.seats.iter().any(|s| self.fill(s.seat) == Fill::Open))
+        self.info.as_ref().is_some_and(|info| {
+            info.seats
+                .iter()
+                .any(|s| matches!(self.fill(s.seat), Fill::Open | Fill::Friend(_)))
+        })
+    }
+
+    /// A seat is kept for a friend, so the game waits for this client's start whatever was
+    /// chosen (the server keeps it waiting).
+    pub fn must_wait(&self) -> bool {
+        !self.friends_at.is_empty()
+    }
+
+    /// The game waits for this client's start.
+    pub fn waits_for_start(&self) -> bool {
+        self.lobby || self.must_wait()
     }
 
     /// What to ask the server for, once the game's seats are known.
@@ -146,13 +174,15 @@ impl Form {
             seat: self.mine,
             bots: self.bots_at.clone(),
             time: self.time,
-            lobby: self.lobby,
+            lobby: self.waits_for_start(),
+            reserved: self.friends_at.clone(),
         })
     }
 }
 
-/// The form, in place of the lists.
-pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
+/// The form, in place of the lists. `friends` are the handles of the signed-in account's
+/// friends, who a seat can be kept for (none for a guest).
+pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, friends: &[String]) {
     area.spawn(line(
         f.semibold(17.0),
         colours::TEXT,
@@ -227,6 +257,9 @@ pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
                 for bot in &form.bots {
                     offer(&bot.label, Fill::Bot(bot.id.clone()));
                 }
+                for friend in friends {
+                    offer(&format!("@{friend}"), Fill::Friend(friend.clone()));
+                }
             });
         });
     }
@@ -240,16 +273,30 @@ pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
 
     area.spawn(line(f.semibold(14.0), colours::TEXT, "Start"));
     area.spawn(buttons()).with_children(|row| {
+        if !form.must_wait() {
+            row.spawn(chip(
+                f,
+                "When every seat is taken",
+                Action::SetLobby(false),
+                !form.lobby,
+            ));
+        }
         row.spawn(chip(
             f,
-            "When every seat is taken",
-            Action::SetLobby(false),
-            !form.lobby,
+            "When I say",
+            Action::SetLobby(true),
+            form.waits_for_start(),
         ));
-        row.spawn(chip(f, "When I say", Action::SetLobby(true), form.lobby));
     });
 
-    let starts = match (form.waits_for_people(), form.lobby) {
+    if form.must_wait() {
+        area.spawn(line(
+            f.regular(13.0),
+            colours::MUTED,
+            "A seat kept for a friend: they are invited, and the game waits for your Start.",
+        ));
+    }
+    let starts = match (form.waits_for_people(), form.waits_for_start()) {
         (true, false) => {
             "The seats for a person wait for somebody to join; the game starts once every seat \
              is taken. The room code to send them is shown when the game is made."
@@ -270,6 +317,29 @@ pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_seat_kept_for_a_friend_takes_them_from_any_other_and_makes_the_game_wait() {
+        let mut form = form();
+        form.set(2, Fill::Friend("bob".into()));
+        assert_eq!(form.fill(2), Fill::Friend("bob".into()));
+        assert!(form.waits_for_people(), "for the friend");
+        assert!(form.must_wait() && form.waits_for_start() && !form.lobby);
+
+        form.set(3, Fill::Friend("bob".into()));
+        assert_eq!(form.fill(2), Fill::Open, "a friend has one seat");
+        form.set(2, Fill::Bot("mcts".into()));
+        form.set(1, Fill::Friend("cy".into()));
+        assert_eq!(form.fill(1), Fill::You, "not this client's own seat");
+        let settings = form.settings().unwrap();
+        assert_eq!(settings.reserved, BTreeMap::from([(3, "bob".to_string())]));
+        assert_eq!(settings.bots, BTreeMap::from([(2, "mcts".to_string())]));
+        assert!(settings.lobby);
+
+        form.set(3, Fill::You);
+        assert!(!form.must_wait(), "taking the friend's seat lets it go");
+        assert_eq!(form.fill(3), Fill::You);
+    }
+
     use super::*;
     use crate::net::api::{Board, SeatDef};
 
@@ -320,6 +390,7 @@ mod tests {
                 bots: BTreeMap::new(),
                 time: TimeControl::None,
                 lobby: false,
+                reserved: BTreeMap::new(),
             })
         );
     }
@@ -344,6 +415,7 @@ mod tests {
         form.lobby = true;
         let settings = form.settings().unwrap();
         assert!(settings.lobby);
+        assert!(settings.reserved.is_empty());
         assert_eq!(settings.seat, 3);
         assert_eq!(settings.bots, BTreeMap::from([(1, "mcts".to_string())]));
         assert_eq!(

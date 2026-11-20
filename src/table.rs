@@ -150,6 +150,14 @@ impl Table {
             .is_some_and(|s| self.game.host_seat == Some(s.seat))
     }
 
+    /// An open seat anybody may take: not kept for a friend.
+    pub fn open_to_anybody(&self) -> bool {
+        self.info
+            .seats
+            .iter()
+            .any(|s| self.is_open(s.seat) && self.game.kept_for(s.seat).is_none())
+    }
+
     /// Whether nobody, person or bot, sits at `seat` yet.
     pub fn is_open(&self, seat: u32) -> bool {
         !self
@@ -313,6 +321,7 @@ mod tests {
                 move_time_seconds: None,
                 lobby: false,
                 host_seat: Some(1),
+                reservations: vec![],
                 seats: vec![GameSeat {
                     seat: 1,
                     color: "red".into(),
