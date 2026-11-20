@@ -30,6 +30,7 @@ mod sign_in;
 mod slab;
 mod table;
 mod textures;
+mod toggles;
 mod voice;
 mod voice_chat;
 mod wood_choice;
@@ -83,6 +84,7 @@ fn main() -> AppExit {
         appearance::AppearancePlugin,
         wood_choice::WoodChoicePlugin,
         coordinates::CoordinatesPlugin,
+        toggles::TogglesPlugin,
     ))
     .add_plugins((
         fonts::FontsPlugin,

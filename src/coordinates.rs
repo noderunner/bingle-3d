@@ -1,5 +1,4 @@
-//! The board's coordinates along its edges, shown or hidden with C or a button (at the bottom
-//! right, a stopgap until the interface has a place for it).
+//! The board's coordinates along its edges, shown or hidden with C or a button (`toggles.rs`).
 //!
 //! The server names each position (`a1`, `k11`); where every name is letters then a number, as
 //! for Hex, the letters name a column and the number a row. Each row's number goes beyond its
@@ -18,17 +17,11 @@ use std::collections::BTreeMap;
 
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::input_focus::InputFocus;
 use bevy::mesh::VertexAttributeValues;
-use bevy::picking::Pickable;
-use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::appearance::Appearances;
 use crate::board::{BOARD_HEIGHT, Layout, Surface};
-use crate::browser::colours;
-use crate::fonts::UiFonts;
 use crate::net::WatchStatus;
 use crate::net::api::BoardPosition;
 use crate::textures;
@@ -37,18 +30,14 @@ pub struct CoordinatesPlugin;
 
 impl Plugin for CoordinatesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShowCoordinates>()
-            .add_systems(Startup, spawn_button)
-            .add_systems(
-                Update,
-                (
-                    toggle_with_key,
-                    colour_button,
-                    sync_labels.run_if(resource_changed::<WatchStatus>),
-                    show_labels,
-                )
-                    .chain(),
-            );
+        app.init_resource::<ShowCoordinates>().add_systems(
+            Update,
+            (
+                sync_labels.run_if(resource_changed::<WatchStatus>),
+                show_labels,
+            )
+                .chain(),
+        );
     }
 }
 
@@ -268,62 +257,6 @@ fn show_labels(show: Res<ShowCoordinates>, mut roots: Query<&mut Visibility, Wit
     }
 }
 
-fn toggle_with_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    focus: Option<Res<InputFocus>>,
-    mut show: ResMut<ShowCoordinates>,
-) {
-    let typing = focus.is_some_and(|f| f.get().is_some());
-    if keys.just_pressed(KeyCode::KeyC) && !typing {
-        show.0 = !show.0;
-    }
-}
-
-/// The button that shows or hides the coordinates.
-#[derive(Component)]
-struct CoordinatesButton;
-
-fn spawn_button(mut commands: Commands, fonts: Res<UiFonts>) {
-    commands.spawn((
-        Button,
-        CoordinatesButton,
-        Hovered::default(),
-        Node {
-            position_type: PositionType::Absolute,
-            right: px(12),
-            bottom: px(66),
-            padding: UiRect::axes(px(10), px(4)),
-            border_radius: BorderRadius::all(px(6)),
-            ..default()
-        },
-        BackgroundColor(colours::BUTTON),
-        observe(|_: On<Activate>, mut show: ResMut<ShowCoordinates>| show.0 = !show.0),
-        children![(
-            Text::new("Coordinates"),
-            fonts.semibold(13.0),
-            TextColor(colours::TEXT),
-            Pickable::IGNORE,
-        )],
-    ));
-}
-
-fn colour_button(
-    show: Res<ShowCoordinates>,
-    mut buttons: Query<(&Hovered, &mut BackgroundColor), With<CoordinatesButton>>,
-) {
-    for (hovered, mut background) in &mut buttons {
-        let colour = match (show.0, hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
-        };
-        if background.0 != colour {
-            background.0 = colour;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,25 +376,5 @@ mod tests {
             }
         }
         assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
-    }
-
-    #[test]
-    fn c_shows_and_hides_them() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .init_resource::<ShowCoordinates>()
-            .init_resource::<ButtonInput<KeyCode>>()
-            .add_systems(Update, toggle_with_key);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyC);
-        app.update();
-        assert!(app.world().resource::<ShowCoordinates>().0);
-        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-        keys.release(KeyCode::KeyC);
-        keys.clear();
-        keys.press(KeyCode::KeyC);
-        app.update();
-        assert!(!app.world().resource::<ShowCoordinates>().0);
     }
 }

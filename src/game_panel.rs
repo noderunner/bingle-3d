@@ -308,7 +308,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     }
     let hint = match turn.stage {
         Stage::Asking => String::new(),
-        Stage::Choosing if !turn.targets().is_empty() => "Click a lit cell.".into(),
+        Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
         Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
         Stage::Choosing => "There is nothing to play.".into(),
         Stage::Ready => format!(

@@ -47,14 +47,17 @@ impl Plugin for BoardPlugin {
                 (
                     sync_board.run_if(resource_changed::<WatchStatus>),
                     show_turn.run_if(
-                        resource_changed::<WatchStatus>.or_eager(resource_changed::<Hovering>),
+                        resource_changed::<WatchStatus>
+                            .or_eager(resource_changed::<Hovering>)
+                            .or_eager(resource_changed::<ShowLegalMoves>),
                     ),
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
                     .chain(),
             )
-            .init_resource::<BoardWood>();
+            .init_resource::<BoardWood>()
+            .init_resource::<ShowLegalMoves>();
     }
 }
 
@@ -140,6 +143,12 @@ impl Surface {
         (self.reach(along) + self.flat_to(along, pitch)) / 2.0
     }
 }
+
+/// Whether the positions a click would be taken on are lit. Off by default: at the start of most
+/// games every position is one, and the whole board lights up. The ghost stone under the pointer
+/// still shows where a click would play.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ShowLegalMoves(pub bool);
 
 /// The wood the board is made of: one of `look::BOARD_WOODS`, chosen by the player.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -1049,11 +1058,12 @@ fn seat_materials(info: &GameInfo, tools: &mut Tools) -> HashMap<String, Handle<
         .collect()
 }
 
-/// Lights the cells a click would be taken on, and shows the move being built.
+/// Lights the cells a click would be taken on (when the player wants that), and shows the move
+/// being built.
 fn show_turn(
     mut commands: Commands,
     watch: Res<WatchStatus>,
-    hovering: Res<Hovering>,
+    (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
@@ -1067,7 +1077,7 @@ fn show_turn(
     let turn = watch.turn.as_ref();
     let targets = turn.map(|t| t.targets()).unwrap_or_default();
     for (cell, mut material) in &mut cells {
-        let wanted = if targets.contains(&cell.0) {
+        let wanted = if legal.0 && targets.contains(&cell.0) {
             &kit.target
         } else {
             &kit.cell

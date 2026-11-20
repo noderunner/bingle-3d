@@ -58,8 +58,9 @@ S, D) pans it across the table, and the wheel zooms (or scrolls the panel, over 
 *Coordinates* button) shows the board's coordinates, engraved along its edges. F5 connects again.
 
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
-strongest bot the others. When it is your move, the cells you may play on are lit: click one, and
-the stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
+strongest bot the others. When it is your move, a see-through stone follows the pointer where a
+click would be taken (L, or *Legal moves*, also lights every such place): click one, and the
+stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
 (or Backspace, or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
 Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat

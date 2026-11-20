@@ -22,7 +22,7 @@ impl Plugin for HudPlugin {
 struct FpsText;
 
 const HINT: &str = "Play: click, Enter, Esc  ·  Orbit: right-drag or arrows  ·  \
-                    Pan: middle-drag or W A S D  ·  Zoom: wheel  ·  Coordinates: C  ·  \
+                    Pan: middle-drag or W A S D  ·  Zoom: wheel  ·  Coordinates: C  ·  Legal moves: L  ·  \
                     Reconnect: F5";
 
 fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {

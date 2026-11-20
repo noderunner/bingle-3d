@@ -440,7 +440,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   with lines cut between neighbouring positions (a square grid, or three ways on a hexagonal
   board), thicker along the edge, and the stones on the crossings; a click lands on an unseen
   disc at each point, which glows softly when it would be taken. An appearance file may mark
-  positions with a dot, per game id (`[board.marks]`): Go's star points, for each size. A board's cells are the same
+  positions with a dot, per game id (`[board.marks]`): Go's star points, for each size.
+- Lighting the legal moves is off by default (at the start of most games every position is one,
+  and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
+  stone under the pointer still shows where a click would play. Which games want it on is for
+  later. A board's cells are the same
   material as the wood round them. The coordinates are smaller, half way across the margin
   between the outermost spaces or lines and the rim, on every board; a column is named only
   where it ends on the first or last row.
