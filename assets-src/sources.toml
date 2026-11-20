@@ -1,0 +1,134 @@
+# Every file the asset pipeline downloads. `bash scripts/assets.sh` fetches each into
+# `target/asset-sources/`, checks it against its SHA-256, and builds `assets/` from them; nothing
+# here is committed but this list.
+#
+# Only CC0 (public domain) sources, so what is made from them can ship in the client with no
+# conditions. Credit is still given, in `assets/CREDITS.md`.
+
+[[source]]
+file = "teak_veneer_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/teak_veneer/teak_veneer_diff_2k.jpg"
+sha256 = "9041a872e0125064e94433117491b97f69488d94e375bb0265084fb93b11ef59"
+asset = "Teak Veneer"
+page = "https://polyhaven.com/a/teak_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "teak_veneer_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/teak_veneer/teak_veneer_nor_gl_2k.jpg"
+sha256 = "0d61c141daf97e3294cd52306f5ea852afe2325e0d8f5e34a794611bcbc27618"
+asset = "Teak Veneer"
+page = "https://polyhaven.com/a/teak_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "teak_veneer_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/teak_veneer/teak_veneer_arm_2k.jpg"
+sha256 = "12e098a86b6fe6ec8600a7db4bb3245663b076e24588df1e9e6dc2c4761a55b0"
+asset = "Teak Veneer"
+page = "https://polyhaven.com/a/teak_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "white_maple_veneer_diff_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_maple_veneer/white_maple_veneer_diff_1k.jpg"
+sha256 = "0cdcb6d726ca7e6039ab0eeb2b1828a0ef188b43c2370972cf6eebeaff76aaa0"
+asset = "White Maple Veneer"
+page = "https://polyhaven.com/a/white_maple_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "white_maple_veneer_nor_gl_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_maple_veneer/white_maple_veneer_nor_gl_1k.jpg"
+sha256 = "fb63ac49ab9a8f1e650a7886e570bfb46a1970d73b9a943c29015f3f111078fc"
+asset = "White Maple Veneer"
+page = "https://polyhaven.com/a/white_maple_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "white_maple_veneer_arm_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/white_maple_veneer/white_maple_veneer_arm_1k.jpg"
+sha256 = "bf07d79f67eba8ef9747a0e259f37144cdd5506953b8dff2b4dfa1e17d35dcb5"
+asset = "White Maple Veneer"
+page = "https://polyhaven.com/a/white_maple_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "black_walnut_veneer_01_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_diff_2k.jpg"
+sha256 = "131a5322d045f86dcf6fa413cdf34f230f8f7f96d820221a1637647108bf2304"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "black_walnut_veneer_01_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_nor_gl_2k.jpg"
+sha256 = "8970308650c9e8b44b3fad5f14459239869a8dc74db40d00b6a095b38e7e24e9"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "black_walnut_veneer_01_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_arm_2k.jpg"
+sha256 = "6d384b9c90729489d5971ee9b2bb05d7535792b4a3199dde6121086f8ca2dca7"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_diff_2k.jpg"
+sha256 = "dc572a16d860d56f03ae7b2df6fbf684adda4a5eee784733069d784a7dfe1a9c"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_nor_gl_2k.jpg"
+sha256 = "5be866a2ca4e92b3197f66421a8dcfd1917db11b3d75371f847b53994cbe0b22"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_arm_2k.jpg"
+sha256 = "0043601e7bd9df714b2872f2ff5a99233b7cf4820a2457be0eb91cb2e8f8c236"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "scuba_suede_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_diff_2k.jpg"
+sha256 = "9c0b3ed2ffc4862c571940b139680ac6f612041b9454bbddff21f90dc027033c"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "scuba_suede_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_nor_gl_2k.jpg"
+sha256 = "3bce1a0272cacffcd8f7414fb679a0ea27944b9b82dab5165a6dd079d6eda871"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "scuba_suede_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_arm_2k.jpg"
+sha256 = "5ae596fc8f6905587a8b471454c89106dbbc8eda7a6267eccc919b084e895c5e"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "lythwood_room_2k.hdr"
+url = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/lythwood_room_2k.hdr"
+sha256 = "c01266ac94735d84524853e5aa4821723346a9beec8a87b3b0001e616711fd8e"
+asset = "Lythwood Room"
+page = "https://polyhaven.com/a/lythwood_room"
+by = "Greg Zaal"

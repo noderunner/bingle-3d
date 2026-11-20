@@ -10,6 +10,7 @@ use bevy::ui_widgets::{Activate, Button, ScrollArea, observe};
 
 use std::collections::HashMap;
 
+use crate::appearance::Appearances;
 use crate::families::{Family, families};
 use crate::fonts::UiFonts;
 use crate::friends::{FriendAction, Friends};
@@ -284,6 +285,7 @@ fn rebuild_list(
     signing: Res<Signing>,
     friends: Res<Friends>,
     fonts: Res<UiFonts>,
+    appearances: Res<Appearances>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
     // The sign-in form is not drawn again for a list read again: that would take the keyboard
@@ -313,7 +315,7 @@ fn rebuild_list(
                         }
                         _ => vec![],
                     };
-                    new_game::draw(area, f, form, &handles)
+                    new_game::draw(area, f, form, &handles, &appearances)
                 }
                 None => {
                     games_being_played(area, f, &list);
@@ -567,6 +569,22 @@ fn describe_def(title: &str, def: &GameDef) -> String {
 
 pub(crate) fn line(font: TextFont, colour: Color, text: &str) -> impl Bundle {
     (Text::new(text), font, TextColor(colour))
+}
+
+/// A seat's dot, in its colour, ringed so that a dark one still shows on a dark panel.
+pub(crate) fn seat_dot(colour: Color, size: f32) -> impl Bundle {
+    (
+        Node {
+            width: px(size),
+            height: px(size),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(size / 2.0)),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        BackgroundColor(colour),
+        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+    )
 }
 
 fn heading(f: &UiFonts, text: &str) -> impl Bundle {

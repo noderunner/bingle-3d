@@ -10,11 +10,11 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use crate::browser::{Action, button, buttons, colours, line};
+use crate::appearance::Appearances;
+use crate::browser::{Action, button, buttons, colours, line, seat_dot};
 use crate::clock;
 use crate::fonts::UiFonts;
 use crate::lobby;
-use crate::look::seat_colour;
 use crate::net::api::{GameInfo, Gesture};
 use crate::net::{Connection, Net, Resign, ServerStatus, Target, WatchStatus, watch};
 use crate::play::{Stage, Turn};
@@ -118,6 +118,7 @@ fn rebuild(
     watching: Res<WatchStatus>,
     voice: Res<VoiceChat>,
     fonts: Res<UiFonts>,
+    appearances: Res<Appearances>,
     panel: Single<(Entity, &mut Node), With<GamePanel>>,
 ) {
     let (panel, mut node) = panel.into_inner();
@@ -133,7 +134,7 @@ fn rebuild(
         .with_children(|p| {
             match &watching.table {
                 Some(table) => {
-                    game(p, f, table);
+                    game(p, f, table, &appearances);
                     if let Some(turn) = &watching.turn {
                         your_turn(p, f, table, turn);
                     }
@@ -191,7 +192,7 @@ fn rebuild(
         });
 }
 
-fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
+fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &Appearances) {
     p.spawn(line(f.semibold(20.0), colours::TEXT, &table.info.name));
     let doing = if table.yours().is_some() {
         "playing"
@@ -212,15 +213,9 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
             ..default()
         })
         .with_children(|row| {
-            row.spawn((
-                Node {
-                    width: px(14),
-                    height: px(14),
-                    border_radius: BorderRadius::all(px(7)),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                BackgroundColor(seat_colour(&seat.color, seat.seat)),
+            row.spawn(seat_dot(
+                appearances.seat_colour(&table.info.id, &seat.color, seat.seat),
+                14.0,
             ));
             let font = if to_move || won {
                 f.semibold(14.0)
@@ -313,7 +308,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     }
     let hint = match turn.stage {
         Stage::Asking => String::new(),
-        Stage::Choosing if !turn.targets().is_empty() => "Click a lit cell.".into(),
+        Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
         Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
         Stage::Choosing => "There is nothing to play.".into(),
         Stage::Ready => format!(

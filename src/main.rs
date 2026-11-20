@@ -4,6 +4,8 @@
 //! table in 3D on which a game can be watched, or played against the server's bots, from the API
 //! alone.
 
+mod appearance;
+mod assets;
 mod board;
 mod browser;
 mod call;
@@ -11,6 +13,7 @@ mod camera;
 mod cli;
 mod clock;
 mod config;
+mod coordinates;
 mod families;
 mod fonts;
 mod friends;
@@ -24,9 +27,13 @@ mod play;
 mod run_limit;
 mod scene;
 mod sign_in;
+mod slab;
 mod table;
+mod textures;
+mod toggles;
 mod voice;
 mod voice_chat;
+mod wood_choice;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -70,6 +77,15 @@ fn main() -> AppExit {
         require_markers: true,
         ..default()
     })
+    // The files the scene is drawn with, and how each game looks.
+    .add_plugins((
+        assets::AssetsPlugin,
+        textures::TexturesPlugin,
+        appearance::AppearancePlugin,
+        wood_choice::WoodChoicePlugin,
+        coordinates::CoordinatesPlugin,
+        toggles::TogglesPlugin,
+    ))
     .add_plugins((
         fonts::FontsPlugin,
         scene::ScenePlugin,

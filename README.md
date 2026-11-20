@@ -53,12 +53,14 @@ cargo test                                  # unit tests, no window needed
 cargo clippy --all-targets -- -D warnings   # as CI runs it
 ```
 
-Right-drag (or the arrow keys) orbits the camera, and the wheel zooms (or scrolls the panel, over
-it). F5 connects again.
+Right-drag (or the arrow keys) orbits the camera, middle-drag or Shift with right-drag (or W, A,
+S, D) pans it across the table, and the wheel zooms (or scrolls the panel, over it). C (or the
+*Coordinates* button) shows the board's coordinates, engraved along its edges. F5 connects again.
 
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
-strongest bot the others. When it is your move, the cells you may play on are lit: click one, and
-the stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
+strongest bot the others. When it is your move, a see-through stone follows the pointer where a
+click would be taken (L, or *Legal moves*, also lights every such place): click one, and the
+stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
 (or Backspace, or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
 Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
@@ -119,8 +121,17 @@ cargo run -- --host hex-7 --voice --relay-only   # the same call, only through t
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
-as squares, pieces as stones in their seat's colour, and the edges a seat must connect (its
-`goals`) as strips in its colour. The client needs a Bingle whose API is 1.6 or newer.
+as squares, cut into one slab of wood on a felt table, lit by a real room's light; pieces as
+stones in their seat's colour, and the edges a seat must connect (its `goals`) with the board's
+rim stained and the cells along them shaded in its colour. The buttons at the bottom right
+choose the board's wood: teak, walnut or cherry.
+A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
+clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
+the board's lines cross. The client needs a Bingle whose API is 1.6 or newer.
+
+The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
+make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
+the client does not need Blender: what the scripts make is committed.
 
 ## Connecting to a server
 

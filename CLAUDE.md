@@ -182,19 +182,46 @@ A game's own rules and its players' words keep their terms.
   left (counted down between the server's reports) and how it reads.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
   ASCII only.
-- `src/scene.rs`: the table and its lights. **One unit is one metre, and the table top is at
+- `src/scene.rs`: the table and its lights: a key light for shadows and a real room's light
+  (`EnvironmentMapLight`), and on every 3D camera SSAO, TAA (both need `Msaa::Off`), bloom on
+  highlights only, depth of field focused by the orbit camera, and fog into the dim room. The
+  key light (and the room's window, turned to it) is beyond the board: what faces the player
+  reflects the dim room, so dark polish stays dark. **One unit is one metre, and the table top is at
   y = 0**, so boards are their real size (this is what makes VR work later).
+- `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
+  `embedded://<path>`; a test checks the list against the folder. `src/textures.rs`: mipmaps for
+  our JPEG textures when they load (Bevy 0.20 makes none), and the materials using them built
+  again. The files are made by the asset pipeline: **Blender 5.3 headless, run from scripts in
+  `assets-src/`** (its README), on the host, never by hand; CC0 sources only, listed with their
+  hashes. Look at its Cycles previews (`bash scripts/assets.sh previews`) and at the client's
+  screenshot before calling an asset done.
+- `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): a
+  piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels.
+  A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
-  layout coordinates and the position's cells; names no game. `src/look.rs`: generic defaults for
-  how things look (a seat's colour). Do not read `shape`, `style` or other fields ADR 0124 moves to
-  `web.yaml`: they are leaving the API. Each seat's `connect` goals are strips along their regions'
-  outer sides, in the seat's colour (`goal_strips`). The board also lights the cells a click would be taken on
-  and shows the move being built as see-through pieces.
+  layout coordinates and the position's cells; names no game. The board is one slab
+  (`src/slab.rs`: its outline, rounded rim, grid lines, and the shading of a goal's cells,
+  geometry with no systems) with the cells cut into it, or, for a game whose appearance says
+  `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
+  (stopgap buttons), and the materials made of it are built again when it changes.
+  `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
+  and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres
+  (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
+  are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
+  (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
+  lights the cells a click would be taken on and shows the move being built as see-through
+  pieces.
 - `src/play.rs`: playing a seat. `Turn` is the move being built from the server's legal selections,
   narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
-- `src/camera.rs`: the orbit camera. The left mouse button is kept for picking; nothing else reads
+- `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position
+  names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.
+  Engraved in the board's margin, from the glyph atlas the pipeline renders (`engraving.py`;
+  its order and grid are in both places).
+- `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
+  lighting the legal moves (L, `board::ShowLegalMoves`, off by default).
+- `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the
@@ -233,6 +260,7 @@ A game's own rules and its players' words keep their terms.
   `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
   `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds),
   `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation).
+  Bevy's `jpeg` feature reads the scanned textures.
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
   the smallest and fullest messages it allows with the client's types. When the client starts using

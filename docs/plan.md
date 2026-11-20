@@ -1,8 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 7 under way: a game can be played against the server's bots or a person, found,
-set up and started from its lobby; the player can sign in to an account, and has friends
-(2026-11-19).
+Status: stage 9 under way: a game can be played against the server's bots or a person, found,
+set up and started from its lobby; the player can sign in to an account, has friends and can talk
+to them; Hex has a look of its own, made by the asset pipeline (2026-11-20).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
@@ -54,6 +54,9 @@ being changed:
 | API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.6.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
+| Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
+| Textures | JPEG, given mipmaps by the client when they load (`src/textures.rs`); the room's light as prefiltered KTX2 cubemaps | Bevy 0.20 makes no mipmaps, and lossless KTX2 with them is ten times the size; Bevy's runtime-filtered environment light filters every frame |
+| Appearance | TOML files in `assets/appearance/`, one per game (or family of variants), by game id | Data, never code; `toml` is already a dependency. Replaces "RON or YAML" in the plan before |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
 ## Stages
@@ -400,15 +403,73 @@ a browser puts in each message and what the page expects of the other end.
 - **Next**: a relay reached over TCP or TLS, if players need it; by ear, a call on speakers and
   one through coturn.
 
+### Stage 9: a table worth looking at
+
+The first hand-made look, Hex's, and the pipeline that makes it, so that more can follow (decision 8).
+
+- The pipeline (`assets-src/README.md`): `bash scripts/assets.sh` runs Blender headless on the
+  scripts in `assets-src/blender/`, which fetch the CC0 sources listed in `sources.toml` (checked
+  by SHA-256) and write `assets/`. `previews` renders the assets in Cycles for a person to look
+  at. Blender is Flathub's, on the host (it renders on the GPU there); the toolbox has none.
+- The room: an HDR photograph of a room (Poly Haven, CC0), graded by the pipeline for a table
+  top (its floor, below the horizon, made the dim table the board stands on; its colours at half
+  saturation) and filtered into the diffuse and specular cubemaps Bevy's `EnvironmentMapLight`
+  reads, on every 3D camera. It is the fill light, kept low; a key light from beyond the board,
+  with the room's window turned to it, makes the highlights and shadows, so what faces the
+  player reflects the dim room and dark polish stays dark. A felt-covered table fading into the
+  room with distance.
+- Every camera: SSAO (stones grounded, cut lines dark), TAA (fine grain steady, shadows filtered
+  over time), contact shadows, bloom on highlights only, a shallow depth of field focused where
+  the orbit camera looks.
+- Every board is one slab of wood with a rounded rim, its cells cut into it and darkened lines
+  between them; the grain is mapped by position, so it runs on across cells, with the grain's
+  relief three times finer than its colour. The player chooses the wood: teak, walnut or cherry,
+  each with the colour of an oil finish (stopgap buttons at the bottom right). Every
+  piece is a lens-shaped stone modelled in Blender, each turned, sized and leaning a little
+  differently. These are the generic defaults (`look.rs`), for every game.
+- Each goal's edge: the slab's rim along it is stained, and its cells shaded with a soft gradient
+  towards it (fading out a third of the way across), in the seat's colour; a corner on two seats'
+  edges is split between them.
+- The camera pans as well as orbiting (middle-drag, Shift with right-drag, W A S D). The board's
+  coordinates can be shown along its edges (C, or a button): where every position is named as
+  letters then a number, a column's letters at its two ends and a row's number at its two sides,
+  engraved in the board's margin (glyphs of the client's font, rendered by the pipeline into an
+  atlas of the cut's colour and its walls' slopes); a board named otherwise shows none.
+- Games played on points (Go, Gomoku, Pente, Meridians; their appearance file says
+  `[board] on = "points"`, as the web page's `style: points` does for its own look): a plain slab
+  with lines cut between neighbouring positions (a square grid, or three ways on a hexagonal
+  board), thicker along the edge, and the stones on the crossings; a click lands on an unseen
+  disc at each point, which glows softly when it would be taken. An appearance file may mark
+  positions with a dot, per game id (`[board.marks]`): Go's star points, for each size.
+- Lighting the legal moves is off by default (at the start of most games every position is one,
+  and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
+  stone under the pointer still shows where a click would play. Which games want it on is for
+  later. A board's cells are the same
+  material as the wood round them. The coordinates are smaller, half way across the margin
+  between the outermost spaces or lines and the rim, on every board; a column is named only
+  where it ends on the first or last row.
+- Texture resolution, judged on the GPU: walnut at 4K against 2K was not worth four times the
+  memory, so the woods stay at 2K. Oak was tried and left out: its open grain caught too much
+  glare.
+- The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
+  seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
+  cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim
+  stained ebony and the shell side's in maple.
+- As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
+  each material using one is built again (Bevy does not rebuild a material when its image
+  changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left
+  out: they are behind an experimental feature, noisy and costly; TAA's filtering does enough.
+- **Next**: the maintainer's eye on it, on the GPU; then per-piece models (a piece kind per
+  model), and a look for the next game.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
   reserves and pools; tints, badges and counters by name; card zones for card games.
 - More games: square boards, points and stacks (Go, Tak), drawn from their definitions.
-- Appearance: a per-game appearance file read by this client only (name and format to be decided:
-  likely RON or YAML, data and never code), with models, materials and camera for that game;
-  hand-made looks for a few games that reward it; the private overlay's games' appearance loaded
-  from a configured folder, without this repository naming them (decision 2).
+- Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
+  reward it; the private overlay's games' appearance loaded from a configured folder, without
+  this repository naming them (decision 2).
 - Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
   tutorials and puzzles.
 
@@ -461,3 +522,12 @@ Settled 2026-11-20:
    network I/O being on the network thread: a frame must go every 20 ms, and that thread waits on
    blocking calls. It shares nothing with the network thread but channels; the signalling still
    goes through the network thread, as every call to the server does.
+
+Settled 2026-11-20, with the maintainer:
+
+8. **Assets are made by scripts, from CC0 sources.** Blender (pinned to 5.3) runs headless on
+   Python scripts in `assets-src/`; textures and light are scanned CC0 material (Poly Haven),
+   fetched by URL and SHA-256, never committed as sources; models and procedural textures are
+   made by the scripts. What they make is committed in `assets/` and compiled into the binary
+   (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
+   board of the player's choosing, each side's goal edges coloured to match its stones.

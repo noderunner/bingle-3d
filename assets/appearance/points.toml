@@ -1,0 +1,56 @@
+# How this client draws the games played on the points where a board's lines cross, as Go is
+# (Bingle's ADR 0124: the server says what things are, and each client decides how they look).
+# Data only: nothing here changes the rules.
+#
+# Slate and shell stones on the lines' crossings of a wooden board: a square grid, or for a
+# hexagonal board lines running three ways.
+
+# The games this file is for, by the id the server gives them.
+games = [
+    "go-9x9",
+    "go-13x13",
+    "go-19x19",
+    "gomoku",
+    "pente",
+    "meridians",
+    "meridians-5",
+    "meridians-7",
+]
+
+# Played on the points, not in the spaces.
+[board]
+on = "points"
+
+# A Go board's star points: on the third line of a small board, the fourth of the others, and the
+# middle.
+[board.marks]
+go-9x9 = ["c3", "g3", "e5", "c7", "g7"]
+go-13x13 = ["d4", "j4", "g7", "d10", "j10"]
+go-19x19 = ["d4", "j4", "p4", "d10", "j10", "p10", "d16", "j16", "p16"]
+
+[pieces.stone]
+model = "models/stone.glb"
+
+# Each seat, by its colour word: what its stones are made of, and its colour in the panels.
+[seats.black]
+pieces = "slate"
+colour = [0.13, 0.13, 0.14]
+
+[seats.white]
+pieces = "shell"
+colour = [0.92, 0.91, 0.87]
+
+# As in `hex.toml`.
+[materials.slate]
+albedo = "textures/stone/slate_albedo.jpg"
+roughness = 0.45
+reflectance = 0.3
+clearcoat = 0.3
+clearcoat_roughness = 0.14
+
+[materials.shell]
+albedo = "textures/stone/shell_albedo.jpg"
+roughness = 0.25
+clearcoat = 0.6
+clearcoat_roughness = 0.08
+translucency = 0.2

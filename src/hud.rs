@@ -21,8 +21,9 @@ impl Plugin for HudPlugin {
 #[derive(Component)]
 struct FpsText;
 
-const HINT: &str = "Play: click, Enter, Esc  ·  Orbit: right-drag or arrow keys  ·  \
-                    Zoom: mouse wheel  ·  Reconnect: F5";
+const HINT: &str = "Play: click, Enter, Esc  ·  Orbit: right-drag or arrows  ·  \
+                    Pan: middle-drag or W A S D  ·  Zoom: wheel  ·  Coordinates: C  ·  Legal moves: L  ·  \
+                    Reconnect: F5";
 
 fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     let font = fonts.regular(15.0);

@@ -1,5 +1,6 @@
-//! A camera that orbits a point on the table: drag with the right or middle mouse button (or use
-//! the arrow keys) to go round, and the wheel to come closer.
+//! A camera that orbits a point on the table: drag with the right mouse button (or use the arrow
+//! keys) to go round, and the wheel to come closer. Drag with the middle button, or the right
+//! with Shift held (or use W, A, S, D), to slide the point it looks at across the table.
 //!
 //! The left button is left free for the gestures that pick pieces and positions (`play.rs`).
 //! Over a panel the wheel is the panel's, to scroll it, not the camera's.
@@ -47,6 +48,19 @@ impl OrbitCamera {
     /// focus) with some table round it, from the default angle.
     pub fn radius_to_frame(size: Vec2) -> f32 {
         (size.max_element() * 1.45).clamp(0.42, Self::MAX_RADIUS)
+    }
+
+    /// How far from the table's middle the camera may look: a little past the biggest board.
+    pub const MAX_PAN: f32 = 0.6;
+
+    /// Slides the point looked at across the table, by these shares of the distance to it: to
+    /// the camera's right, and away from it. Seen from any angle, a drag moves the table under
+    /// the pointer the same way.
+    pub fn pan(&mut self, right: f32, away: f32) {
+        let right_dir = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
+        let away_dir = Vec3::new(-self.yaw.sin(), 0.0, -self.yaw.cos());
+        let focus = self.focus + (right_dir * right + away_dir * away) * self.radius;
+        self.focus = focus.clamp_length_max(Self::MAX_PAN);
     }
 
     /// Turns by the given angles and moves in or out by a factor, keeping within limits.
@@ -97,6 +111,9 @@ fn spawn_camera(mut commands: Commands) {
 
 /// Radians turned per pixel dragged.
 const DRAG_SPEED: f32 = 0.005;
+/// The share of the distance to the focus slid per pixel dragged, and per second with a key held.
+const PAN_DRAG_SPEED: f32 = 0.0016;
+const PAN_KEY_SPEED: f32 = 0.8;
 /// Radians turned per second with an arrow key held.
 const KEY_SPEED: f32 = 1.5;
 /// How much one wheel notch brings the camera in.
@@ -119,17 +136,29 @@ fn orbit_input(
     mut cameras: Query<&mut OrbitCamera>,
 ) {
     let mut turn = Vec2::ZERO;
-    if buttons.any_pressed([MouseButton::Right, MouseButton::Middle]) {
+    let mut slide = Vec2::ZERO;
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let panning =
+        buttons.pressed(MouseButton::Middle) || (buttons.pressed(MouseButton::Right) && shift);
+    if panning {
+        // As if the table were held and dragged: it follows the pointer.
+        slide += Vec2::new(-motion.delta.x, motion.delta.y) * PAN_DRAG_SPEED;
+    } else if buttons.pressed(MouseButton::Right) {
         // Dragging right moves the camera left round the table, as if pulling the table.
         turn -= motion.delta * DRAG_SPEED;
     }
-    // The arrows are a text field's while one has the keyboard.
+    // The keys are a text field's while one has the keyboard.
     let typing = focus.is_some_and(|f| f.get().is_some());
     let key = |k: KeyCode| if keys.pressed(k) && !typing { 1.0 } else { 0.0 };
     turn += Vec2::new(
         key(KeyCode::ArrowRight) - key(KeyCode::ArrowLeft),
         key(KeyCode::ArrowUp) - key(KeyCode::ArrowDown),
     ) * KEY_SPEED
+        * time.delta_secs();
+    slide += Vec2::new(
+        key(KeyCode::KeyD) - key(KeyCode::KeyA),
+        key(KeyCode::KeyW) - key(KeyCode::KeyS),
+    ) * PAN_KEY_SPEED
         * time.delta_secs();
 
     let lines = match scroll.unit {
@@ -139,11 +168,14 @@ fn orbit_input(
     };
     let zoom = ZOOM_PER_LINE.powf(lines);
 
-    if turn == Vec2::ZERO && lines == 0.0 {
+    if turn == Vec2::ZERO && slide == Vec2::ZERO && lines == 0.0 {
         return;
     }
     for mut orbit in &mut cameras {
         orbit.orbit(turn.x, -turn.y, zoom);
+        if slide != Vec2::ZERO {
+            orbit.pan(slide.x, slide.y);
+        }
     }
 }
 
@@ -224,6 +256,33 @@ mod tests {
         orbit.orbit(0.0, -10.0, 10_000.0);
         assert_eq!(orbit.pitch, OrbitCamera::MIN_PITCH);
         assert_eq!(orbit.radius, OrbitCamera::MAX_RADIUS);
+    }
+
+    #[test]
+    fn panning_slides_the_focus_across_the_table_as_the_camera_faces() {
+        let mut orbit = OrbitCamera::default();
+        orbit.pan(0.1, 0.0);
+        assert!(
+            orbit.focus.x > 0.0 && orbit.focus.z.abs() < EPS,
+            "right, from +Z"
+        );
+        assert_eq!(orbit.focus.y, 0.0, "along the table");
+        let mut orbit = OrbitCamera::default();
+        orbit.pan(0.0, 0.1);
+        assert!(orbit.focus.z < 0.0, "away from the camera");
+        // From the other side of the table, right is the other way.
+        let mut orbit = OrbitCamera {
+            yaw: std::f32::consts::PI,
+            ..default()
+        };
+        orbit.pan(0.1, 0.0);
+        assert!(orbit.focus.x < 0.0);
+        let mut orbit = OrbitCamera::default();
+        orbit.pan(100.0, 0.0);
+        assert!(
+            (orbit.focus.length() - OrbitCamera::MAX_PAN).abs() < EPS,
+            "not off the table"
+        );
     }
 
     #[test]
