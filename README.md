@@ -91,6 +91,14 @@ cargo run -- --friends                     # the friends panel open (signed in)
 cargo run -- --talk ana                    # the conversation with the friend @ana
 ```
 
+Voice chat is on its way (stage 8). For now `--voice-check` tries your microphone and speaker:
+for ten seconds you hear yourself, through a voice connection on your own machine, with no server
+and no window. It lists the devices it can see, and uses the default of each.
+
+```sh
+cargo run -- --voice-check
+```
+
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
 as squares, pieces as stones in their seat's colour, and the edges a seat must connect (its
 `goals`) as strips in its colour. The client needs a Bingle whose API is 1.5 or newer.

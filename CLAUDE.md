@@ -147,7 +147,7 @@ A game's own rules and its players' words keep their terms.
 ## The shape of the code
 
 - `src/main.rs`: options, then the app and its plugins. `src/cli.rs`: command-line options.
-- `src/net/`: the server. **All network I/O is on one thread** (`mod.rs`), with blocking calls; systems
+- `src/net/`: the server. **All network I/O is on one thread** (`mod.rs`), with blocking calls (a call's sound excepted: `src/voice/`); systems
   send it `Request`s and draw from the `ServerStatus` and `WatchStatus` resources (the watched game,
   and the turn of a seat this client plays). The watched game's
   WebSocket (`socket.rs`, tungstenite over our own TLS) is read in the same loop with a short
@@ -199,6 +199,17 @@ A game's own rules and its players' words keep their terms.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the
   pointer.
+- `src/voice/`: calls (stage 8), with no Bingle in it. `Engine` is a call: **a thread of its own**,
+  the one exception to all network I/O being on the network thread (a frame of sound must leave
+  every 20 ms; plan, decision 7). It is told who is in the call, who offers, and what the other
+  ends signal (`Command`), and says what to signal back (`Event`); carrying those through the
+  server is the network thread's. `peer.rs` is one person: a UDP socket and rtc's peer
+  connection, following what Bingle's page does (`docs/voice.md` there), so a browser can be on
+  the other end. `signal.rs` is the messages in a browser's form; `audio.rs` the microphone's
+  buffer, the mix and a resampler, with no devices; `devices.rs` cpal's microphone and speaker;
+  `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
+  open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
+  host's sound).
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
 
 ## Dependencies and Bevy
@@ -207,7 +218,9 @@ A game's own rules and its players' words keep their terms.
   (networking runs on its own thread with blocking clients); `rustls` with *ring*, never OpenSSL or
   aws-lc-rs (which needs cmake and nasm on Windows). Today: `bevy`, `ureq` (pinned to 3.5, for the
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
-  `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours).
+  `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
+  `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds)
+  and `bytes` (rtc's packets).
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
   the smallest and fullest messages it allows with the client's types. When the client starts using

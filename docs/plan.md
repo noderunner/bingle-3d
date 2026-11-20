@@ -52,6 +52,7 @@ being changed:
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
 | API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.5.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -282,18 +283,38 @@ Friends, direct messages and calls need a signed-in account (ADR 0105); a guest 
 
 The game's voice chat and calls between friends, interoperating with the web page
 ([voice.md](https://github.com/noderunner/bingle/blob/main/docs/voice.md)): audio only, peer to peer
-over WebRTC, the server relaying only the signalling.
+over WebRTC, the server relaying only the signalling. Everything a client uses is in Bingle's
+schema since API 1.6 ([bingle#229](https://github.com/noderunner/bingle/issues/229)), with what
+a browser puts in each message and what the page expects of the other end.
 
 - The call list (`POST /api/games/{code}/voice` as a heartbeat), offers, answers and ICE candidates
   through `voice/signal` and the `only=voice` WebSocket, ICE servers from `GET /api/rtc/config`;
-  direct calls through `/api/dm/signal` and `/ws-dm`.
+  direct calls through `/api/dm/call`, `/api/dm/signal` and `/ws-dm`.
 - Mute, deafen, a volume per person, push to talk, and a choice of microphone and speaker.
-- **Needs a WebRTC stack in Rust**, and this is the stage's biggest decision: it must speak what
-  browsers speak (ICE, DTLS-SRTP, Opus). The first candidate is `str0m`, which does no I/O of its
-  own and so fits the client's thread model without an async runtime; with an Opus codec and the
-  audio devices through `cpal` (which Bevy's audio already pulls in). To be decided, with its
-  dependencies, when the stage starts.
+- The WebRTC stack is `rtc` with `rusty-opus` (decision 7). In four pull requests: the engine,
+  with no Bingle in it; calls between friends; the game's voice chat; then echo cancellation
+  (`sonora`, pure Rust), measured once calls work (until then, headsets are best).
+- As built (the engine, `src/voice/`). A call is an `Engine`: a thread of its own, told who is in
+  the call, who offers to whom and what the other ends sent, and saying what to send them; it
+  knows nothing of Bingle. One UDP socket and one peer connection per person, nonblocking and read
+  every 5 ms at most; Opus at 48 kHz, mono, 20 ms a frame, sent as the microphone's clock delivers
+  it, with up to three lost packets concealed (in-band FEC for the last). It does what the page
+  does: one audio track, no data channel, candidates trickled both ways and those that come before
+  their description kept; an offer from a new connection of the other end (a new certificate)
+  answered on a new one; in a game's call, after a failure, the side that offers restarts ICE
+  1.5 s later, up to three times, and the other sends `retry`. Host candidates and STUN's
+  server-reflexive ones; TURN relays come with the calls that receive them. The microphone and the
+  speaker are cpal's, any rate and channels, resampled to and from the call's; the voices are
+  mixed with a little queued each (40 ms) and a volume each. Speaking (the page's level, held
+  300 ms) is reported for each person and for this end. Devices are chosen by cpal's id, since
+  names repeat under ALSA.
+- Tested by two engines talking over loopback (sound both ways, volume, mute, deafen, a `retry`
+  bringing up a new connection), and by hand against headless Chromium both ways, the page's
+  offer answered and the engine's offer answered (0 packets lost, the tone heard at its level).
+  `--voice-check` plays the microphone back through the speaker over a connection on this
+  machine, to try the devices.
 - **Done when** a player in the client and one on the web page can talk during a game.
+- **Next**: calls between friends.
 
 ### After that
 
@@ -344,3 +365,15 @@ Settled 2026-11-16:
 6. **The desktop client first, and Hex first.** One game, Hex, played end to end, and the platform
    around a game (a game browser, accounts, friends, voice chat), before more games or VR. VR waits
    until that works; the desktop client only keeps the few habits above that make it possible.
+
+Settled 2026-11-20:
+
+7. **Voice is WebRTC through `rtc` 0.21 with `rusty-opus`**, on a thread of its own. A spike put
+   both `rtc` and `str0m` against Chromium, each sending and receiving Opus with nothing lost.
+   `str0m` was set aside: its pure-Rust crypto still enables a certificate generator that pulls in
+   aws-lc-rs, which the client keeps out (it needs cmake and nasm on Windows). `rtc` builds on
+   *ring*, `rustls` and `rcgen` alone (77 crates more, none of them C but *ring*). Both do no I/O
+   of their own, so the client owns the sockets. The voice thread is the one exception to all
+   network I/O being on the network thread: a frame must go every 20 ms, and that thread waits on
+   blocking calls. It shares nothing with the network thread but channels; the signalling still
+   goes through the network thread, as every call to the server does.

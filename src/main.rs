@@ -24,6 +24,9 @@ mod run_limit;
 mod scene;
 mod sign_in;
 mod table;
+// The engine of stage 8's calls; the calls themselves (PRs 2 and 3) use what `--voice-check` does not.
+#[allow(dead_code)]
+mod voice;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -40,6 +43,15 @@ fn main() -> AppExit {
     if opts.help {
         println!("{}", cli::USAGE);
         return AppExit::Success;
+    }
+    if opts.voice_check {
+        return match voice::check::run() {
+            Ok(()) => AppExit::Success,
+            Err(e) => {
+                eprintln!("bingle-3d: voice check: {e}");
+                AppExit::from_code(1)
+            }
+        };
     }
 
     let mut app = App::new();
