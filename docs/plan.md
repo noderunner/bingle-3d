@@ -254,9 +254,18 @@ Friends, direct messages and calls need a signed-in account (ADR 0105); a guest 
   asked twice; *Invite* while this client has a seat in a game that has not started), requests
   out (*Cancel*), a handle field to ask somebody, and the three settings (`show_presence`,
   `accept_invites`, `mail_requests`). `--friends` opens it at start.
-- **Next**: direct messages between friends, over the same socket (`dm` events, `/dm/threads`,
-  `/dm/history`, `POST /dm`; writing needs the account to be here, which it now is). Then, later,
-  a seat kept for a friend on the new game form (`reserved_seats`, Bingle's ADR 0107).
+- Direct messages. *Write* beside a friend opens the conversation in the panel (*Back to
+  friends* returns): what the server keeps (`POST /dm/history`: the last 200 of a pair, for two
+  hours), with messages arriving on the account's socket (`dm` events) as they are sent, from
+  either side and from anywhere the account is signed in; the socket's `ready` gives the
+  account's own address, which tells its messages from the friend's. A field (500 characters,
+  the server's limit) and Enter or *Send* write (`POST /dm`); a refusal is shown and the text
+  kept. A friend who cannot be reached (`can_write` false) is said to be away before writing.
+  The server keeps no record of what was read, so unread messages are those that arrived while
+  their conversation was not open; they count on *Write* (*Write · 2*) and in the closed panel's
+  *waiting*. `--talk HANDLE` opens a conversation at start.
+- **Next**: the "done when", by hand against the web page. Then, later, a seat kept for a friend
+  on the new game form (`reserved_seats`, Bingle's ADR 0107).
 
 ### Stage 8: voice chat
 

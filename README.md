@@ -88,6 +88,7 @@ cargo run -- --join 7ZKMXP                 # a free seat in this room's game (or
 cargo run -- --new-game hex-7              # the form that sets up a new game of Hex (7×7)
 cargo run -- --sign-in                     # the form that signs in to an account
 cargo run -- --friends                     # the friends panel open (signed in)
+cargo run -- --talk ana                    # the conversation with the friend @ana
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
@@ -126,7 +127,8 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   `keys.toml` too, so the client stays signed in between runs until *Sign out*. Your games as a
   guest on that server become the account's. Accounts are made on the server's web page.
   Signed in, the *Friends* panel on the right lists your friends and who of them is online,
-  requests, and invitations to games; your friends see you online while the client runs.
+  requests, and invitations to games, and *Write* opens a conversation with a friend; your
+  friends see you online while the client runs.
 - `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
 
 **Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)

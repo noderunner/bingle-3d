@@ -26,6 +26,7 @@ use super::api::{
     Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
+use super::api::{DirectHistory, DirectHistoryRequest, DirectMessage, DirectMessageRequest};
 use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
 use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
 use super::server_url::{Scheme, ServerUrl, query_value};
@@ -418,6 +419,28 @@ impl Session {
         let body = serde_json::to_value(HereRequest { here }).expect("here is JSON");
         let _: HereResponse = self.as_me(&url, "POST", "/api/here", Some(&body))?;
         Ok(())
+    }
+
+    /// Writes to a friend, at their address.
+    pub fn write(&mut self, to: &str, text: &str) -> Result<DirectMessage, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(DirectMessageRequest {
+            to: to.to_string(),
+            text: text.trim().to_string(),
+        })
+        .expect("a message is JSON");
+        self.as_me(&url, "POST", "/api/dm", Some(&body))
+    }
+
+    /// What was said with an address (the server keeps the last 200 of a pair, for two hours).
+    pub fn history(&mut self, with: &str) -> Result<Vec<DirectMessage>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(DirectHistoryRequest {
+            with: with.to_string(),
+        })
+        .expect("a history request is JSON");
+        let history: DirectHistory = self.as_me(&url, "POST", "/api/dm/history", Some(&body))?;
+        Ok(history.messages)
     }
 
     /// Opens the signed-in account's own socket, `/ws-dm`. `None` when nobody is signed in.
@@ -1650,6 +1673,14 @@ mod tests {
                     r#"{"mail_requests":false,"show_presence":false,"accept_invites":true}"#.into(),
                 ),
                 ("POST", "/api/here") if signed_in => (200, r#"{"people":[]}"#.into()),
+                ("POST", "/api/dm") if signed_in => (
+                    200,
+                    r#"{"id":7,"from":"me","name":"ana","to":"a","text":"hello","at":"2026-11-20T03:00:00Z"}"#.into(),
+                ),
+                ("POST", "/api/dm/history") if signed_in => (
+                    200,
+                    r#"{"messages":[{"id":6,"from":"a","name":"bo","to":"me","text":"hi","at":"x"}]}"#.into(),
+                ),
                 _ => inner(req),
             }
         }));
@@ -1687,6 +1718,10 @@ mod tests {
         };
         assert_eq!(s.friend_settings(Some(off)).unwrap(), off);
         s.here(true).unwrap();
+        let sent_message = s.write("a", " hello ").unwrap();
+        assert_eq!((sent_message.id, sent_message.text.as_str()), (7, "hello"));
+        let history = s.history("a").unwrap();
+        assert_eq!(history[0].name, "bo");
 
         let seen = seen.lock().unwrap();
         let sent: Vec<(String, String, serde_json::Value)> = seen
@@ -1735,6 +1770,19 @@ mod tests {
                 .filter(|r| r.path.starts_with("/api/friends") || r.path == "/api/here")
                 .all(|r| r.auth.as_deref() == Some("Bearer bgs_ana")),
             "as the account"
+        );
+        let dm: Vec<(String, serde_json::Value)> = seen
+            .iter()
+            .filter(|r| r.path.starts_with("/api/dm"))
+            .map(|r| (r.path.clone(), serde_json::from_str(&r.body).unwrap()))
+            .collect();
+        assert_eq!(
+            dm,
+            [
+                ("/api/dm".to_string(), json!({"to": "a", "text": "hello"})),
+                ("/api/dm/history".to_string(), json!({"with": "a"})),
+            ],
+            "a message is sent trimmed, to the friend's address"
         );
     }
 

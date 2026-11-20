@@ -71,7 +71,10 @@ fn main() -> AppExit {
             sign_in: opts.sign_in,
         },
         sign_in::SignInPlugin,
-        friends::FriendsPlugin { open: opts.friends },
+        friends::FriendsPlugin {
+            open: opts.friends || opts.talk.is_some(),
+            talk: opts.talk.clone(),
+        },
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,
         board::BoardPlugin,
