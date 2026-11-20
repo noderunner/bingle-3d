@@ -10,7 +10,8 @@
 //! - `materials.<name>`: those materials (`look::MaterialSpec`);
 //! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
 //!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
-//!   of the same; the API does not say it.
+//!   of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
+//!   game's board, as a Go board's star points are.
 //!
 //! The private overlay's games (plan, decision 2) will add files from a folder; this is where
 //! they will be read.
@@ -44,6 +45,17 @@ pub struct BoardLook {
     /// Where the pieces go: in the spaces, or on the points where the lines cross.
     #[serde(default)]
     pub on: PlayOn,
+    /// Positions marked on the board with a dot, by game id (a file may be for several games,
+    /// each its own size).
+    #[serde(default)]
+    pub marks: BTreeMap<String, Vec<String>>,
+}
+
+impl BoardLook {
+    /// The positions marked on this game's board.
+    pub fn marks(&self, game: &str) -> &[String] {
+        self.marks.get(game).map_or(&[], Vec::as_slice)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -210,6 +222,24 @@ mod tests {
             assert_eq!(look.board.on, PlayOn::Points, "{id}");
         }
         assert_eq!(all.for_game("hex-11").unwrap().board.on, PlayOn::Cells);
+    }
+
+    #[test]
+    fn a_go_board_has_its_star_points_for_its_size() {
+        let all = Appearances::built_in();
+        let marks = |id: &str| all.for_game(id).unwrap().board.marks(id).to_vec();
+        assert_eq!(marks("go-9x9").len(), 5);
+        assert_eq!(marks("go-13x13").len(), 5);
+        assert_eq!(marks("go-19x19").len(), 9);
+        assert!(marks("go-19x19").contains(&"j10".to_string()), "the centre");
+        assert!(marks("pente").is_empty());
+        assert!(
+            all.for_game("hex-11")
+                .unwrap()
+                .board
+                .marks("hex-11")
+                .is_empty()
+        );
     }
 
     #[test]

@@ -21,6 +21,13 @@ games = [
 [board]
 on = "points"
 
+# A Go board's star points: on the third line of a small board, the fourth of the others, and the
+# middle.
+[board.marks]
+go-9x9 = ["c3", "g3", "e5", "c7", "g7"]
+go-13x13 = ["d4", "j4", "g7", "d10", "j10"]
+go-19x19 = ["d4", "j4", "p4", "d10", "j10", "p10", "d16", "j16", "p16"]
+
 [pieces.stone]
 model = "models/stone.glb"
 

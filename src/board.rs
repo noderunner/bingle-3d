@@ -85,6 +85,8 @@ const POINTS_MARGIN: f32 = 1.2;
 /// A points board's lines, and its edge's (thicker, as on a Go board), in pitches.
 const LINE_WIDTH: f32 = 0.035;
 const EDGE_LINE_WIDTH: f32 = 0.07;
+/// A marked position's dot (a Go board's star points), across, in pitches.
+const MARK_SIZE: f32 = 0.2;
 
 /// What a game is played on: its board's spaces (cells of a shape), or the points where its
 /// lines cross. The server says which positions there are and where; which of these they are
@@ -682,6 +684,30 @@ fn build_board(
             (unseen, glowing)
         }
     };
+
+    // Marked positions (a Go board's star points): dots cut as the lines are.
+    let marked: Vec<Vec2> = tools
+        .look
+        .map(|l| l.board.marks(&table.info.id))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|id| layout.centres.get(id))
+        .map(|c| Vec2::new(c.x, c.z))
+        .collect();
+    if !marked.is_empty() {
+        // A round spot's corners are 0.3 of its size from its middle.
+        let dot = slab::cell_corners(CellShape::Spot, pitch * MARK_SIZE / 0.6);
+        let ink = tools.material(&look::groove());
+        commands.spawn((
+            Name::new("Marks"),
+            Mesh3d(tools.meshes.add(look::world_uvs(
+                slab::flat_cells(&marked, &dot, surface.height() + 0.00015),
+                Vec3::ZERO,
+            ))),
+            MeshMaterial3d(ink),
+            ChildOf(root),
+        ));
+    }
 
     // A goal's cells are shaded towards its edge; a points board has no cells to shade.
     if let Surface::Cells(_) = surface {
