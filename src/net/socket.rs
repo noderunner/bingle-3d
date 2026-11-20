@@ -156,6 +156,22 @@ impl Socket {
         Self::connect(url, socket_url(url, room_code, role), key, tls)
     }
 
+    /// Opens the game's voice socket for the player `name`, whose seat `key` holds: it carries
+    /// only who joins and leaves the call, and the WebRTC messages for that seat.
+    pub fn open_voice(
+        url: &ServerUrl,
+        room_code: &str,
+        name: &str,
+        key: &str,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, Error> {
+        let target = format!(
+            "{}&only=voice",
+            socket_url(url, room_code, Role::Player { name, key })
+        );
+        Self::connect(url, target, Some(key), tls)
+    }
+
     /// Opens `/ws-dm`, the socket of the account whose session `token` is.
     pub fn open_account(
         url: &ServerUrl,

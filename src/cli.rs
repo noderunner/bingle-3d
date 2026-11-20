@@ -21,6 +21,7 @@ Options:
   --talk HANDLE      open the conversation with this friend (signed in)
   --call HANDLE      ring this friend once they are online, or answer them if they
                      are ringing (signed in)
+  --voice            join the voice chat of the game you play, once seated
   --no-audio-devices open no microphone and no speaker in a call (for tests)
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
@@ -53,6 +54,8 @@ pub struct Options {
     pub talk: Option<String>,
     /// Ring this friend at start.
     pub call: Option<String>,
+    /// Join the voice chat of the game played.
+    pub voice: bool,
     /// Calls open no microphone and no speaker.
     pub no_audio_devices: bool,
     /// Try the microphone and the speaker, then quit.
@@ -99,6 +102,7 @@ impl Options {
                 "--voice-check" => opts.voice_check = true,
                 "--call" => opts.call = Some(value("a friend's handle")?),
                 "--no-audio-devices" => opts.no_audio_devices = true,
+                "--voice" => opts.voice = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--frames" => {
                     let v = value("a number of frames")?;
@@ -259,6 +263,7 @@ mod tests {
         assert!(!parse(&[]).unwrap().voice_check);
         assert_eq!(parse(&["--call=bob"]).unwrap().call, Some("bob".into()));
         assert!(parse(&["--no-audio-devices"]).unwrap().no_audio_devices);
+        assert!(parse(&["--voice"]).unwrap().voice);
     }
 
     #[test]

@@ -203,6 +203,10 @@ A game's own rules and its players' words keep their terms.
   with no Bevy and no sound), returning the `Effect`s to carry out; `DirectCalling` holds it and
   the voice engine, and turns them into requests. Its default opens no devices; only the plugin
   chooses them (`--no-audio-devices` keeps them off, for runs like an agent's).
+- `src/voice_chat.rs`: a game's voice chat, on the game's panel: one connection per seat in the
+  call, the higher seat offering. Joining, the heartbeat and the call's own socket
+  (`only=voice`) are the network thread's (`VoiceLink` in `net/mod.rs`); `changes` and `role`
+  have no Bevy in them. Its default opens no devices, as `DirectCalling`'s.
 - `src/voice/`: calls (stage 8), with no Bingle in it. `Engine` is a call: **a thread of its own**,
   the one exception to all network I/O being on the network thread (a frame of sound must leave
   every 20 ms; plan, decision 7). It is told who is in the call, who offers, and what the other

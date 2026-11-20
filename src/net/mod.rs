@@ -32,7 +32,7 @@ use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
 use api::{
     AccountEvent, BotInfo, DirectCall, DirectMessage, DirectSignal, Event, FriendSettings,
-    FriendsList, GameInfo, GameState, IceServer, OpenGame, Selections,
+    FriendsList, GameInfo, GameState, IceServer, OpenGame, Selections, VoiceEvent, VoicePeer,
 };
 use std::collections::BTreeMap;
 
@@ -40,6 +40,7 @@ use crate::call::DirectCalling;
 use crate::friends::{self, Friends};
 use crate::new_game::NewGame;
 use crate::sign_in::Signing;
+use crate::voice_chat::VoiceChat;
 use session::{Code, Opened, Problem, Session, SignIn, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
@@ -72,6 +73,7 @@ impl Plugin for NetPlugin {
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
             .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(
@@ -146,6 +148,16 @@ pub enum Request {
     /// One WebRTC message for the friend called.
     Signal {
         to: String,
+        kind: String,
+        data: serde_json::Value,
+    },
+    /// Join the voice chat of a game, for the seat `player_name` sits at, in place of any other.
+    JoinVoice { room: String, player_name: String },
+    /// Leave the game's voice chat.
+    LeaveVoice,
+    /// One WebRTC message for a seat in the game's voice chat.
+    VoiceSignal {
+        to: u32,
         kind: String,
         data: serde_json::Value,
     },
@@ -317,6 +329,21 @@ enum Reply {
     CallEvent(DirectCall),
     /// A WebRTC message of a call, on the account's socket.
     CallSignal(Box<DirectSignal>),
+    /// The game's voice chat was joined: the ICE servers and who is in it; or why not.
+    VoiceJoined {
+        room: String,
+        result: Result<(Vec<IceServer>, Vec<VoicePeer>), Problem>,
+    },
+    /// Who is in the game's voice chat, as the heartbeat (or the socket reopened) said.
+    VoicePeers {
+        room: String,
+        peers: Vec<VoicePeer>,
+    },
+    /// Somebody joined or left the game's voice chat, or signals this seat.
+    Voice {
+        room: String,
+        event: VoiceEvent,
+    },
 }
 
 #[derive(Resource)]
@@ -378,11 +405,12 @@ struct Watching {
 fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
     let mut watching: Option<Watching> = None;
     let mut account = AccountLink::default();
+    let mut voice: Option<VoiceLink> = None;
     loop {
         // With a socket to read, the inbox is only looked at between reads; signed in without
         // one (waiting to open it again), it is waited on a little, so that the account is still
         // looked after; otherwise there is nothing to do until a request comes.
-        let request = if watching.is_some() || account.socket.is_some() {
+        let request = if watching.is_some() || account.socket.is_some() || voice.is_some() {
             match inbox.try_recv() {
                 Ok(r) => Some(r),
                 Err(mpsc::TryRecvError::Empty) => None,
@@ -401,6 +429,33 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
             }
         };
         let replies = match request {
+            Some(Request::JoinVoice { room, player_name }) => {
+                if let Some(old) = voice.take() {
+                    old.leave(&mut session);
+                }
+                let (link, reply) = VoiceLink::join(&mut session, room, player_name);
+                voice = link;
+                vec![reply]
+            }
+            Some(Request::LeaveVoice) => {
+                if let Some(old) = voice.take() {
+                    old.leave(&mut session);
+                }
+                Vec::new()
+            }
+            Some(Request::VoiceSignal { to, kind, data }) => {
+                if let Some(link) = &voice
+                    && let Err(problem) =
+                        session.voice_signal(&link.room, &link.name, to, &kind, data)
+                {
+                    // The other seat left, or this one did: the call's list says so.
+                    info!(
+                        "a {kind} for seat {to} was not relayed: {}",
+                        problem.message()
+                    );
+                }
+                Vec::new()
+            }
             Some(request) => handle(&mut session, &mut watching, request)
                 .into_iter()
                 .collect(),
@@ -408,6 +463,9 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
                 let mut replies: Vec<Reply> =
                     read_socket(&session, &mut watching).into_iter().collect();
                 replies.extend(account.tick(&mut session, Instant::now()));
+                if let Some(link) = voice.as_mut() {
+                    replies.extend(link.tick(&mut session, Instant::now()));
+                }
                 replies
             }
         };
@@ -420,6 +478,137 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
     }
     if let Some(s) = account.socket {
         s.close();
+    }
+    if let Some(link) = voice {
+        link.leave(&mut session);
+    }
+}
+
+/// How often a seat in a game's voice chat says it is still there: its place lapses after 45 s.
+pub const VOICE_EVERY: Duration = Duration::from_secs(15);
+
+/// How long joining waits for the voice socket's `joined`.
+const VOICE_JOINED_WAIT: Duration = Duration::from_secs(4);
+
+/// The game's voice chat this client is in, on the network thread: its own socket, and the
+/// heartbeat.
+struct VoiceLink {
+    room: String,
+    name: String,
+    socket: Option<Socket>,
+    beat_at: Instant,
+    retry_at: Option<Instant>,
+}
+
+impl VoiceLink {
+    /// Joins, as the page does: the socket first, and the seat announced once the server says it
+    /// listens, since the others offer the moment they hear of it, and a message for a seat
+    /// nobody listens for is lost.
+    fn join(session: &mut Session, room: String, name: String) -> (Option<VoiceLink>, Reply) {
+        let failed = |room: String, problem| {
+            (
+                None,
+                Reply::VoiceJoined {
+                    room,
+                    result: Err(problem),
+                },
+            )
+        };
+        let mut socket = match session.voice_socket(&room, &name) {
+            Ok(s) => s,
+            Err(problem) => return failed(room, problem),
+        };
+        let deadline = Instant::now() + VOICE_JOINED_WAIT;
+        while Instant::now() < deadline {
+            match socket.next() {
+                Ok(Some(text)) if matches!(VoiceEvent::parse(&text), Ok(VoiceEvent::Joined)) => {
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => return failed(room, session.socket_failed(e)),
+            }
+        }
+        let ice = session.ice_servers().unwrap_or_else(|problem| {
+            warn!("the ICE servers: {}", problem.message());
+            Vec::new()
+        });
+        match session.voice(&room, &name, true) {
+            Ok(peers) => {
+                info!("joined the voice chat of {room}");
+                let reply = Reply::VoiceJoined {
+                    room: room.clone(),
+                    result: Ok((ice, peers)),
+                };
+                let link = VoiceLink {
+                    room,
+                    name,
+                    socket: Some(socket),
+                    beat_at: Instant::now() + VOICE_EVERY,
+                    retry_at: None,
+                };
+                (Some(link), reply)
+            }
+            Err(problem) => {
+                socket.close();
+                failed(room, problem)
+            }
+        }
+    }
+
+    fn leave(self, session: &mut Session) {
+        if let Some(s) = self.socket {
+            s.close();
+        }
+        if let Err(problem) = session.voice(&self.room, &self.name, false) {
+            warn!("leaving the voice chat: {}", problem.message());
+        }
+    }
+
+    /// The heartbeat, and what the socket says; the socket opened again if it dropped.
+    fn tick(&mut self, session: &mut Session, now: Instant) -> Vec<Reply> {
+        let mut replies = Vec::new();
+        let room = self.room.clone();
+        if now >= self.beat_at {
+            self.beat_at = now + VOICE_EVERY;
+            match session.voice(&room, &self.name, true) {
+                Ok(peers) => replies.push(Reply::VoicePeers { room, peers }),
+                Err(problem) => warn!("the voice chat's heartbeat: {}", problem.message()),
+            }
+            return replies;
+        }
+        let Some(socket) = self.socket.as_mut() else {
+            if self.retry_at.is_none_or(|t| now >= t) {
+                match session.voice_socket(&room, &self.name) {
+                    Ok(socket) => {
+                        self.socket = Some(socket);
+                        self.retry_at = None;
+                        // Whatever was said while it was closed is in the list.
+                        if let Ok(peers) = session.voice_peers(&room) {
+                            replies.push(Reply::VoicePeers { room, peers });
+                        }
+                    }
+                    Err(problem) => {
+                        warn!("the voice chat's socket: {}", problem.message());
+                        self.retry_at = Some(now + RETRY_AFTER);
+                    }
+                }
+            }
+            return replies;
+        };
+        match socket.next() {
+            Ok(Some(text)) => match VoiceEvent::parse(&text) {
+                Ok(VoiceEvent::Joined | VoiceEvent::Other(_)) => {}
+                Ok(event) => replies.push(Reply::Voice { room, event }),
+                Err(e) => warn!("skipped a voice event this client cannot read: {e}"),
+            },
+            Ok(None) => {}
+            Err(e) => {
+                warn!("the voice chat's socket closed: {e}");
+                self.socket = None;
+                self.retry_at = Some(now + Duration::from_secs(1));
+            }
+        }
+        replies
     }
 }
 
@@ -660,6 +849,8 @@ fn handle(
             join,
         }),
         Request::IceServers => Some(Reply::IceServers(session.ice_servers())),
+        // Taken by `run`, with the voice chat's link.
+        Request::JoinVoice { .. } | Request::LeaveVoice | Request::VoiceSignal { .. } => None,
         Request::Signal { to, kind, data } => {
             // A message the other end does not need any more (the call ended) is refused; the
             // call itself says so.
@@ -739,6 +930,7 @@ fn poll_network(
     mut signing: ResMut<Signing>,
     mut friends: ResMut<Friends>,
     mut call: ResMut<DirectCalling>,
+    mut voice: ResMut<VoiceChat>,
 ) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -964,6 +1156,9 @@ fn poll_network(
             }
             Ok(Reply::CallEvent(event)) => call.event(&net, event),
             Ok(Reply::CallSignal(signal)) => call.signal(*signal),
+            Ok(Reply::VoiceJoined { room, result }) => voice.joined(&net, &room, result),
+            Ok(Reply::VoicePeers { room, peers }) => voice.peers(&room, &peers),
+            Ok(Reply::Voice { room, event }) => voice.event(&room, event),
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
                 // The connection lists every game; a narrower list is asked for again.
@@ -1352,6 +1547,7 @@ mod tests {
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
             .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let open = |code: &str| OpenGame {
@@ -1424,6 +1620,7 @@ mod tests {
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
             .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
@@ -1483,6 +1680,7 @@ mod tests {
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
             .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network);
         let mut waiting = Table::new(opened());
@@ -1560,6 +1758,7 @@ mod tests {
             .init_resource::<NewGame>()
             .init_resource::<Signing>()
             .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
             .init_resource::<Friends>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);

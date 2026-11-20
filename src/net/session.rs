@@ -30,6 +30,7 @@ use super::api::{DirectCallRequest, DirectSignalRequest, IceServer, RtcConfig};
 use super::api::{DirectHistory, DirectHistoryRequest, DirectMessage, DirectMessageRequest};
 use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
 use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
+use super::api::{VoicePeer, VoicePeers, VoiceRequest, VoiceSignalRequest};
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
@@ -480,6 +481,73 @@ impl Session {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let config: RtcConfig = self.get_as_me(&url, "/api/rtc/config")?;
         Ok(config.ice_servers)
+    }
+
+    /// Opens a game's voice socket for the player `name` (a seat this client holds).
+    pub fn voice_socket(&mut self, room_code: &str, name: &str) -> Result<Socket, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        if !valid_room_code(room_code) {
+            return Err(not_a_room_code(room_code));
+        }
+        let key = self.bearer(&url)?;
+        Socket::open_voice(&url, room_code, name, &key, self.tls.clone())
+            .map_err(|e| self.socket_problem(&url, e))
+    }
+
+    /// Joins a game's voice chat for the seat of `name`, or says it is still there; with
+    /// `active` false, leaves it. Who is in the call.
+    pub fn voice(
+        &mut self,
+        room_code: &str,
+        name: &str,
+        active: bool,
+    ) -> Result<Vec<VoicePeer>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(VoiceRequest {
+            player_name: name.to_string(),
+            active,
+        })
+        .expect("a voice request is JSON");
+        let peers: VoicePeers = self.as_me(
+            &url,
+            "POST",
+            &format!("/api/games/{room_code}/voice"),
+            Some(&body),
+        )?;
+        Ok(peers.peers)
+    }
+
+    /// Who is in a game's voice chat.
+    pub fn voice_peers(&mut self, room_code: &str) -> Result<Vec<VoicePeer>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let peers: VoicePeers = self.get_as_me(&url, &format!("/api/games/{room_code}/voice"))?;
+        Ok(peers.peers)
+    }
+
+    /// Relays one WebRTC message from the seat of `name` to the seat `to`.
+    pub fn voice_signal(
+        &mut self,
+        room_code: &str,
+        name: &str,
+        to: u32,
+        kind: &str,
+        data: serde_json::Value,
+    ) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(VoiceSignalRequest {
+            player_name: name.to_string(),
+            to,
+            kind: kind.to_string(),
+            data,
+        })
+        .expect("a signal is JSON");
+        let _: OkResponse = self.as_me(
+            &url,
+            "POST",
+            &format!("/api/games/{room_code}/voice/signal"),
+            Some(&body),
+        )?;
+        Ok(())
     }
 
     /// Opens the signed-in account's own socket, `/ws-dm`. `None` when nobody is signed in.
