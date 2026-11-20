@@ -10,6 +10,7 @@ mod camera;
 mod cli;
 mod clock;
 mod config;
+mod families;
 mod fonts;
 mod game_panel;
 mod hud;
