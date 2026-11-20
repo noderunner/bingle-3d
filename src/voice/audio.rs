@@ -22,6 +22,8 @@ const PREBUFFER: usize = FRAME * 2;
 /// The most of a voice queued; beyond it the oldest is dropped down to `TRIM_TO`.
 const QUEUE_MAX: usize = FRAME * 10;
 const TRIM_TO: usize = FRAME * 4;
+/// The most of what was played kept for the echo canceller, should the voice thread not take it.
+const PLAYED_MAX: usize = FRAME * 10;
 
 /// The RMS of a frame above which somebody counts as speaking (the web page's level).
 const SPEAK_LEVEL: f32 = 0.035;
@@ -64,6 +66,8 @@ pub struct Mixer {
     voices: HashMap<PeerKey, Voice>,
     volumes: HashMap<PeerKey, f32>,
     deafened: bool,
+    /// What was pulled, for the echo canceller (`take_played`).
+    played: VecDeque<f32>,
 }
 
 #[derive(Default)]
@@ -110,8 +114,21 @@ impl Mixer {
         }
     }
 
-    /// Fills `out` with the mix of every voice.
+    /// Fills `out` with the mix of every voice, and keeps a copy of it for the echo canceller.
     pub fn pull(&mut self, out: &mut [f32]) {
+        self.mix(out);
+        self.played.extend(out.iter());
+        let over = self.played.len().saturating_sub(PLAYED_MAX);
+        self.played.drain(..over);
+    }
+
+    /// Moves what was played since the last call into `out`.
+    pub fn take_played(&mut self, out: &mut Vec<f32>) {
+        out.clear();
+        out.extend(self.played.drain(..));
+    }
+
+    fn mix(&mut self, out: &mut [f32]) {
         out.fill(0.0);
         if self.deafened {
             self.voices.clear();
@@ -282,6 +299,28 @@ mod tests {
         m.set_volume(&key("b"), 2.0);
         m.pull(&mut out);
         assert_eq!(out, [1.0; 4], "clipped");
+    }
+
+    #[test]
+    fn what_was_played_is_kept_for_the_echo_canceller() {
+        let mut m = Mixer::default();
+        let mut out = [0.0; FRAME];
+        m.push(&key("a"), &[0.25; FRAME * 2]);
+        m.pull(&mut out);
+        let mut played = Vec::new();
+        m.take_played(&mut played);
+        assert_eq!(played, out.to_vec());
+        m.take_played(&mut played);
+        assert!(played.is_empty(), "taken once");
+        for _ in 0..20 {
+            m.pull(&mut out);
+        }
+        m.take_played(&mut played);
+        assert_eq!(
+            played.len(),
+            PLAYED_MAX,
+            "kept to a bound when nobody takes it"
+        );
     }
 
     #[test]

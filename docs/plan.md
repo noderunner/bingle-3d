@@ -52,7 +52,7 @@ being changed:
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
 | API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.6.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
-| Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
+| Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -361,7 +361,24 @@ a browser puts in each message and what the page expects of the other end.
   them leave.
 - **Done when** a player in the client and one on the web page can talk during a game: done,
   with the page; by ear on two machines is the maintainer's to try.
-- **Next**: echo cancellation (PR 4), and TURN relays for players behind strict NATs.
+- As built (echo cancellation, `src/voice/echo.rs`). What the microphone hears is cleaned as the
+  page asks the browser to (`echoCancellation`, `noiseSuppression`, `autoGainControl`), by
+  `sonora`: WebRTC's own audio processing (AEC3, noise suppression, AGC2) ported to Rust, seven
+  crates of its own and nothing else. The mixer keeps a copy of what the speaker pulled, which the
+  voice thread hands the canceller before each frame from the microphone, 10 ms at a time; the
+  canceller finds the echo's delay itself. It runs only while a microphone is open, cleans frames
+  even while muted so it keeps up with the room, and the *speaking* shown for this end is taken
+  after it, so one's own speaker no longer counts as speaking. About 0.4 ms of one core per 20 ms
+  frame.
+- Measured with recorded speech (the speech fixtures that `rusty-opus` and `sonora` ship), played
+  and heard back directly and off three reflections, with microphone hiss: the echo lowered by 24
+  to 30 dB at delays from 20 to 200 ms (20 to 26 dB with noise suppression and gain control on
+  too), steady over 30 s. When both ends speak at once the local voice is ducked, as AEC3 does in a
+  browser. A steady pure tone is not cancelled (its echo has no place in time to find), which
+  speech never is. Tested by a voice-like signal heard back 50 ms later at half its level (lowered
+  by more than 20 dB in ten seconds), a voice passing when nothing plays, and the mixer's copy of
+  what it played.
+- **Next**: TURN relays for players behind strict NATs; by ear, a call on speakers.
 
 ### After that
 

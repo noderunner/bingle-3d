@@ -98,8 +98,10 @@ start.
 
 Signed in, *Call* beside a friend who is online rings them, in the client or on Bingle's web page;
 the call shows at the top of the friends panel, with *Answer* and *Decline* when somebody rings
-you, and *Mute* and *Hang up* while you talk. It uses your default microphone and speaker; a
-headset keeps your speaker out of your microphone. `--voice-check` tries them: for ten seconds you
+you, and *Mute* and *Hang up* while you talk. It uses your default microphone and speaker. What
+your microphone picks up of the speaker is taken out (echo cancellation, as a browser does, with
+the background noise lowered and the level evened out), so speakers work; it takes a few seconds
+to settle at the start of a call. `--voice-check` tries them: for ten seconds you
 hear yourself, through a voice connection on your own machine, with no server and no window. It
 lists the devices it can see.
 

@@ -214,7 +214,9 @@ A game's own rules and its players' words keep their terms.
   server is the network thread's. `peer.rs` is one person: a UDP socket and rtc's peer
   connection, following what Bingle's page does (`docs/voice.md` there), so a browser can be on
   the other end. `signal.rs` is the messages in a browser's form; `audio.rs` the microphone's
-  buffer, the mix and a resampler, with no devices; `devices.rs` cpal's microphone and speaker;
+  buffer, the mix (keeping a copy of what it played) and a resampler, with no devices; `echo.rs`
+  the microphone's sound cleaned as a browser cleans it (echo cancellation, noise suppression,
+  gain), with what was played as the reference; `devices.rs` cpal's microphone and speaker;
   `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
   open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
   host's sound): run clients with `--no-audio-devices`.
@@ -227,8 +229,8 @@ A game's own rules and its players' words keep their terms.
   aws-lc-rs (which needs cmake and nasm on Windows). Today: `bevy`, `ureq` (pinned to 3.5, for the
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
   `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
-  `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds)
-  and `bytes` (rtc's packets).
+  `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds),
+  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation).
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
   the smallest and fullest messages it allows with the client's types. When the client starts using
