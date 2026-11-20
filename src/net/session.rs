@@ -26,11 +26,12 @@ use super::api::{
     Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
+use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
 use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
-use super::{GameQuery, GameSettings, LobbyCall, TimeControl};
+use super::{FriendCall, GameQuery, GameSettings, LobbyCall, TimeControl};
 use crate::config::Store;
 
 /// What a server has, once connected.
@@ -360,6 +361,9 @@ impl Session {
             self.account = None;
             return Ok(());
         };
+        // Gone from friends' lists at once, rather than when the server forgets the account.
+        let gone = serde_json::to_value(HereRequest { here: false }).expect("here is JSON");
+        let _ = self.call::<HereResponse>(&url, "POST", "/api/here", Some(&token), Some(&gone));
         let told = self.call::<LogoutResponse>(&url, "POST", "/auth/logout", Some(&token), None);
         if let Err(e) = self.store.set_session_token(&origin, None) {
             bevy::log::warn!("could not forget the session: {e}");
@@ -370,6 +374,61 @@ impl Session {
             Ok(_) | Err(Problem::Refused { status: 401, .. }) => Ok(()),
             Err(other) => Err(other),
         }
+    }
+
+    /// An account is signed in, as far as this client knows.
+    pub fn has_account(&self) -> bool {
+        self.account.is_some()
+    }
+
+    /// The account's friends, requests and game invitations.
+    pub fn friends(&mut self) -> Result<FriendsList, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        self.get_as_me(&url, "/api/friends")
+    }
+
+    /// Does `call` on the friends list.
+    pub fn friend(&mut self, call: &FriendCall) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let (path, body) = friend_request(call);
+        let body = serde_json::to_value(body).expect("a friends call is JSON");
+        let _: OkResponse =
+            self.as_me(&url, "POST", &format!("/api/friends/{path}"), Some(&body))?;
+        Ok(())
+    }
+
+    /// The friends settings, changed to `new` first if given.
+    pub fn friend_settings(
+        &mut self,
+        new: Option<FriendSettings>,
+    ) -> Result<FriendSettings, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        match new {
+            Some(new) => {
+                let body = serde_json::to_value(new).expect("settings are JSON");
+                self.as_me(&url, "PUT", "/api/friends/settings", Some(&body))
+            }
+            None => self.get_as_me(&url, "/api/friends/settings"),
+        }
+    }
+
+    /// Says that the account is here (looking at Bingle), or, with `false`, that it has gone.
+    pub fn here(&mut self, here: bool) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(HereRequest { here }).expect("here is JSON");
+        let _: HereResponse = self.as_me(&url, "POST", "/api/here", Some(&body))?;
+        Ok(())
+    }
+
+    /// Opens the signed-in account's own socket, `/ws-dm`. `None` when nobody is signed in.
+    pub fn account_socket(&mut self) -> Result<Option<Socket>, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let Some(token) = self.store.session_token(&url.origin()).map(str::to_string) else {
+            return Ok(None);
+        };
+        Socket::open_account(&url, &token, self.tls.clone())
+            .map(Some)
+            .map_err(|e| self.socket_problem(&url, e))
     }
 
     /// The name to sit down under: the account's, signed in, or the configured one.
@@ -756,6 +815,16 @@ impl Session {
         let target = url.join(path);
         let auth = key.map(|k| format!("Bearer {k}"));
         let result = match method {
+            "PUT" => {
+                let mut req = self.agent.put(&target);
+                if let Some(a) = &auth {
+                    req = req.header("Authorization", a);
+                }
+                match body {
+                    Some(b) => req.send_json(b),
+                    None => req.send_empty(),
+                }
+            }
             "POST" => {
                 let mut req = self.agent.post(&target);
                 if let Some(a) = &auth {
@@ -856,6 +925,58 @@ pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
         .find_map(|id| bots.iter().find(|b| b.id == *id))
         .or_else(|| bots.first())
         .map(|b| b.id.as_str())
+}
+
+/// The friends call's path under `/api/friends`, and its body.
+pub fn friend_request(call: &FriendCall) -> (&'static str, FriendBody) {
+    let who = |handle: &str| handle.trim().trim_start_matches('@').to_string();
+    match call {
+        FriendCall::Ask(handle) => (
+            "request",
+            FriendBody {
+                handle: who(handle),
+                ..Default::default()
+            },
+        ),
+        FriendCall::Answer { handle, accept } => (
+            "answer",
+            FriendBody {
+                handle: who(handle),
+                accept: Some(*accept),
+                ..Default::default()
+            },
+        ),
+        FriendCall::Remove(handle) => (
+            "remove",
+            FriendBody {
+                handle: who(handle),
+                ..Default::default()
+            },
+        ),
+        FriendCall::Invite { handle, room } => (
+            "invite",
+            FriendBody {
+                handle: who(handle),
+                room: room.clone(),
+                accept: None,
+            },
+        ),
+        FriendCall::AnswerInvite { room, accept } => (
+            "invite-answer",
+            FriendBody {
+                room: room.clone(),
+                accept: Some(*accept),
+                ..Default::default()
+            },
+        ),
+        FriendCall::Dismiss(room) => (
+            "dismiss",
+            FriendBody {
+                room: room.clone(),
+                ..Default::default()
+            },
+        ),
+    }
 }
 
 /// The lobby call's path under the game, and its body.
@@ -1505,6 +1626,115 @@ mod tests {
                 serde_json::json!({"code": "000000", "pending": "p1"}),
                 serde_json::json!({"code": "123456", "pending": "p1"}),
             ]
+        );
+    }
+
+    #[test]
+    fn the_friends_calls_go_to_their_paths_with_the_session() {
+        let ended = Arc::new(Mutex::new(false));
+        let inner = accounts(false, ended);
+        let (addr, seen) = serve(Box::new(move |req: &Seen| {
+            let signed_in = req.auth.as_deref() == Some("Bearer bgs_ana");
+            match (req.method.as_str(), req.path.as_str()) {
+                ("POST", p) if signed_in && p.starts_with("/api/friends/") => {
+                    (200, r#"{"ok":true}"#.into())
+                }
+                ("GET", "/api/friends") if signed_in => (
+                    200,
+                    r#"{"friends":[{"name":"@bo","handle":"bo","address":"a","online":true,"can_write":true}],
+                    "incoming":null,"outgoing":[],"invites":[{"room":"AB12CD","game":"Hex (7×7)","def":"hex-7","from":"@bo","status":"pending"}]}"#
+                        .into(),
+                ),
+                ("PUT" | "GET", "/api/friends/settings") if signed_in => (
+                    200,
+                    r#"{"mail_requests":false,"show_presence":false,"accept_invites":true}"#.into(),
+                ),
+                ("POST", "/api/here") if signed_in => (200, r#"{"people":[]}"#.into()),
+                _ => inner(req),
+            }
+        }));
+        let mut s = session(&addr);
+        s.sign_in("ana", "pw").unwrap();
+        assert!(s.has_account());
+        for call in [
+            FriendCall::Ask(" @Bo ".into()),
+            FriendCall::Answer {
+                handle: "bo".into(),
+                accept: false,
+            },
+            FriendCall::Remove("bo".into()),
+            FriendCall::Invite {
+                handle: "bo".into(),
+                room: "AB12CD".into(),
+            },
+            FriendCall::AnswerInvite {
+                room: "AB12CD".into(),
+                accept: true,
+            },
+            FriendCall::Dismiss("AB12CD".into()),
+        ] {
+            s.friend(&call)
+                .unwrap_or_else(|e| panic!("{call:?}: {e:?}"));
+        }
+        let list = s.friends().unwrap();
+        assert!(list.friends[0].online);
+        assert!(list.incoming.is_empty(), "null reads as none");
+        assert!(list.invites[0].pending());
+        let off = FriendSettings {
+            mail_requests: false,
+            show_presence: false,
+            accept_invites: true,
+        };
+        assert_eq!(s.friend_settings(Some(off)).unwrap(), off);
+        s.here(true).unwrap();
+
+        let seen = seen.lock().unwrap();
+        let sent: Vec<(String, String, serde_json::Value)> = seen
+            .iter()
+            .filter(|r| r.path.starts_with("/api/friends") || r.path == "/api/here")
+            .filter(|r| r.method != "GET")
+            .map(|r| {
+                (
+                    r.method.clone(),
+                    r.path.clone(),
+                    serde_json::from_str(&r.body).unwrap(),
+                )
+            })
+            .collect();
+        use serde_json::json;
+        let post = |p: &str, b| ("POST".to_string(), p.to_string(), b);
+        assert_eq!(
+            sent,
+            [
+                post("/api/friends/request", json!({"handle": "Bo"})),
+                post(
+                    "/api/friends/answer",
+                    json!({"handle": "bo", "accept": false})
+                ),
+                post("/api/friends/remove", json!({"handle": "bo"})),
+                post(
+                    "/api/friends/invite",
+                    json!({"handle": "bo", "room": "AB12CD"})
+                ),
+                post(
+                    "/api/friends/invite-answer",
+                    json!({"room": "AB12CD", "accept": true})
+                ),
+                post("/api/friends/dismiss", json!({"room": "AB12CD"})),
+                (
+                    "PUT".to_string(),
+                    "/api/friends/settings".to_string(),
+                    json!({"mail_requests": false, "show_presence": false, "accept_invites": true})
+                ),
+                post("/api/here", json!({"here": true})),
+            ],
+            "a handle is sent without its @ and spaces"
+        );
+        assert!(
+            seen.iter()
+                .filter(|r| r.path.starts_with("/api/friends") || r.path == "/api/here")
+                .all(|r| r.auth.as_deref() == Some("Bearer bgs_ana")),
+            "as the account"
         );
     }
 

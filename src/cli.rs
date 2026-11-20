@@ -17,6 +17,7 @@ Options:
                      has none)
   --new-game GAME    open the form that sets up a new game of GAME
   --sign-in          open the form that signs in to an account
+  --friends          open the friends panel (signed in)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -40,6 +41,8 @@ pub struct Options {
     pub new_game: Option<String>,
     /// Open the sign-in form at start.
     pub sign_in: bool,
+    /// Open the friends panel at start.
+    pub friends: bool,
     pub help: bool,
 }
 
@@ -78,6 +81,7 @@ impl Options {
             match name.as_str() {
                 "-h" | "--help" => opts.help = true,
                 "--sign-in" => opts.sign_in = true,
+                "--friends" => opts.friends = true,
                 "--frames" => {
                     let v = value("a number of frames")?;
                     let n: u32 = v
@@ -231,6 +235,7 @@ mod tests {
         assert!(parse(&["--watch"]).unwrap_err().contains("needs"));
         assert!(parse(&["--sign-in"]).unwrap().sign_in);
         assert!(!parse(&[]).unwrap().sign_in);
+        assert!(parse(&["--friends"]).unwrap().friends);
     }
 
     #[test]

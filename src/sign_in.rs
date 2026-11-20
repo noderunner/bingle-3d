@@ -355,7 +355,7 @@ fn field_node() -> Node {
     }
 }
 
-fn text_field(f: &UiFonts, text: &str) -> impl Bundle {
+pub(crate) fn text_field(f: &UiFonts, text: &str) -> impl Bundle {
     (
         Field,
         TextInput,

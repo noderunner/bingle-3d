@@ -12,6 +12,7 @@ mod clock;
 mod config;
 mod families;
 mod fonts;
+mod friends;
 mod game_panel;
 mod hud;
 mod lobby;
@@ -70,6 +71,7 @@ fn main() -> AppExit {
             sign_in: opts.sign_in,
         },
         sign_in::SignInPlugin,
+        friends::FriendsPlugin { open: opts.friends },
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,
         board::BoardPlugin,

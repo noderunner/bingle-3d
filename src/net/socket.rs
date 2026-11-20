@@ -1,5 +1,7 @@
-//! A game's WebSocket, `GET /ws/{code}`, opened as a spectator or as the player of a seat:
-//! blocking, on the network thread. A player's socket is what shows the seat as connected.
+//! The server's WebSockets, blocking, on the network thread: a game's, `GET /ws/{code}`, opened
+//! as a spectator or as the player of a seat (a player's socket is what shows the seat as
+//! connected), and a signed-in account's own, `GET /ws-dm`, which says when its friends list
+//! changes.
 //!
 //! The socket is read with a short timeout, so that the one network thread can still answer the
 //! screens' requests between reads (see `mod.rs`). TLS is ours, the same `rustls` configuration
@@ -147,6 +149,28 @@ impl Socket {
         role: Role,
         tls: Arc<ClientConfig>,
     ) -> Result<Self, Error> {
+        let key = match role {
+            Role::Player { key, .. } => Some(key),
+            Role::Spectator => None,
+        };
+        Self::connect(url, socket_url(url, room_code, role), key, tls)
+    }
+
+    /// Opens `/ws-dm`, the socket of the account whose session `token` is.
+    pub fn open_account(
+        url: &ServerUrl,
+        token: &str,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, Error> {
+        Self::connect(url, account_socket_url(url), Some(token), tls)
+    }
+
+    fn connect(
+        url: &ServerUrl,
+        target: String,
+        bearer: Option<&str>,
+        tls: Arc<ClientConfig>,
+    ) -> Result<Self, Error> {
         let addrs: Vec<_> = (url.host.as_str(), url.port)
             .to_socket_addrs()
             .map_err(|_| Error::HostNotFound)?
@@ -178,15 +202,15 @@ impl Socket {
             }
         };
 
-        let mut request = socket_url(url, room_code, role).into_client_request()?;
+        let mut request = target.into_client_request()?;
         let headers = request.headers_mut();
         headers.insert(
             "User-Agent",
             HeaderValue::from_static(concat!("bingle-3d/", env!("CARGO_PKG_VERSION"))),
         );
-        if let Role::Player { key, .. } = role {
+        if let Some(key) = bearer {
             let auth = HeaderValue::from_str(&format!("Bearer {key}"))
-                .map_err(|_| Error::Protocol("the guest key is not a valid header".into()))?;
+                .map_err(|_| Error::Protocol("the key is not a valid header".into()))?;
             headers.insert("Authorization", auth);
         }
         let (ws, _) = tungstenite::client(request, stream).map_err(|e| match e {
@@ -225,14 +249,24 @@ impl Socket {
     }
 }
 
-/// `ws://` or `wss://`, to the room's socket as a spectator.
-pub fn socket_url(url: &ServerUrl, room_code: &str, role: Role) -> String {
+/// The server's origin with `ws://` or `wss://` for its scheme.
+fn ws_origin(url: &ServerUrl) -> String {
     let origin = url.origin();
-    let rest = origin
+    origin
         .strip_prefix("https")
         .map(|r| format!("wss{r}"))
         .or_else(|| origin.strip_prefix("http").map(|r| format!("ws{r}")))
-        .expect("an origin starts with its scheme");
+        .expect("an origin starts with its scheme")
+}
+
+/// The account's socket.
+pub fn account_socket_url(url: &ServerUrl) -> String {
+    format!("{}/ws-dm", ws_origin(url))
+}
+
+/// `ws://` or `wss://`, to the room's socket as a spectator or a seat's player.
+pub fn socket_url(url: &ServerUrl, room_code: &str, role: Role) -> String {
+    let rest = ws_origin(url);
     match role {
         Role::Spectator => format!("{rest}/ws/{room_code}?name={SPECTATOR_NAME}&role=spectator"),
         Role::Player { name, .. } => format!(
@@ -267,6 +301,11 @@ mod tests {
             socket_url(&local, "AB12CD", player),
             "ws://localhost:8080/ws/AB12CD?name=Ana%20B%C3%A9&role=player",
             "the name is a player's, and the key is not in the address"
+        );
+        assert_eq!(account_socket_url(&local), "ws://localhost:8080/ws-dm");
+        assert_eq!(
+            account_socket_url(&remote),
+            "wss://games.example.com:443/ws-dm"
         );
     }
 
