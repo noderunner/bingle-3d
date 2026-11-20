@@ -65,14 +65,6 @@ fn name_of(d: &Device) -> String {
         .unwrap_or_default()
 }
 
-/// Which of `devices` a choice means: `None` for the default (or a device that has gone).
-pub fn pick(choice: &Choice, devices: &[DeviceInfo]) -> Option<usize> {
-    match choice {
-        Choice::Device(id) => devices.iter().position(|d| d.id == *id),
-        _ => None,
-    }
-}
-
 /// Opens the chosen devices, feeding `capture` and draining `mixer`. What will not open is said as
 /// a [`Event::Problem`], and the call goes on without it.
 pub fn open(
@@ -237,25 +229,4 @@ where
         .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
     Ok(stream)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_device_is_picked_by_its_id_and_the_default_otherwise() {
-        let device = |id: &str| DeviceInfo {
-            id: id.into(),
-            name: "HDA Intel PCH, ALC892 Analog".into(),
-        };
-        let devices = [
-            device("alsa:front:CARD=PCH"),
-            device("alsa:sysdefault:CARD=PCH"),
-        ];
-        let chosen = Choice::Device("alsa:sysdefault:CARD=PCH".into());
-        assert_eq!(pick(&chosen, &devices), Some(1));
-        assert_eq!(pick(&Choice::Device("alsa:gone".into()), &devices), None);
-        assert_eq!(pick(&Choice::Default, &devices), None);
-    }
 }

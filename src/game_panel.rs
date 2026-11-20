@@ -19,6 +19,7 @@ use crate::net::api::{GameInfo, Gesture};
 use crate::net::{Connection, Net, Resign, ServerStatus, Target, WatchStatus, watch};
 use crate::play::{Stage, Turn};
 use crate::table::Table;
+use crate::voice_chat::{self, VoiceChat};
 
 pub struct GamePanelPlugin {
     /// What to watch as soon as the server is connected.
@@ -33,7 +34,9 @@ impl Plugin for GamePanelPlugin {
                 Update,
                 (
                     watch_on_start.run_if(resource_changed::<ServerStatus>),
-                    rebuild.run_if(resource_changed::<WatchStatus>),
+                    rebuild.run_if(
+                        resource_changed::<WatchStatus>.or_eager(resource_changed::<VoiceChat>),
+                    ),
                     tick_clocks,
                 )
                     .chain(),
@@ -113,6 +116,7 @@ fn spawn_panel(mut commands: Commands) {
 fn rebuild(
     mut commands: Commands,
     watching: Res<WatchStatus>,
+    voice: Res<VoiceChat>,
     fonts: Res<UiFonts>,
     panel: Single<(Entity, &mut Node), With<GamePanel>>,
 ) {
@@ -136,6 +140,7 @@ fn rebuild(
                     waiting_for_players(p, f, table);
                     lobby::draw(p, f, table, watching.lobby_problem.as_ref());
                     resigning(p, f, table, &watching.resign);
+                    voice_chat::draw(p, f, &voice, table);
                 }
                 None => {
                     let what = match &watching.target {

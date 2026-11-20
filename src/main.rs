@@ -25,9 +25,8 @@ mod run_limit;
 mod scene;
 mod sign_in;
 mod table;
-// The engine of stage 8's calls; a game's call (stage 8's PR 3) uses what friends' calls do not.
-#[allow(dead_code)]
 mod voice;
+mod voice_chat;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -91,6 +90,10 @@ fn main() -> AppExit {
         call::CallPlugin {
             no_devices: opts.no_audio_devices,
             call: opts.call.clone(),
+        },
+        voice_chat::VoiceChatPlugin {
+            no_devices: opts.no_audio_devices,
+            join: opts.voice,
         },
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,

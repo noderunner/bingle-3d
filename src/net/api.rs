@@ -268,6 +268,99 @@ pub struct DirectSignal {
     pub data: serde_json::Value,
 }
 
+/// `POST /api/games/{code}/voice`'s body: the seat of `player_name` joins the game's voice chat,
+/// or says it is still there (every 15 s; a place lapses after 45), or (`active` false) leaves.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VoiceRequest {
+    pub player_name: String,
+    pub active: bool,
+}
+
+/// `GET` and `POST /api/games/{code}/voice`'s answer: the seats in the call.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct VoicePeers {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub peers: Vec<VoicePeer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VoicePeer {
+    pub seat: u32,
+    pub name: String,
+}
+
+/// `POST /api/games/{code}/voice/signal`'s body: one WebRTC message for the seat `to`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VoiceSignalRequest {
+    pub player_name: String,
+    pub to: u32,
+    pub kind: String,
+    pub data: serde_json::Value,
+}
+
+/// A message on a game's voice socket (`/ws/{code}?only=voice`), of the kinds a call acts on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VoiceEvent {
+    /// The socket listens for the seat: the call may be joined.
+    Joined,
+    /// A seat joined the call (`join`) or left it.
+    Voice { join: bool, seat: u32, name: String },
+    /// A WebRTC message from the seat `from`, for this one.
+    Signal {
+        from: u32,
+        kind: String,
+        data: serde_json::Value,
+    },
+    /// Anything else.
+    Other(String),
+}
+
+impl VoiceEvent {
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        #[derive(Deserialize)]
+        struct Envelope {
+            #[serde(rename = "type")]
+            kind: String,
+            #[serde(default)]
+            data: serde_json::Value,
+        }
+        #[derive(Deserialize)]
+        struct VoiceData {
+            kind: String,
+            seat: u32,
+            #[serde(default)]
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct RtcData {
+            from: u32,
+            kind: String,
+            data: serde_json::Value,
+        }
+        let env: Envelope = serde_json::from_str(text)?;
+        Ok(match env.kind.as_str() {
+            "joined" => VoiceEvent::Joined,
+            "voice" => {
+                let d: VoiceData = serde_json::from_value(env.data)?;
+                VoiceEvent::Voice {
+                    join: d.kind == "join",
+                    seat: d.seat,
+                    name: d.name,
+                }
+            }
+            "rtc" => {
+                let d: RtcData = serde_json::from_value(env.data)?;
+                VoiceEvent::Signal {
+                    from: d.from,
+                    kind: d.kind,
+                    data: d.data,
+                }
+            }
+            other => VoiceEvent::Other(other.to_string()),
+        })
+    }
+}
+
 /// The answer of the calls that only say they were done.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct OkResponse {
@@ -1206,6 +1299,9 @@ mod tests {
         reads::<OkResponse>("POST /api/dm/call");
         reads::<OkResponse>("POST /api/dm/signal");
         reads::<RtcConfig>("GET /api/rtc/config");
+        reads::<VoicePeers>("GET /api/games/{code}/voice");
+        reads::<VoicePeers>("POST /api/games/{code}/voice");
+        reads::<OkResponse>("POST /api/games/{code}/voice/signal");
         for call in [
             "request",
             "answer",
@@ -1411,6 +1507,24 @@ mod tests {
                 data: serde_json::json!({}),
             }),
         );
+        for active in [true, false] {
+            sends(
+                "POST /api/games/{code}/voice",
+                json(VoiceRequest {
+                    player_name: "Ana".into(),
+                    active,
+                }),
+            );
+        }
+        sends(
+            "POST /api/games/{code}/voice/signal",
+            json(VoiceSignalRequest {
+                player_name: "Ana".into(),
+                to: 2,
+                kind: "offer".into(),
+                data: serde_json::json!({"type": "offer", "sdp": "v=0"}),
+            }),
+        );
         sends(
             "POST /api/dm/history",
             json(DirectHistoryRequest {
@@ -1442,6 +1556,35 @@ mod tests {
                 notation: "d4".into(),
                 ply: 3,
             }),
+        );
+    }
+
+    #[test]
+    fn the_voice_events_read_as_the_schema_describes_them() {
+        let root = schema();
+        let arms = root["$defs"]["WebSocketEvent"]["oneOf"].as_array().unwrap();
+        let mut acted_on = Vec::new();
+        for arm in arms {
+            let kind = arm["properties"]["type"]["const"].as_str().unwrap();
+            for full in [false, true] {
+                let text = instance(&root, arm, full, 0).to_string();
+                let event = VoiceEvent::parse(&text)
+                    .unwrap_or_else(|e| panic!("cannot read a {kind} event ({e}): {text}"));
+                if !matches!(event, VoiceEvent::Other(_)) {
+                    acted_on.push(kind);
+                }
+            }
+        }
+        acted_on.dedup();
+        assert_eq!(acted_on, ["joined", "voice", "rtc"]);
+        assert_eq!(
+            VoiceEvent::parse(r#"{"type":"voice","data":{"kind":"leave","seat":2,"name":"Bo"}}"#)
+                .unwrap(),
+            VoiceEvent::Voice {
+                join: false,
+                seat: 2,
+                name: "Bo".into()
+            }
         );
     }
 

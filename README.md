@@ -91,6 +91,11 @@ cargo run -- --friends                     # the friends panel open (signed in)
 cargo run -- --talk ana                    # the conversation with the friend @ana
 ```
 
+In a game you play, *Join the voice chat* on the game's panel talks with the others at the table,
+in the client or on Bingle's web page: each has a volume, and there are *Mute*, *Deafen*, push to
+talk (hold V), the microphone and speaker to use (*Devices*), and *Leave*. `--voice` joins at
+start.
+
 Signed in, *Call* beside a friend who is online rings them, in the client or on Bingle's web page;
 the call shows at the top of the friends panel, with *Answer* and *Decline* when somebody rings
 you, and *Mute* and *Hang up* while you talk. It uses your default microphone and speaker; a
@@ -99,6 +104,7 @@ hear yourself, through a voice connection on your own machine, with no server an
 lists the devices it can see.
 
 ```sh
+cargo run -- --host hex-7 --voice          # host a game, and join its voice chat once seated
 cargo run -- --call ana                    # ring the friend @ana once she is online (or answer her)
 cargo run -- --voice-check                 # hear your microphone through your speaker
 ```

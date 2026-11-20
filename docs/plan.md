@@ -335,8 +335,33 @@ a browser puts in each message and what the page expects of the other end.
   shapes against a fake server, the types against the 1.6 schema, a call starting a real
   connection that offers, and by hand two clients calling each other through a Bingle on
   loopback (`--call`, with `--no-audio-devices`), both connected.
-- **Done when** a player in the client and one on the web page can talk during a game.
-- **Next**: the game's voice chat.
+- As built (the game's voice chat, `src/voice_chat.rs`). A player with a seat has *Join the voice
+  chat* on the game's panel. Joining is the page's order, on the network thread: the game's voice
+  socket (`/ws/{code}?…&only=voice`) first, `joined` awaited, the ICE servers read, then the seat
+  announced (`POST /voice` with `active`), again every 15 s; the socket is opened again if it
+  drops, and the list read then. Each seat in the call gets one connection, the higher seat
+  offering and restarting ICE after a failure (the lower asking with `retry`); who joins and
+  leaves comes as `voice` events and with each heartbeat, and a seat that comes back is
+  connected again. The WebRTC messages go out through `/voice/signal` and come in as `rtc`.
+  *Leave*, leaving the game, or losing the seat leaves (`active` false). One call at a time:
+  joining hangs up a friend's call, and a friend's call taking the account out of this one (a
+  `voice` leave for its own seat) is said on the panel.
+- The panel: who is in the call, each with a dot (connecting, connected, no connection),
+  *speaking*, and a volume (− and +, 0 to 200 %, kept by name as the page keeps it); *You* with
+  *speaking*, *muted* or *hold V to talk*; *Mute*, *Deafen* (mutes too), *Push to talk (V)* (not
+  while typing in a field), *Devices* (each microphone and speaker, numbered where names repeat,
+  switched during the call), *Leave*. `--voice` joins once seated. Device choices and volumes last
+  for the run; keeping them in `config.toml` waits for a settings screen.
+- Tested: the list's changes and who offers, the microphone's state, a call joined connecting to
+  the others and offering to the lower seat only, being taken out of the call, the types and
+  events against the schema, and by hand against a Bingle on loopback: two clients in one game's
+  call, both connected; and **the client and Bingle's page** (headless Chromium, fake
+  microphone, driven like Bingle's own `voice_ui_test.go`): the page shows the client's seat
+  connected and plays its audio track, the client shows the page's player connected, and sees
+  them leave.
+- **Done when** a player in the client and one on the web page can talk during a game: done,
+  with the page; by ear on two machines is the maintainer's to try.
+- **Next**: echo cancellation (PR 4), and TURN relays for players behind strict NATs.
 
 ### After that
 

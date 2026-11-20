@@ -176,6 +176,7 @@ impl Engine {
     }
 
     /// Waits up to `timeout` for the thread's next event.
+    #[cfg(test)]
     pub fn next_event(&self, timeout: Duration) -> Option<Event> {
         audio::lock(&self.events).recv_timeout(timeout).ok()
     }

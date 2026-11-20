@@ -176,6 +176,8 @@ pub(crate) enum Action {
     SignOut,
     /// On the friends panel (`friends.rs` acts on it).
     Friends(FriendAction),
+    /// The game's voice chat (`voice_chat.rs` acts on it).
+    Voice(crate::voice_chat::VoiceAction),
 }
 
 fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
@@ -768,7 +770,7 @@ fn on_activate(
             }
         }
         Action::SignOut => net.send(Request::SignOut),
-        Action::Friends(_) => {}
+        Action::Friends(_) | Action::Voice(_) => {}
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.
