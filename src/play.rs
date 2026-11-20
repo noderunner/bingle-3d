@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 
+use bevy::input_focus::InputFocus;
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
@@ -474,8 +475,16 @@ fn on_out(out: On<PointerOut>, spots: Query<&Spot>, mut hovering: ResMut<Hoverin
     }
 }
 
-/// Enter plays the move shown; Esc and Backspace go back.
-fn keys(keys: Res<ButtonInput<KeyCode>>, net: Res<Net>, mut watch: ResMut<WatchStatus>) {
+/// Enter plays the move shown; Esc and Backspace go back. Not while a text field has the keyboard.
+fn keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    focus: Option<Res<InputFocus>>,
+    net: Res<Net>,
+    mut watch: ResMut<WatchStatus>,
+) {
+    if focus.is_some_and(|f| f.get().is_some()) {
+        return;
+    }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]) {
         submit(&net, &mut watch);
     }

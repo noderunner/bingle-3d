@@ -16,6 +16,7 @@ Options:
   --join ROOM        take an open seat in the game in this room (or watch it, if it
                      has none)
   --new-game GAME    open the form that sets up a new game of GAME
+  --sign-in          open the form that signs in to an account
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -37,6 +38,8 @@ pub struct Options {
     pub watch: Option<Watch>,
     /// The game to set up a new game of, once connected.
     pub new_game: Option<String>,
+    /// Open the sign-in form at start.
+    pub sign_in: bool,
     pub help: bool,
 }
 
@@ -74,6 +77,7 @@ impl Options {
             };
             match name.as_str() {
                 "-h" | "--help" => opts.help = true,
+                "--sign-in" => opts.sign_in = true,
                 "--frames" => {
                     let v = value("a number of frames")?;
                     let n: u32 = v
@@ -225,6 +229,8 @@ mod tests {
             Some("hex-7".into())
         );
         assert!(parse(&["--watch"]).unwrap_err().contains("needs"));
+        assert!(parse(&["--sign-in"]).unwrap().sign_in);
+        assert!(!parse(&[]).unwrap().sign_in);
     }
 
     #[test]

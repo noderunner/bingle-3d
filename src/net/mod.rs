@@ -31,7 +31,8 @@ use api::{BotInfo, Event, GameInfo, GameState, OpenGame, Selections};
 use std::collections::BTreeMap;
 
 use crate::new_game::NewGame;
-use session::{Opened, Problem, Session, Snapshot};
+use crate::sign_in::Signing;
+use session::{Code, Opened, Problem, Session, SignIn, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
 
@@ -61,6 +62,7 @@ impl Plugin for NetPlugin {
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<Signing>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(
                 Update,
@@ -111,6 +113,12 @@ pub enum Request {
     Games { query: GameQuery, asked: u64 },
     /// What setting up a game of this needs (its seats, the bots).
     Setup { game_def_id: String },
+    /// Sign in to an account: the handle and the password.
+    SignIn { handle: String, password: String },
+    /// The second step of signing in, with what the first answered.
+    SecondFactor { pending: String, code: Code },
+    /// End the account's session.
+    SignOut,
 }
 
 /// A new game as the player set it up.
@@ -227,6 +235,8 @@ enum Reply {
         game_def_id: String,
         result: Result<Box<(GameInfo, Vec<BotInfo>)>, Problem>,
     },
+    SignIn(Result<SignIn, Problem>),
+    SignedOut(Result<(), Problem>),
 }
 
 #[derive(Resource)]
@@ -439,6 +449,13 @@ fn handle(
             result: session.game_setup(&game_def_id).map(Box::new),
             game_def_id,
         }),
+        Request::SignIn { handle, password } => {
+            Some(Reply::SignIn(session.sign_in(&handle, &password)))
+        }
+        Request::SecondFactor { pending, code } => {
+            Some(Reply::SignIn(session.second_factor(&pending, &code)))
+        }
+        Request::SignOut => Some(Reply::SignedOut(session.sign_out())),
     }
 }
 
@@ -502,6 +519,7 @@ fn poll_network(
     mut watch: ResMut<WatchStatus>,
     mut list: ResMut<GameList>,
     mut new_game: ResMut<NewGame>,
+    mut signing: ResMut<Signing>,
 ) {
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
@@ -663,6 +681,20 @@ fn poll_network(
                         }
                     }
                 }
+            }
+            Ok(Reply::SignIn(result)) => {
+                if let Some(SignIn::Done(_)) = signing.answered(result) {
+                    // Who the client is has changed, and with it what it may see: read it all
+                    // again, as that account.
+                    reconnect(&net, &mut status);
+                }
+            }
+            Ok(Reply::SignedOut(result)) => {
+                if let Err(problem) = &result {
+                    warn!("signing out: {}", problem.message());
+                }
+                signing.signed_out(result);
+                reconnect(&net, &mut status);
             }
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
@@ -1048,6 +1080,7 @@ mod tests {
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<Signing>()
             .add_systems(PreUpdate, poll_network);
         let open = |code: &str| OpenGame {
             room_code: code.into(),
@@ -1084,9 +1117,11 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.4.0".into(),
+                api_version: "1.5.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
+                account: None,
+                session_ended: false,
             }))
             .unwrap();
         app.insert_resource(net);
@@ -1114,6 +1149,7 @@ mod tests {
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<Signing>()
             .add_systems(PreUpdate, poll_network);
         let mut status = WatchStatus {
             id: 3,
@@ -1170,6 +1206,7 @@ mod tests {
             })
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<Signing>()
             .add_systems(PreUpdate, poll_network);
         let mut waiting = Table::new(opened());
         waiting.state.status = "waiting".into();
@@ -1244,6 +1281,7 @@ mod tests {
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<Signing>()
             .add_systems(PreUpdate, poll_network)
             .add_systems(Update, play::start_turn);
         let id = {

@@ -11,11 +11,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
-/// 1.2 the regions each seat must connect (`goals`), and 1.4 the lobby's calls (`start`, `seat`,
-/// `leave`, `remove`, `bots`) to the schema.
+/// 1.2 the regions each seat must connect (`goals`), 1.4 the lobby's calls (`start`, `seat`,
+/// `leave`, `remove`, `bots`) to the schema, and 1.5 the sign-in that answers with a session
+/// token, for a client that is not a browser.
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 4,
+    minor: 5,
     patch: 0,
 };
 
@@ -27,6 +28,64 @@ pub struct Index {
     /// Absent on a server from before the API had a version of its own.
     #[serde(default)]
     pub api_version: Option<String>,
+}
+
+/// `POST /auth/login`'s body. With `token`, the session comes back as a token in the answer
+/// rather than as a browser's cookie.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LoginRequest {
+    pub handle: String,
+    pub password: String,
+    pub token: bool,
+}
+
+/// `POST /auth/second`'s body: the second step of a sign-in, with a code from the account's
+/// authenticator app or one of its recovery codes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SecondRequest {
+    /// What `POST /auth/login` answered.
+    pub pending: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub code: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub recovery_code: String,
+}
+
+/// What `POST /auth/login` and `POST /auth/second` answer with `token`: the session's token, or
+/// that a code comes next.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SessionTokenResponse {
+    /// `bgs_…`; empty when a code comes next.
+    #[serde(default)]
+    pub token: String,
+    /// Who is signed in.
+    #[serde(default)]
+    pub me: Option<Me>,
+    /// The password was right, and a code comes next, sent with `pending`.
+    #[serde(default)]
+    pub second_factor: bool,
+    #[serde(default)]
+    pub pending: String,
+}
+
+/// `GET /auth/me`: who is asking.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Me {
+    /// "account", "guest" or "anonymous".
+    pub kind: String,
+    #[serde(default)]
+    pub handle: String,
+    #[serde(default)]
+    pub display_name: String,
+    /// The account may do nothing but change its password until it does.
+    #[serde(default)]
+    pub must_change_password: bool,
+}
+
+/// `POST /auth/logout`'s answer: what the request is now.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LogoutResponse {
+    pub kind: String,
 }
 
 /// `POST /api/guest`.
@@ -664,7 +723,7 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.4.0")), Compatible);
+        assert_eq!(compatibility(Some("1.5.0")), Compatible);
         assert_eq!(compatibility(Some("1.7.2")), Compatible);
         assert_eq!(
             compatibility(Some("1.0.9")),
@@ -680,6 +739,11 @@ mod tests {
             compatibility(Some("1.3.2")),
             ServerTooOld(Some("1.3.2".into())),
             "1.3's schema has no lobby"
+        );
+        assert_eq!(
+            compatibility(Some("1.4.1")),
+            ServerTooOld(Some("1.4.1".into())),
+            "1.4 has no sign-in for a client that is not a browser"
         );
         assert_eq!(compatibility(Some("2.0.0")), ClientTooOld("2.0.0".into()));
         assert_eq!(
@@ -750,7 +814,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.4.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.5.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -867,6 +931,10 @@ mod tests {
         reads::<JoinResponse>("POST /api/games/{code}/join");
         reads::<GameState>("POST /api/games/{code}/resign");
         reads::<AddBotResult>("POST /api/games/{code}/bots");
+        reads::<SessionTokenResponse>("POST /auth/login");
+        reads::<SessionTokenResponse>("POST /auth/second");
+        reads::<Me>("GET /auth/me");
+        reads::<LogoutResponse>("POST /auth/logout");
         for call in ["start", "seat", "leave", "remove"] {
             reads::<GameStatus>(&format!("POST /api/games/{{code}}/{call}"));
         }
@@ -909,7 +977,7 @@ mod tests {
             None => node,
         };
         let props = node["properties"].as_object().unwrap();
-        for name in node["required"].as_array().unwrap() {
+        for name in node["required"].as_array().into_iter().flatten() {
             assert!(
                 sent.get(name.as_str().unwrap()).is_some(),
                 "{endpoint}: {name} missing"
@@ -1002,6 +1070,24 @@ mod tests {
                 ..CreateGameRequest::new("g", "Ana", None)
             }),
         );
+        sends(
+            "POST /auth/login",
+            json(LoginRequest {
+                handle: "ana".into(),
+                password: "secret".into(),
+                token: true,
+            }),
+        );
+        for (code, recovery_code) in [("123456", ""), ("", "abcd-efgh")] {
+            sends(
+                "POST /auth/second",
+                json(SecondRequest {
+                    pending: "p".into(),
+                    code: code.into(),
+                    recovery_code: recovery_code.into(),
+                }),
+            );
+        }
         sends(
             "POST /api/games/{code}/moves",
             json(MoveRequest {

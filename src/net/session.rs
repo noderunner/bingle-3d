@@ -1,8 +1,12 @@
 //! Talking to one server, blocking: it runs on the network thread, never in a Bevy system.
 //!
 //! [`Session::connect`] does what start-up needs: read `GET /api` and check the API version, make
-//! sure there is a guest key, then list the games and the open games. Whatever goes wrong comes
-//! back as a [`Problem`] the player can understand.
+//! sure there is a guest key (or that the account signed in still is), then list the games and the
+//! open games. Whatever goes wrong comes back as a [`Problem`] the player can understand.
+//!
+//! Signed in to an account, every call and the game's socket carry the session's token in place
+//! of the guest key. When the server no longer knows the token (it expired, or the account signed
+//! out everywhere or changed its password), the client forgets it and goes on as a guest.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +26,7 @@ use super::api::{
     Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
+use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
@@ -37,6 +42,56 @@ pub struct Snapshot {
     pub api_version: String,
     pub defs: Vec<GameDef>,
     pub games: Vec<OpenGame>,
+    /// The account signed in, if one is.
+    pub account: Option<Account>,
+    /// The account that was signed in is no longer: the server ended its session.
+    pub session_ended: bool,
+}
+
+/// The account this client is signed in to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Account {
+    pub handle: String,
+    pub display_name: String,
+    /// The account must change its password (on the web page) before it can do anything else.
+    pub must_change_password: bool,
+}
+
+impl Account {
+    fn from_me(me: Me) -> Option<Self> {
+        (me.kind == "account").then_some(Account {
+            handle: me.handle,
+            display_name: me.display_name,
+            must_change_password: me.must_change_password,
+        })
+    }
+
+    /// What the account is called at a table.
+    pub fn name(&self) -> &str {
+        if self.display_name.trim().is_empty() {
+            &self.handle
+        } else {
+            &self.display_name
+        }
+    }
+}
+
+/// How a sign-in stands after a step of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignIn {
+    /// Signed in.
+    Done(Account),
+    /// The password was right; a code comes next, sent with `pending`.
+    NeedsCode { pending: String },
+}
+
+/// The second step of a sign-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Code {
+    /// From the account's authenticator app.
+    App(String),
+    /// One of the account's recovery codes.
+    Recovery(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,7 +111,7 @@ pub enum Problem {
     NotBingle(String),
     /// A Bingle server whose API this client cannot use.
     Incompatible(String),
-    /// The server admits only signed-in accounts (accounts come in stage 6).
+    /// The server admits only signed-in accounts.
     NeedsAccount,
     /// The server said no, for a reason of its own.
     Refused { status: u16, message: String },
@@ -74,9 +129,9 @@ impl Problem {
             Problem::Untrusted { reason, .. } => {
                 format!("The server's certificate is not trusted: {reason}.")
             }
-            Problem::NeedsAccount => "This server only lets in people who have signed in to an \
-                account, and this client cannot sign in yet."
-                .into(),
+            Problem::NeedsAccount => {
+                "This server only lets in people who have signed in to an account.".into()
+            }
             Problem::Refused { status, message } => {
                 format!("The server turned the request down ({status}): {message}")
             }
@@ -97,6 +152,10 @@ pub struct Session {
     agent: Agent,
     /// Game definitions already read, by id: they do not change while the server runs.
     infos: HashMap<String, GameInfo>,
+    /// The account signed in, as the server last said.
+    account: Option<Account>,
+    /// The server ended the account's session since the last connection.
+    session_ended: bool,
     /// The server's bots, once read; nor do they.
     bots: Option<Vec<BotInfo>>,
 }
@@ -125,6 +184,8 @@ impl Session {
             agent,
             infos: HashMap::new(),
             bots: None,
+            account: None,
+            session_ended: false,
         }
     }
 
@@ -176,15 +237,147 @@ impl Session {
                 )));
             }
         };
-        let defs: Vec<GameDef> = self.get_as_guest(&url, "/api/game-defs")?;
-        let games: OpenGames = self.get_as_guest(&url, "/api/games")?;
+        self.check_account(&url)?;
+        let defs: Vec<GameDef> = self.get_as_me(&url, "/api/game-defs")?;
+        let games: OpenGames = self.get_as_me(&url, "/api/games")?;
         Ok(Snapshot {
             server: url.to_string(),
             version: index.version,
             api_version,
             defs,
             games: games.games,
+            account: self.account.clone(),
+            session_ended: std::mem::take(&mut self.session_ended),
         })
+    }
+
+    /// Who the session's token is, if this client holds one for this server.
+    fn check_account(&mut self, url: &ServerUrl) -> Result<(), Problem> {
+        let origin = url.origin();
+        let Some(token) = self.store.session_token(&origin).map(str::to_string) else {
+            self.account = None;
+            return Ok(());
+        };
+        match self.call::<Me>(url, "GET", "/auth/me", Some(&token), None) {
+            Ok(me) => match Account::from_me(me) {
+                Some(account) => self.account = Some(account),
+                None => self.session_over(&origin),
+            },
+            Err(Problem::Refused { status: 401, .. }) => self.session_over(&origin),
+            Err(other) => return Err(other),
+        }
+        Ok(())
+    }
+
+    /// The server no longer knows this client's session: forget it, and go on as a guest.
+    fn session_over(&mut self, origin: &str) {
+        bevy::log::info!("the server ended this client's session; going on as a guest");
+        if let Err(e) = self.store.set_session_token(origin, None) {
+            bevy::log::warn!("could not forget the session: {e}");
+        }
+        self.account = None;
+        self.session_ended = true;
+    }
+
+    /// The first step of signing in: the handle and the password. This client's guest key goes
+    /// with it, so that the guest's seats become the account's.
+    pub fn sign_in(&mut self, handle: &str, password: &str) -> Result<SignIn, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(LoginRequest {
+            handle: handle.trim().to_string(),
+            password: password.to_string(),
+            token: true,
+        })
+        .expect("a sign-in is JSON");
+        let guest = self.store.guest_key(&url.origin()).map(str::to_string);
+        let answer: SessionTokenResponse =
+            self.call(&url, "POST", "/auth/login", guest.as_deref(), Some(&body))?;
+        self.signed_in(&url, answer)
+    }
+
+    /// The second step: a code, after the password was right.
+    pub fn second_factor(&mut self, pending: &str, code: &Code) -> Result<SignIn, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let (code, recovery_code) = match code {
+            Code::App(c) => (c.trim().to_string(), String::new()),
+            Code::Recovery(c) => (String::new(), c.trim().to_string()),
+        };
+        let body = serde_json::to_value(SecondRequest {
+            pending: pending.to_string(),
+            code,
+            recovery_code,
+        })
+        .expect("a code is JSON");
+        let guest = self.store.guest_key(&url.origin()).map(str::to_string);
+        let answer: SessionTokenResponse =
+            self.call(&url, "POST", "/auth/second", guest.as_deref(), Some(&body))?;
+        self.signed_in(&url, answer)
+    }
+
+    fn signed_in(
+        &mut self,
+        url: &ServerUrl,
+        answer: SessionTokenResponse,
+    ) -> Result<SignIn, Problem> {
+        if answer.second_factor {
+            return Ok(SignIn::NeedsCode {
+                pending: answer.pending,
+            });
+        }
+        let not_bingle = || {
+            Problem::NotBingle(format!(
+                "{url} answered the sign-in, but not with a session as Bingle does."
+            ))
+        };
+        if answer.token.is_empty() {
+            return Err(not_bingle());
+        }
+        let origin = url.origin();
+        let account = match answer.me {
+            Some(me) => Account::from_me(me),
+            None => self
+                .call::<Me>(url, "GET", "/auth/me", Some(&answer.token), None)
+                .ok()
+                .and_then(Account::from_me),
+        }
+        .ok_or_else(not_bingle)?;
+        if let Err(e) = self.store.set_session_token(&origin, Some(answer.token)) {
+            bevy::log::warn!("could not save the session: {e}");
+        }
+        // The guest became the account's, and its key no longer works.
+        self.forget_guest_key(&origin);
+        self.account = Some(account.clone());
+        self.session_ended = false;
+        Ok(SignIn::Done(account))
+    }
+
+    /// Ends the session, on the server and here. It is forgotten here even if the server could
+    /// not be told, so that the player is signed out either way.
+    pub fn sign_out(&mut self) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let origin = url.origin();
+        let Some(token) = self.store.session_token(&origin).map(str::to_string) else {
+            self.account = None;
+            return Ok(());
+        };
+        let told = self.call::<LogoutResponse>(&url, "POST", "/auth/logout", Some(&token), None);
+        if let Err(e) = self.store.set_session_token(&origin, None) {
+            bevy::log::warn!("could not forget the session: {e}");
+        }
+        self.account = None;
+        match told {
+            // Already over on the server.
+            Ok(_) | Err(Problem::Refused { status: 401, .. }) => Ok(()),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// The name to sit down under: the account's, signed in, or the configured one.
+    fn player_name(&self) -> String {
+        match &self.account {
+            Some(account) => account.name().to_string(),
+            None => self.store.player_name().to_string(),
+        }
     }
 
     /// Remembers that the player trusts this certificate for this server, and connects again.
@@ -212,8 +405,7 @@ impl Session {
             bot_b: bot.to_string(),
         })
         .expect("a bot match request is JSON");
-        let made: BotMatchResponse =
-            self.as_guest(&url, "POST", "/api/bot-matches", Some(&body))?;
+        let made: BotMatchResponse = self.as_me(&url, "POST", "/api/bot-matches", Some(&body))?;
         Ok(made.room_code)
     }
 
@@ -237,7 +429,7 @@ impl Session {
     /// A new game as the player set it up: their seat, a bot or nobody in each other one, and
     /// how it is timed.
     pub fn start_game(&mut self, settings: &GameSettings) -> Result<String, Problem> {
-        let request = new_game_request(settings, self.store.player_name());
+        let request = new_game_request(settings, &self.player_name());
         self.send_new_game(request)
     }
 
@@ -246,14 +438,14 @@ impl Session {
         game_def_id: &str,
         opponent: Option<String>,
     ) -> Result<String, Problem> {
-        let request = CreateGameRequest::new(game_def_id, self.store.player_name(), opponent);
+        let request = CreateGameRequest::new(game_def_id, &self.player_name(), opponent);
         self.send_new_game(request)
     }
 
     fn send_new_game(&mut self, request: CreateGameRequest) -> Result<String, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let body = serde_json::to_value(request).expect("a game request is JSON");
-        let made: CreateGameResponse = self.as_guest(&url, "POST", "/api/games", Some(&body))?;
+        let made: CreateGameResponse = self.as_me(&url, "POST", "/api/games", Some(&body))?;
         Ok(made.room_code)
     }
 
@@ -270,7 +462,7 @@ impl Session {
             return Ok(info.clone());
         }
         let info: GameInfo =
-            self.get_as_guest(url, &format!("/api/game-defs/{}", query_value(game_def_id)))?;
+            self.get_as_me(url, &format!("/api/game-defs/{}", query_value(game_def_id)))?;
         self.infos.insert(game_def_id.to_string(), info.clone());
         Ok(info)
     }
@@ -278,7 +470,7 @@ impl Session {
     /// The unfinished games that match `query`, newest change first.
     pub fn games(&mut self, query: &GameQuery) -> Result<Vec<OpenGame>, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        let list: OpenGames = self.get_as_guest(&url, &games_path(query))?;
+        let list: OpenGames = self.get_as_me(&url, &games_path(query))?;
         Ok(list.games)
     }
 
@@ -290,17 +482,17 @@ impl Session {
         if !valid_room_code(room_code) {
             return Err(not_a_room_code(room_code));
         }
-        let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
+        let game: Game = self.get_as_me(&url, &format!("/api/games/{room_code}"))?;
         if game.status != "waiting" || game.seats.iter().any(|s| s.yours) || !game.has_open_seat() {
             return Ok(());
         }
         // A seat goes by its player's name, so the name must not be one already at the table.
         let body = serde_json::to_value(JoinRequest {
-            player_name: free_name(self.store.player_name(), &game.seats),
+            player_name: free_name(&self.player_name(), &game.seats),
             role: "player".into(),
         })
         .expect("a join is JSON");
-        let _: JoinResponse = self.as_guest(
+        let _: JoinResponse = self.as_me(
             &url,
             "POST",
             &format!("/api/games/{room_code}/join"),
@@ -316,7 +508,7 @@ impl Session {
             player_name: player_name.to_string(),
         })
         .expect("a resignation is JSON");
-        let _: GameState = self.as_guest(
+        let _: GameState = self.as_me(
             &url,
             "POST",
             &format!("/api/games/{room_code}/resign"),
@@ -337,9 +529,9 @@ impl Session {
         let (path, body) = lobby_request(call, player_name);
         let path = format!("/api/games/{room_code}/{path}");
         if matches!(call, LobbyCall::Bot { .. }) {
-            let _: AddBotResult = self.as_guest(&url, "POST", &path, Some(&body))?;
+            let _: AddBotResult = self.as_me(&url, "POST", &path, Some(&body))?;
         } else {
-            let _: GameStatus = self.as_guest(&url, "POST", &path, Some(&body))?;
+            let _: GameStatus = self.as_me(&url, "POST", &path, Some(&body))?;
         }
         Ok(())
     }
@@ -349,7 +541,7 @@ impl Session {
         if let Some(bots) = &self.bots {
             return Ok(bots.clone());
         }
-        let bots: Vec<BotInfo> = self.get_as_guest(url, "/api/bots")?;
+        let bots: Vec<BotInfo> = self.get_as_me(url, "/api/bots")?;
         self.bots = Some(bots.clone());
         Ok(bots)
     }
@@ -369,7 +561,7 @@ impl Session {
         if let Some(ply) = ply {
             path.push_str(&format!("&ply={ply}"));
         }
-        self.get_as_guest(&url, &path)
+        self.get_as_me(&url, &path)
     }
 
     /// Plays a whole move for the seat that `player_name` sits at, against `ply`.
@@ -387,7 +579,7 @@ impl Session {
             ply,
         })
         .expect("a move is JSON");
-        let made: MoveResponse = self.as_guest(
+        let made: MoveResponse = self.as_me(
             &url,
             "POST",
             &format!("/api/games/{room_code}/moves"),
@@ -405,9 +597,9 @@ impl Session {
         if !valid_room_code(room_code) {
             return Err(not_a_room_code(room_code));
         }
-        let game: Game = self.get_as_guest(&url, &format!("/api/games/{room_code}"))?;
+        let game: Game = self.get_as_me(&url, &format!("/api/games/{room_code}"))?;
         let info = self.game_info(&url, &game.game_def_id)?;
-        let key = self.guest_key(&url)?;
+        let key = self.bearer(&url)?;
         let role = match game.seats.iter().find(|s| s.yours) {
             Some(seat) => Role::Player {
                 name: &seat.name,
@@ -437,7 +629,7 @@ impl Session {
     /// Where a game stands now.
     pub fn state(&mut self, room_code: &str) -> Result<GameState, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        self.get_as_guest(&url, &format!("/api/games/{room_code}/state"))
+        self.get_as_me(&url, &format!("/api/games/{room_code}/state"))
     }
 
     /// What a failure on an open game socket means for the player.
@@ -474,9 +666,11 @@ impl Session {
         }
     }
 
-    /// A request with this client's guest key, made first if there is none. A key the server no
-    /// longer knows (unused for months, or a new database) is replaced once.
-    fn as_guest<T: DeserializeOwned>(
+    /// A request as this client: with the session's token when an account is signed in, and
+    /// otherwise with the guest key, made first if there is none. A key the server no longer knows
+    /// (unused for months, or a new database) is replaced once; a session it no longer knows is
+    /// forgotten, and the request made again as a guest.
+    fn as_me<T: DeserializeOwned>(
         &mut self,
         url: &ServerUrl,
         method: &str,
@@ -484,6 +678,12 @@ impl Session {
         body: Option<&serde_json::Value>,
     ) -> Result<T, Problem> {
         let origin = url.origin();
+        if let Some(token) = self.store.session_token(&origin).map(str::to_string) {
+            match self.call(url, method, path, Some(&token), body) {
+                Err(Problem::Refused { status: 401, .. }) => self.session_over(&origin),
+                other => return other.map_err(unauthorized),
+            }
+        }
         let had_key = self.store.guest_key(&origin).is_some();
         let key = self.guest_key(url)?;
         match self.call(url, method, path, Some(&key), body) {
@@ -500,12 +700,20 @@ impl Session {
         }
     }
 
-    fn get_as_guest<T: DeserializeOwned>(
+    fn get_as_me<T: DeserializeOwned>(
         &mut self,
         url: &ServerUrl,
         path: &str,
     ) -> Result<T, Problem> {
-        self.as_guest(url, "GET", path, None)
+        self.as_me(url, "GET", path, None)
+    }
+
+    /// What this client authenticates with: the session's token, or the guest key.
+    fn bearer(&mut self, url: &ServerUrl) -> Result<String, Problem> {
+        match self.store.session_token(&url.origin()) {
+            Some(token) => Ok(token.to_string()),
+            None => self.guest_key(url),
+        }
     }
 
     fn guest_key(&mut self, url: &ServerUrl) -> Result<String, Problem> {
@@ -853,7 +1061,7 @@ mod tests {
         (addr, seen)
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.4.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.5.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -889,7 +1097,7 @@ mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.4.0");
+        assert_eq!(snap.api_version, "1.5.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
@@ -1163,6 +1371,139 @@ mod tests {
                     "/api/games/AB12CD/remove",
                     json!({"player_name": "Ana", "seat": 2})
                 ),
+            ]
+        );
+    }
+
+    /// A Bingle with accounts: "ana" signs in with her password ("pw") and, when `second` is set,
+    /// a code ("123456"); her session is `bgs_ana` until it is ended.
+    fn accounts(second: bool, ended: Arc<Mutex<bool>>) -> Box<Handler> {
+        Box::new(move |req: &Seen| {
+            let auth = req.auth.as_deref().unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&req.body).unwrap_or_default();
+            let session_ok = auth == "Bearer bgs_ana" && !*ended.lock().unwrap();
+            let me = r#"{"kind":"account","handle":"ana","display_name":"Ana","accounts":true,"signup":false}"#;
+            let signed_in = format!(r#"{{"token":"bgs_ana","expires":"x","me":{me}}}"#);
+            match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/api") => (200, INDEX.into()),
+                ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                ("POST", "/auth/login") if body["password"] == "pw" => {
+                    if second {
+                        (200, r#"{"second_factor":true,"pending":"p1"}"#.into())
+                    } else {
+                        (200, signed_in)
+                    }
+                }
+                ("POST", "/auth/login") => (
+                    401,
+                    r#"{"error":"auth: the handle or the password is wrong"}"#.into(),
+                ),
+                ("POST", "/auth/second") if body["code"] == "123456" => (200, signed_in),
+                ("POST", "/auth/second") => (401, r#"{"error":"auth: that code is wrong"}"#.into()),
+                ("GET", "/auth/me") if session_ok => (200, me.into()),
+                ("POST", "/auth/logout") if session_ok => {
+                    *ended.lock().unwrap() = true;
+                    (200, r#"{"kind":"anonymous"}"#.into())
+                }
+                (_, "/api/game-defs") if session_ok || auth == "Bearer bgg_new" => {
+                    (200, DEFS.into())
+                }
+                (_, "/api/games") if session_ok || auth == "Bearer bgg_new" => (200, GAMES.into()),
+                _ => (401, r#"{"error":"auth: who is this?"}"#.into()),
+            }
+        })
+    }
+
+    #[test]
+    fn signing_in_brings_the_guest_along_and_the_token_is_used_from_then_on() {
+        let ended = Arc::new(Mutex::new(false));
+        let (addr, seen) = serve(accounts(false, ended.clone()));
+        let mut s = session(&addr);
+        let origin = ServerUrl::parse(&addr).unwrap().origin();
+        assert_eq!(s.connect().unwrap().account, None);
+        assert!(matches!(
+            s.sign_in("ana", "wrong"),
+            Err(Problem::Refused { status: 401, .. })
+        ));
+        let signed = s.sign_in(" ana ", "pw").unwrap();
+        let SignIn::Done(account) = signed else {
+            panic!("{signed:?}")
+        };
+        assert_eq!(account.name(), "Ana");
+        assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
+        assert_eq!(
+            s.store().guest_key(&origin),
+            None,
+            "merged into the account"
+        );
+        assert_eq!(s.player_name(), "Ana", "sits down under the account's name");
+
+        let snap = s.connect().unwrap();
+        assert_eq!(snap.account.map(|a| a.handle), Some("ana".into()));
+        assert!(!snap.session_ended);
+        {
+            let seen = seen.lock().unwrap();
+            let login = seen.iter().rfind(|r| r.path == "/auth/login").unwrap();
+            assert_eq!(
+                login.auth.as_deref(),
+                Some("Bearer bgg_new"),
+                "the guest goes along"
+            );
+            let sent: serde_json::Value = serde_json::from_str(&login.body).unwrap();
+            assert_eq!(
+                sent,
+                serde_json::json!({"handle": "ana", "password": "pw", "token": true}),
+                "the handle trimmed, and a token asked for"
+            );
+            let last_games = seen.iter().rfind(|r| r.path == "/api/games").unwrap();
+            assert_eq!(last_games.auth.as_deref(), Some("Bearer bgs_ana"));
+        }
+
+        // Signed out elsewhere: the next connection finds the session over, and goes on as a guest.
+        *ended.lock().unwrap() = true;
+        let snap = s.connect().unwrap();
+        assert_eq!(snap.account, None);
+        assert!(snap.session_ended, "the player is told");
+        assert_eq!(s.store().session_token(&origin), None);
+        assert!(!s.connect().unwrap().session_ended, "told once");
+    }
+
+    #[test]
+    fn a_second_factor_takes_a_code_and_signing_out_ends_the_session() {
+        let ended = Arc::new(Mutex::new(false));
+        let (addr, seen) = serve(accounts(true, ended.clone()));
+        let mut s = session(&addr);
+        let origin = ServerUrl::parse(&addr).unwrap().origin();
+        assert_eq!(
+            s.sign_in("ana", "pw").unwrap(),
+            SignIn::NeedsCode {
+                pending: "p1".into()
+            }
+        );
+        assert_eq!(s.store().session_token(&origin), None, "not yet");
+        assert!(s.second_factor("p1", &Code::App("000000".into())).is_err());
+        assert!(matches!(
+            s.second_factor("p1", &Code::App(" 123456 ".into())),
+            Ok(SignIn::Done(_))
+        ));
+        assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
+
+        s.sign_out().unwrap();
+        assert!(*ended.lock().unwrap(), "the server was told");
+        assert_eq!(s.store().session_token(&origin), None);
+        s.sign_out().expect("signing out twice is no problem");
+
+        let seen = seen.lock().unwrap();
+        let codes: Vec<serde_json::Value> = seen
+            .iter()
+            .filter(|r| r.path == "/auth/second")
+            .map(|r| serde_json::from_str(&r.body).unwrap())
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                serde_json::json!({"code": "000000", "pending": "p1"}),
+                serde_json::json!({"code": "123456", "pending": "p1"}),
             ]
         );
     }

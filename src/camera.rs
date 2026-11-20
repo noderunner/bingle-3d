@@ -8,6 +8,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input_focus::InputFocus;
 use bevy::picking::hover::HoverMap;
 use bevy::picking::mesh_picking::MeshPickingCamera;
 use bevy::prelude::*;
@@ -103,6 +104,10 @@ const ZOOM_PER_LINE: f32 = 0.9;
 /// Pixel-precise scrolling (touchpads) counts this many pixels as one notch.
 const PIXELS_PER_LINE: f32 = 40.0;
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a system takes each input it reads as a parameter"
+)]
 fn orbit_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -110,6 +115,7 @@ fn orbit_input(
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
     pointer: PointerOverUi,
+    focus: Option<Res<InputFocus>>,
     mut cameras: Query<&mut OrbitCamera>,
 ) {
     let mut turn = Vec2::ZERO;
@@ -117,7 +123,9 @@ fn orbit_input(
         // Dragging right moves the camera left round the table, as if pulling the table.
         turn -= motion.delta * DRAG_SPEED;
     }
-    let key = |k: KeyCode| if keys.pressed(k) { 1.0 } else { 0.0 };
+    // The arrows are a text field's while one has the keyboard.
+    let typing = focus.is_some_and(|f| f.get().is_some());
+    let key = |k: KeyCode| if keys.pressed(k) && !typing { 1.0 } else { 0.0 };
     turn += Vec2::new(
         key(KeyCode::ArrowRight) - key(KeyCode::ArrowLeft),
         key(KeyCode::ArrowUp) - key(KeyCode::ArrowDown),
