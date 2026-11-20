@@ -16,7 +16,10 @@ pub mod audio;
 pub mod check;
 pub mod devices;
 mod echo;
+#[cfg(test)]
+mod fake_turn;
 mod peer;
+mod relay;
 pub mod signal;
 
 use std::collections::HashMap;
@@ -34,6 +37,7 @@ use audio::{Capture, FRAME, Mixer, RATE, SharedMixer, Speaking, rms};
 use devices::Choice;
 use echo::Cleaner;
 use peer::{Network, Peer};
+use relay::TurnServer;
 pub use signal::Signal;
 
 /// The longest the voice thread sleeps: how late a packet that has arrived may be read.
@@ -88,6 +92,9 @@ pub struct Setup {
     pub ice_servers: Vec<IceServer>,
     /// Both ends on this machine: sockets on loopback (tests and `--voice-check`).
     pub loopback: bool,
+    /// Offer only the relay's candidate (`--relay-only`), as a browser's
+    /// `iceTransportPolicy: "relay"`.
+    pub relay_only: bool,
     pub microphone: Choice,
     pub speaker: Choice,
 }
@@ -213,8 +220,14 @@ fn run(
     commands: Receiver<Command>,
     events: Sender<Event>,
 ) {
+    let net = network(&setup);
+    if setup.relay_only && net.turn.is_empty() {
+        let _ = events.send(Event::Problem(
+            "The server offers no relay, and this call was to go only through one.".into(),
+        ));
+    }
     let mut call = Call {
-        net: network(&setup),
+        net,
         peers: HashMap::new(),
         mixer,
         muted: false,
@@ -376,39 +389,54 @@ impl Call {
     }
 }
 
-/// The sockets' address and the STUN servers, looked up once at the start of a call. TURN relays
-/// are not used yet.
 fn cleaner_for(microphone: &Choice) -> Option<Cleaner> {
     (*microphone != Choice::Off).then(Cleaner::new)
 }
 
+/// The sockets' address, the STUN servers and the relays, looked up once at the start of a call.
 fn network(setup: &Setup) -> Network {
+    let turn: Vec<TurnServer> = turn_servers(&setup.ice_servers)
+        .into_iter()
+        .filter_map(|(host, url, username, credential)| {
+            Some(TurnServer {
+                addr: resolve(&host, "relay")?,
+                url,
+                username,
+                credential,
+            })
+        })
+        .collect();
     if setup.loopback {
         return Network {
             ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
             loopback: true,
             stun: Vec::new(),
+            turn,
+            relay_only: setup.relay_only,
         };
     }
     let stun = stun_servers(&setup.ice_servers)
         .into_iter()
-        .filter_map(|(host, url)| {
-            let addr = host
-                .to_socket_addrs()
-                .ok()?
-                .find(SocketAddr::is_ipv4)
-                .or_else(|| {
-                    warn!("voice: the STUN server {host} has no IPv4 address");
-                    None
-                })?;
-            Some((addr, url))
-        })
+        .filter_map(|(host, url)| Some((resolve(&host, "STUN server")?, url)))
         .collect();
     Network {
         ip: host_ip().unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         loopback: false,
         stun,
+        turn,
+        relay_only: setup.relay_only,
     }
+}
+
+/// A server's IPv4 address (the call's sockets are IPv4).
+fn resolve(host: &str, what: &str) -> Option<SocketAddr> {
+    host.to_socket_addrs()
+        .ok()?
+        .find(SocketAddr::is_ipv4)
+        .or_else(|| {
+            warn!("voice: the {what} {host} has no IPv4 address");
+            None
+        })
 }
 
 /// The address this machine reaches the internet from: the one other machines can be told.
@@ -424,17 +452,58 @@ fn stun_servers(servers: &[IceServer]) -> Vec<(String, String)> {
     servers
         .iter()
         .flat_map(|s| &s.urls)
-        .filter_map(|url| {
-            let rest = url.strip_prefix("stun:")?;
-            let rest = rest.split('?').next().unwrap_or(rest);
-            let host = if rest.starts_with('[') || rest.rsplit_once(':').is_some() {
-                rest.to_owned()
-            } else {
-                format!("{rest}:3478")
-            };
-            Some((host, url.clone()))
-        })
+        .filter_map(|url| Some((host_of(url.strip_prefix("stun:")?), url.clone())))
         .collect()
+}
+
+/// The relays among the ICE servers that this can reach: `turn:` over UDP, each as `host:port`,
+/// its URL, and the credentials that came with it. A relay reached over TCP or TLS
+/// (`?transport=tcp`, `turns:`) is not used yet.
+fn turn_servers(servers: &[IceServer]) -> Vec<(String, String, String, String)> {
+    let mut found = Vec::new();
+    for s in servers {
+        let (Some(user), Some(credential)) = (&s.username, &s.credential) else {
+            continue;
+        };
+        for url in &s.urls {
+            let Some(rest) = url.strip_prefix("turn:") else {
+                if url.starts_with("turns:") {
+                    info!("voice: {url} (TURN over TLS) is not used yet");
+                }
+                continue;
+            };
+            let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
+            if query
+                .split('&')
+                .any(|p| p.starts_with("transport=") && p != "transport=udp")
+            {
+                info!("voice: {url} (TURN over TCP) is not used yet");
+                continue;
+            }
+            found.push((
+                host_of(address),
+                url.clone(),
+                user.clone(),
+                credential.clone(),
+            ));
+        }
+    }
+    found
+}
+
+/// `host:port` from what follows an ICE URL's scheme, with STUN's port when it gives none.
+fn host_of(rest: &str) -> String {
+    let rest = rest.split('?').next().unwrap_or(rest);
+    let has_port = if rest.starts_with('[') {
+        rest.contains("]:")
+    } else {
+        rest.rsplit_once(':').is_some()
+    };
+    if has_port {
+        rest.to_owned()
+    } else {
+        format!("{rest}:3478")
+    }
 }
 
 #[cfg(test)]
@@ -445,6 +514,7 @@ mod tests {
         Setup {
             ice_servers: Vec::new(),
             loopback: true,
+            relay_only: false,
             microphone: Choice::Off,
             speaker: Choice::Off,
         }
@@ -480,6 +550,132 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn relays_over_udp_are_found_with_their_credentials() {
+        let relay = |urls: &[&str], user: Option<&str>| IceServer {
+            urls: urls.iter().map(|u| (*u).to_owned()).collect(),
+            username: user.map(str::to_owned),
+            credential: user.map(|_| "secret".to_owned()),
+        };
+        let servers = [
+            relay(&["stun:stun.example.com"], None),
+            relay(
+                &[
+                    "turn:turn.example.com",
+                    "turn:192.0.2.1:3479?transport=udp",
+                    "turn:[2001:db8::1]",
+                    "turn:turn.example.com:3478?transport=tcp",
+                    "turns:turn.example.com:5349",
+                ],
+                Some("1700000000:bingle"),
+            ),
+            // A relay with no credentials cannot be used.
+            relay(&["turn:other.example.com"], None),
+        ];
+        let found: Vec<(String, String)> = turn_servers(&servers)
+            .into_iter()
+            .map(|(host, url, user, credential)| {
+                assert_eq!(
+                    (user.as_str(), credential.as_str()),
+                    ("1700000000:bingle", "secret")
+                );
+                (host, url)
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "turn.example.com:3478".into(),
+                    "turn:turn.example.com".into()
+                ),
+                (
+                    "192.0.2.1:3479".into(),
+                    "turn:192.0.2.1:3479?transport=udp".into()
+                ),
+                ("[2001:db8::1]:3478".into(), "turn:[2001:db8::1]".into()),
+            ]
+        );
+        assert!(
+            stun_servers(&servers).len() == 1,
+            "a relay is not a STUN server here"
+        );
+    }
+
+    #[test]
+    fn relay_only_with_no_relay_says_so() {
+        let a = Engine::start(Setup {
+            relay_only: true,
+            ..loopback()
+        });
+        match a.next_event(Duration::from_secs(2)) {
+            Some(Event::Problem(p)) => assert!(p.contains("no relay"), "{p}"),
+            other => panic!("expected a problem, got {other:?}"),
+        }
+    }
+
+    /// Two engines that may only use a relay, so everything goes through it: the allocation,
+    /// the relay candidates trickled, permissions, and the sound both ways.
+    #[test]
+    fn two_engines_talk_through_a_relay() {
+        let turn = fake_turn::FakeTurn::start("1700000000:bingle");
+        let setup = Setup {
+            ice_servers: vec![IceServer {
+                urls: vec![format!("turn:{}", turn.addr)],
+                username: Some("1700000000:bingle".into()),
+                credential: Some("secret".into()),
+            }],
+            relay_only: true,
+            ..loopback()
+        };
+        let (a_capture, a_mixer) = (Capture::default(), Mixer::shared());
+        let (b_capture, b_mixer) = (Capture::default(), Mixer::shared());
+        let a = Engine::start_with(setup.clone(), a_capture.clone(), a_mixer.clone());
+        let b = Engine::start_with(setup, b_capture.clone(), b_mixer.clone());
+        connect(&a, &b, Recovery::Restart);
+        speak(&a_capture, 25);
+        std::thread::sleep(Duration::from_millis(100));
+        let level = heard(&b_mixer);
+        assert!(level > 0.05, "b heard a through the relay at RMS {level}");
+        speak(&b_capture, 25);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(heard(&a_mixer) > 0.05, "a heard b through the relay");
+        let carried = turn.relayed.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(carried > 50, "the relay carried {carried} packets");
+    }
+
+    #[test]
+    fn a_relay_that_refuses_leaves_a_relay_only_call_failed() {
+        // The server only knows another user, so the allocation is refused.
+        let turn = fake_turn::FakeTurn::start("somebody else");
+        let setup = Setup {
+            ice_servers: vec![IceServer {
+                urls: vec![format!("turn:{}", turn.addr)],
+                username: Some("1700000000:bingle".into()),
+                credential: Some("secret".into()),
+            }],
+            relay_only: true,
+            ..loopback()
+        };
+        let a = Engine::start(setup);
+        a.send(Command::Add {
+            peer: PeerKey("b".into()),
+            role: Role::Offers,
+            recovery: Recovery::OnRequest,
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "the call did not fail");
+            if let Some(Event::State {
+                state: PeerState::Failed,
+                ..
+            }) = a.next_event(Duration::from_millis(100))
+            {
+                break;
+            }
+        }
     }
 
     /// Two engines, `a` offering, joined through this test the way the server would carry their

@@ -45,6 +45,8 @@ pub struct VoiceChatPlugin {
     pub no_devices: bool,
     /// Join the voice chat of the game this client sits at, once it does (`--voice`).
     pub join: bool,
+    /// Connect only through the server's relay (`--relay-only`).
+    pub relay_only: bool,
 }
 
 impl Plugin for VoiceChatPlugin {
@@ -57,6 +59,7 @@ impl Plugin for VoiceChatPlugin {
         app.insert_resource(VoiceChat {
             microphone: device.clone(),
             speaker: device,
+            relay_only: self.relay_only,
             ..default()
         })
         .insert_resource(JoinOnStart(self.join))
@@ -124,6 +127,7 @@ pub struct VoiceChat {
     pub devices: Option<(Vec<DeviceInfo>, Vec<DeviceInfo>)>,
     pub microphone: Choice,
     pub speaker: Choice,
+    relay_only: bool,
     engine: Option<Engine>,
 }
 
@@ -146,6 +150,7 @@ impl Default for VoiceChat {
             devices: None,
             microphone: Choice::Off,
             speaker: Choice::Off,
+            relay_only: false,
             engine: None,
         }
     }
@@ -252,6 +257,7 @@ impl VoiceChat {
                 })
                 .collect(),
             loopback: false,
+            relay_only: self.relay_only,
             microphone: self.microphone.clone(),
             speaker: self.speaker.clone(),
         });

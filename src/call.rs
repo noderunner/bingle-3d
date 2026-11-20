@@ -29,6 +29,8 @@ pub struct CallPlugin {
     pub no_devices: bool,
     /// Ring this friend, by handle, once the list shows them here (`--call`).
     pub call: Option<String>,
+    /// Connect only through the server's relay (`--relay-only`).
+    pub relay_only: bool,
 }
 
 impl Plugin for CallPlugin {
@@ -41,6 +43,7 @@ impl Plugin for CallPlugin {
         app.insert_resource(DirectCalling {
             microphone: device.clone(),
             speaker: device,
+            relay_only: self.relay_only,
             ..default()
         })
         .insert_resource(CallOnStart(self.call.clone()))
@@ -235,6 +238,7 @@ pub struct DirectCalling {
     pending: Vec<voice::Signal>,
     microphone: Choice,
     speaker: Choice,
+    relay_only: bool,
 }
 
 impl Default for DirectCalling {
@@ -246,6 +250,7 @@ impl Default for DirectCalling {
             pending: Vec::new(),
             microphone: Choice::Off,
             speaker: Choice::Off,
+            relay_only: false,
         }
     }
 }
@@ -368,6 +373,7 @@ impl DirectCalling {
                 })
                 .collect(),
             loopback: false,
+            relay_only: self.relay_only,
             microphone: self.microphone.clone(),
             speaker: self.speaker.clone(),
         });

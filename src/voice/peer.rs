@@ -22,8 +22,8 @@ use rtc::peer_connection::message::{RTCMessage, TaggedRTCMessage};
 use rtc::peer_connection::sdp::RTCSessionDescription;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::peer_connection::transport::{
-    CandidateConfig, CandidateHostConfig, CandidateServerReflexiveConfig, RTCIceCandidate,
-    RTCIceCandidateInit,
+    CandidateConfig, CandidateHostConfig, CandidateRelayConfig, CandidateServerReflexiveConfig,
+    RTCIceCandidate, RTCIceCandidateInit,
 };
 use rtc::peer_connection::{RTCPeerConnection, RTCPeerConnectionBuilder};
 use rtc::rtp_transceiver::RTCRtpSenderId;
@@ -38,6 +38,7 @@ use rtc::stun::xoraddr::XorMappedAddress;
 use rusty_opus::OpusDecoder;
 
 use super::audio::{FRAME, RATE, SharedMixer, Speaking, rms};
+use super::relay::{Relay, Relayed, TurnServer};
 use super::signal::{Candidate, Signal};
 use super::{Event, PeerKey, PeerState, Recovery, Role};
 
@@ -59,6 +60,11 @@ pub struct Network {
     pub loopback: bool,
     /// Each server's address and the URL it was given as.
     pub stun: Vec<(SocketAddr, String)>,
+    /// The relays; the first is used.
+    pub turn: Vec<TurnServer>,
+    /// Only the relay's candidate is offered, as a browser's `iceTransportPolicy: "relay"`: the
+    /// other end never learns this machine's address (and a relay is proved to work).
+    pub relay_only: bool,
 }
 
 /// A STUN question in flight: what this socket's address looks like from outside.
@@ -93,6 +99,9 @@ pub struct Peer {
     /// Candidates found after the description went out, to trickle.
     trickled: Vec<Candidate>,
     stun: Vec<StunQuery>,
+    relay: Option<Relay>,
+    /// What the relay said, waiting to be acted on.
+    relayed: Vec<Relayed>,
     state: PeerState,
     restarts: u32,
     restart_at: Option<Instant>,
@@ -129,14 +138,28 @@ impl Peer {
         .and_then(|c| RTCIceCandidate::from(&c).to_json())
         .map_err(|e| format!("voice: {e}"))?;
         let now = Instant::now();
-        let stun = net
-            .stun
-            .iter()
-            .map(|(server, url)| StunQuery::new(*server, url.clone(), now))
-            .collect();
-        let (pc, sender, ssrc) = connection(net.loopback, std::slice::from_ref(&host))?;
+        let stun = if net.relay_only {
+            Vec::new()
+        } else {
+            net.stun
+                .iter()
+                .map(|(server, url)| StunQuery::new(*server, url.clone(), now))
+                .collect()
+        };
+        let relay = net
+            .turn
+            .first()
+            .and_then(|server| match Relay::new(server, local, now) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    info!("{e}");
+                    None
+                }
+            });
+        let local_candidates = if net.relay_only { vec![] } else { vec![host] };
+        let (pc, sender, ssrc) = connection(net.loopback, &local_candidates)?;
         let decoder = OpusDecoder::new(RATE as i32, 1).map_err(|e| format!("Opus: {e:?}"))?;
-        let peer = Peer {
+        let mut peer = Peer {
             key,
             role,
             recovery,
@@ -152,9 +175,11 @@ impl Peer {
             decoder,
             last_seq: None,
             pending: Vec::new(),
-            local_candidates: vec![host],
+            local_candidates,
             trickled: Vec::new(),
             stun,
+            relay,
+            relayed: Vec::new(),
             state: PeerState::Connecting,
             restarts: 0,
             restart_at: None,
@@ -164,6 +189,8 @@ impl Peer {
         for q in &peer.stun {
             peer.send_raw(&q.raw, q.server);
         }
+        // The relay's first request.
+        peer.flush();
         Ok(peer)
     }
 
@@ -255,6 +282,10 @@ impl Peer {
     pub fn drive(&mut self, now: Instant, mixer: &SharedMixer, out: &mut Vec<Event>) {
         self.read_socket(now);
         self.ask_stun_again(now);
+        if let Some(relay) = &mut self.relay {
+            relay.tick(now, &mut self.relayed);
+        }
+        self.act_on_relay(now, out);
         for c in std::mem::take(&mut self.trickled) {
             out.push(Event::Signal {
                 peer: self.key.clone(),
@@ -289,7 +320,8 @@ impl Peer {
     /// When this connection next needs `drive`, if it has a timer.
     pub fn next_wake(&mut self) -> Option<Instant> {
         let stun = self.stun.iter().map(|q| q.sent + STUN_AGAIN).min();
-        [self.pc.poll_timeout(), self.restart_at, stun]
+        let relay = self.relay.as_mut().and_then(Relay::next_wake);
+        [self.pc.poll_timeout(), self.restart_at, stun, relay]
             .into_iter()
             .flatten()
             .min()
@@ -297,6 +329,10 @@ impl Peer {
 
     pub fn close(&mut self) {
         let _ = self.pc.close();
+        self.flush();
+        if let Some(relay) = &mut self.relay {
+            relay.close(Instant::now());
+        }
         self.flush();
     }
 
@@ -496,19 +532,11 @@ impl Peer {
                         self.reflexive(&q, data);
                         continue;
                     }
-                    let read = self.pc.handle_read(TaggedBytesMut {
-                        now,
-                        transport: TransportContext {
-                            local_addr: self.local,
-                            peer_addr: from,
-                            ecn: None,
-                            transport_protocol: TransportProtocol::UDP,
-                        },
-                        message: BytesMut::from(data),
-                    });
-                    if let Err(e) = read {
-                        debug!("voice: a packet from {from}: {e}");
+                    if let Some(relay) = self.relay.as_mut().filter(|r| r.is_from_server(from)) {
+                        relay.read(now, data, &mut self.relayed);
+                        continue;
                     }
+                    self.take_in(now, self.local, from, BytesMut::from(data));
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => return,
                 // A port that refused an earlier packet (ICMP), on some systems: keep reading.
@@ -518,6 +546,96 @@ impl Peer {
                     return;
                 }
             }
+        }
+    }
+
+    /// A packet for the connection, arriving at `at` (this socket, or the relay's address).
+    fn take_in(&mut self, now: Instant, at: SocketAddr, from: SocketAddr, message: BytesMut) {
+        let read = self.pc.handle_read(TaggedBytesMut {
+            now,
+            transport: TransportContext {
+                local_addr: at,
+                peer_addr: from,
+                ecn: None,
+                transport_protocol: TransportProtocol::UDP,
+            },
+            message,
+        });
+        if let Err(e) = read {
+            debug!("voice: a packet from {from}: {e}");
+        }
+    }
+
+    /// What the relay said: its address becomes a candidate, its packets go to the connection.
+    fn act_on_relay(&mut self, now: Instant, out: &mut Vec<Event>) {
+        for happened in std::mem::take(&mut self.relayed) {
+            match happened {
+                Relayed::Allocated(addr) => {
+                    let url = self.relay.as_ref().map(|r| r.url().to_owned());
+                    let candidate = CandidateRelayConfig {
+                        base_config: CandidateConfig {
+                            network: "udp".to_owned(),
+                            address: addr.ip().to_string(),
+                            port: addr.port(),
+                            component: 1,
+                            ..Default::default()
+                        },
+                        rel_addr: self.local.ip().to_string(),
+                        rel_port: self.local.port(),
+                        ..Default::default()
+                    }
+                    .new_candidate_relay()
+                    .and_then(|c| RTCIceCandidate::from(&c).to_json());
+                    match candidate {
+                        Ok(mut init) => {
+                            init.url = url;
+                            self.add_local(init);
+                        }
+                        Err(e) => debug!("voice: the relay's candidate: {e}"),
+                    }
+                }
+                Relayed::Refused(why) => {
+                    let url = self.relay.take().map(|r| r.url().to_owned());
+                    info!(
+                        "voice: the relay {} gave no address: {why}",
+                        url.unwrap_or_default()
+                    );
+                    if self.local_candidates.is_empty() {
+                        // Relay only, and no relay: nothing can connect.
+                        self.set_state(PeerState::Failed, out);
+                    }
+                }
+                Relayed::Data { from, data } => {
+                    if let Some(at) = self.relay.as_ref().and_then(Relay::relayed) {
+                        self.take_in(now, at, from, data);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A candidate of this end found after the connection began: given to it, kept for a new
+    /// one, and trickled once the description is out (before, it goes in it).
+    fn add_local(&mut self, init: RTCIceCandidateInit) {
+        if self
+            .local_candidates
+            .iter()
+            .any(|c| c.candidate == init.candidate)
+        {
+            return;
+        }
+        if let Err(e) = self.pc.add_local_candidate(init.clone()) {
+            debug!("voice: {e}");
+            return;
+        }
+        self.local_candidates.push(init.clone());
+        if let Some(d) = self.pc.local_description() {
+            self.trickled.push(Candidate {
+                candidate: init.candidate,
+                sdp_mid: mid_of(Some(&d.sdp)),
+                sdp_mline_index: Some(0),
+                username_fragment: None,
+            });
         }
     }
 
@@ -545,28 +663,8 @@ impl Peer {
         .and_then(|c| RTCIceCandidate::from(&c).to_json());
         let Ok(mut init) = candidate else { return };
         init.url = Some(q.url.clone());
-        if self
-            .local_candidates
-            .iter()
-            .any(|c| c.candidate == init.candidate)
-        {
-            return;
-        }
         debug!("voice: {} told {} it is {}", q.server, self.local, addr.ip);
-        if let Err(e) = self.pc.add_local_candidate(init.clone()) {
-            debug!("voice: {e}");
-            return;
-        }
-        self.local_candidates.push(init.clone());
-        // Once the description is out, a new candidate is trickled; before, it goes in it.
-        if let Some(d) = self.pc.local_description() {
-            self.trickled.push(Candidate {
-                candidate: init.candidate,
-                sdp_mid: mid_of(Some(&d.sdp)),
-                sdp_mline_index: Some(0),
-                username_fragment: None,
-            });
-        }
+        self.add_local(init);
     }
 
     fn ask_stun_again(&mut self, now: Instant) {
@@ -592,9 +690,21 @@ impl Peer {
         }
     }
 
+    /// Sends what the connection and the relay have to send: from the relay's address through
+    /// the relay, the rest straight from the socket.
     fn flush(&mut self) {
+        let now = Instant::now();
+        let relayed = self.relay.as_ref().and_then(Relay::relayed);
         while let Some(msg) = self.pc.poll_write() {
-            self.send_raw(&msg.message, msg.transport.peer_addr);
+            match &mut self.relay {
+                Some(relay) if Some(msg.transport.local_addr) == relayed => {
+                    relay.send(now, &msg.message, msg.transport.peer_addr);
+                }
+                _ => self.send_raw(&msg.message, msg.transport.peer_addr),
+            }
+        }
+        while let Some((data, to)) = self.relay.as_mut().and_then(Relay::poll_write) {
+            self.send_raw(&data, to);
         }
     }
 }
