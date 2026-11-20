@@ -193,7 +193,15 @@ README, this plan, `.gitignore`.
   another seat, and is gone once this client leaves or is removed. These calls came into Bingle's
   schema in API 1.4 ([bingle#224](https://github.com/noderunner/bingle/issues/224)), which the
   client now needs. A seat's faction (`seat-faction`) is not offered: Hex has none.
-- **Next**: the games list grouped by family, as it is long (48 on Bingle today).
+- The games to start, grouped by family (48 on Bingle today, in 21 families): one card for each
+  game, its sizes, layouts and variants as chips on it, and the card's buttons for the chip
+  chosen. The server gives no name for a family, so it is made from the members' names: what
+  they share before their parenthesised part ("Hex" for "Hex (7×7)"), each chip then going by
+  that part ("7×7"); members that share no such name keep their own, under the name of the member
+  whose id is the family's. That member is chosen to begin with. Chips are in natural order (7×7
+  before 11×11). The choice is kept while the client runs.
+- **Next**: the "done when" check, by hand against the web page both ways; then stage 6, whose
+  question for Bingle (how a native client signs in) is raised first.
 
 ### Stage 6: accounts
 

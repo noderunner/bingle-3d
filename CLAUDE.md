@@ -161,7 +161,8 @@ A game's own rules and its players' words keep their terms.
 - `src/config.rs`: `config.toml` and `keys.toml`. Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
 - `src/browser.rs`: the panel listing the server's games; it becomes the game browser. Its `Action`
-  is what every panel's buttons do. `src/game_panel.rs`: the panel beside a watched game.
+  is what every panel's buttons do. `src/families.rs`: the games to start grouped by family, and
+  the names of a family and its members, with no Bevy in it. `src/game_panel.rs`: the panel beside a watched game.
 - `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
   player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
   Bevy in it.

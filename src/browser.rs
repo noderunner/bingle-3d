@@ -8,6 +8,9 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, ScrollArea, observe};
 
+use std::collections::HashMap;
+
+use crate::families::{Family, families};
 use crate::fonts::UiFonts;
 use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
@@ -27,6 +30,7 @@ pub struct BrowserPlugin {
 impl Plugin for BrowserPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(NewGameOnStart(self.new_game.clone()))
+            .init_resource::<ChosenMembers>()
             .add_systems(Startup, spawn_panel)
             .add_systems(
                 Update,
@@ -36,7 +40,8 @@ impl Plugin for BrowserPlugin {
                     rebuild_list.run_if(
                         resource_changed::<ServerStatus>
                             .or_eager(resource_changed::<GameList>)
-                            .or_eager(resource_changed::<NewGame>),
+                            .or_eager(resource_changed::<NewGame>)
+                            .or_eager(resource_changed::<ChosenMembers>),
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
@@ -62,6 +67,11 @@ pub(crate) mod colours {
     pub const CHOSEN: Color = Color::srgb(0.27, 0.52, 0.42);
     pub const CHOSEN_HOVER: Color = Color::srgb(0.33, 0.60, 0.49);
 }
+
+/// The member of each family chosen on the list (a size, a layout), by the family's id. A family
+/// not in it shows its default.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct ChosenMembers(HashMap<String, String>);
 
 /// The panel itself, hidden while a game is watched.
 #[derive(Component)]
@@ -117,6 +127,11 @@ pub(crate) enum Action {
     StartGame,
     /// Close the form.
     CancelNewGame,
+    /// On the list: which of a family's members (a size, a layout) its buttons are for.
+    ChooseMember {
+        family: String,
+        def_id: String,
+    },
     /// List only the games with a free seat (or every one again).
     FreeSeats(bool),
     /// List only this game's family (or every game), named as `name`.
@@ -223,6 +238,7 @@ fn rebuild_list(
     status: Res<ServerStatus>,
     list: Res<GameList>,
     new_game: Res<NewGame>,
+    chosen: Res<ChosenMembers>,
     fonts: Res<UiFonts>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
@@ -240,7 +256,7 @@ fn rebuild_list(
                 Some(form) => new_game::draw(area, f, form),
                 None => {
                     games_being_played(area, f, &list);
-                    games_to_start(area, f, snap);
+                    games_to_start(area, f, snap, &chosen);
                 }
             },
             _ => {
@@ -359,56 +375,89 @@ pub fn describe_query(list: &GameList) -> String {
     )
 }
 
-fn games_to_start(area: &mut ChildSpawnerCommands, f: &UiFonts, snap: &Snapshot) {
-    area.spawn(heading(f, &format!("Start a game ({})", snap.defs.len())));
-    let mut defs: Vec<&GameDef> = snap.defs.iter().collect();
-    defs.sort_by(|a, b| a.name.cmp(&b.name));
-    for def in defs {
-        area.spawn(card()).with_children(|card| {
-            card.spawn(line(f.semibold(15.0), colours::TEXT, &describe_def(def)));
-            if !def.description.is_empty() {
-                card.spawn(line(f.regular(13.0), colours::MUTED, &def.description));
-            }
-            if def.seats_required >= 2 {
-                card.spawn(buttons()).with_children(|row| {
-                    let play = if def.seats_required == 2 {
-                        "Play a bot"
-                    } else {
-                        "Play bots"
-                    };
-                    row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
-                    row.spawn(button(
-                        f,
-                        "New game…",
-                        Action::NewGame {
-                            def_id: def.id.clone(),
-                            name: def.name.clone(),
-                        },
-                    ));
-                    // A bot match is for two seats.
-                    if def.seats_required == 2 {
-                        row.spawn(button(
-                            f,
-                            "Watch two bots",
-                            Action::WatchBots(def.id.clone()),
-                        ));
-                    }
-                });
-            }
-            if def.seats_required >= 2 {
-                card.spawn(buttons()).with_children(|row| {
-                    row.spawn(button(
-                        f,
-                        "Find games",
-                        Action::FindGames {
-                            family: Some(def.family.clone().unwrap_or_else(|| def.id.clone())),
-                            name: def.name.clone(),
-                        },
-                    ));
-                });
+fn games_to_start(
+    area: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    snap: &Snapshot,
+    chosen: &ChosenMembers,
+) {
+    let families = families(&snap.defs);
+    area.spawn(heading(f, &format!("Start a game ({})", families.len())));
+    for family in &families {
+        area.spawn(card())
+            .with_children(|card| family_card(card, f, family, chosen));
+    }
+}
+
+/// A game, with a choice of its members when it has several, and what can be done with the one
+/// chosen.
+fn family_card(
+    card: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    family: &Family,
+    chosen: &ChosenMembers,
+) {
+    let def = family
+        .member(chosen.0.get(&family.id).map(String::as_str))
+        .def;
+    card.spawn(line(
+        f.semibold(15.0),
+        colours::TEXT,
+        &describe_def(&family.title, def),
+    ));
+    if family.members.len() > 1 {
+        card.spawn(buttons()).with_children(|row| {
+            for member in &family.members {
+                row.spawn(chip(
+                    f,
+                    &member.label,
+                    Action::ChooseMember {
+                        family: family.id.clone(),
+                        def_id: member.def.id.clone(),
+                    },
+                    member.def.id == def.id,
+                ));
             }
         });
     }
+    if !def.description.is_empty() {
+        card.spawn(line(f.regular(13.0), colours::MUTED, &def.description));
+    }
+    if def.seats_required < 2 {
+        return;
+    }
+    card.spawn(buttons()).with_children(|row| {
+        let play = if def.seats_required == 2 {
+            "Play a bot"
+        } else {
+            "Play bots"
+        };
+        row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
+        row.spawn(button(
+            f,
+            "New game…",
+            Action::NewGame {
+                def_id: def.id.clone(),
+                name: def.name.clone(),
+            },
+        ));
+        // A bot match is for two seats.
+        if def.seats_required == 2 {
+            row.spawn(button(
+                f,
+                "Watch two bots",
+                Action::WatchBots(def.id.clone()),
+            ));
+        }
+        row.spawn(button(
+            f,
+            "Find games",
+            Action::FindGames {
+                family: Some(family.id.clone()),
+                name: family.title.clone(),
+            },
+        ));
+    });
 }
 
 /// A game's title line and what is happening in it, in words.
@@ -441,12 +490,13 @@ pub fn describe_game(game: &OpenGame) -> (String, String) {
     (title, format!("{players}  —  {state}"))
 }
 
-fn describe_def(def: &GameDef) -> String {
+/// A game's title line: its family's title, and how many play the member chosen.
+fn describe_def(title: &str, def: &GameDef) -> String {
     let seats = match def.seats_required {
         1 => "1 player".to_string(),
         n => format!("{n} players"),
     };
-    let mut out = format!("{}  —  {seats}", def.name);
+    let mut out = format!("{title}  —  {seats}");
     if def.prototype {
         out.push_str("  (prototype)");
     }
@@ -541,6 +591,7 @@ fn on_activate(
     mut watching: ResMut<WatchStatus>,
     mut list: ResMut<GameList>,
     mut new_game: ResMut<NewGame>,
+    mut chosen: ResMut<ChosenMembers>,
     mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
@@ -613,6 +664,9 @@ fn on_activate(
             }
         }
         Action::CancelNewGame => new_game.form = None,
+        Action::ChooseMember { family, def_id } => {
+            chosen.0.insert(family.clone(), def_id.clone());
+        }
         Action::FreeSeats(open_seats) => {
             let query = GameQuery {
                 open_seats: *open_seats,
@@ -728,6 +782,7 @@ mod tests {
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
+            .init_resource::<ChosenMembers>()
             .insert_resource(ServerStatus {
                 server: "https://box:8443".into(),
                 connection,
@@ -788,6 +843,26 @@ mod tests {
         assert_eq!(
             describe_query(list),
             "Hex (7×7) (any size or layout), with a free seat; read again every 5 s."
+        );
+    }
+
+    #[test]
+    fn a_members_chip_is_remembered_for_its_family() {
+        let (mut app, requests) = app_with(Connection::Connecting);
+        let button = app
+            .world_mut()
+            .spawn(Action::ChooseMember {
+                family: "hex-11".into(),
+                def_id: "hex-7".into(),
+            })
+            .observe(on_activate)
+            .id();
+        app.world_mut().trigger(Activate { entity: button });
+        let chosen = app.world().resource::<ChosenMembers>();
+        assert_eq!(chosen.0.get("hex-11").map(String::as_str), Some("hex-7"));
+        assert!(
+            requests.try_recv().is_err(),
+            "nothing is asked of the server"
         );
     }
 
@@ -876,6 +951,9 @@ mod tests {
             description: String::new(),
             prototype: true,
         };
-        assert_eq!(describe_def(&def), "Solitaire  —  1 player  (prototype)");
+        assert_eq!(
+            describe_def("Solitaire", &def),
+            "Solitaire  —  1 player  (prototype)"
+        );
     }
 }
