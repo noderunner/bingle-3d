@@ -19,6 +19,8 @@ Options:
   --sign-in          open the form that signs in to an account
   --friends          open the friends panel (signed in)
   --talk HANDLE      open the conversation with this friend (signed in)
+  --voice-check      hear your microphone back through your speaker, over a voice
+                     connection on this machine, for ten seconds (no window)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -46,6 +48,8 @@ pub struct Options {
     pub friends: bool,
     /// Open the conversation with this friend at start.
     pub talk: Option<String>,
+    /// Try the microphone and the speaker, then quit.
+    pub voice_check: bool,
     pub help: bool,
 }
 
@@ -85,6 +89,7 @@ impl Options {
                 "-h" | "--help" => opts.help = true,
                 "--sign-in" => opts.sign_in = true,
                 "--friends" => opts.friends = true,
+                "--voice-check" => opts.voice_check = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--frames" => {
                     let v = value("a number of frames")?;
@@ -241,6 +246,8 @@ mod tests {
         assert!(!parse(&[]).unwrap().sign_in);
         assert!(parse(&["--friends"]).unwrap().friends);
         assert_eq!(parse(&["--talk", "bob"]).unwrap().talk, Some("bob".into()));
+        assert!(parse(&["--voice-check"]).unwrap().voice_check);
+        assert!(!parse(&[]).unwrap().voice_check);
     }
 
     #[test]

@@ -11,8 +11,16 @@ publish = false
 [dependencies]
 # Pinned to one Bevy minor version: each release breaks APIs, so upgrades are deliberate (docs/plan.md).
 bevy = "0.20.1"
+# Bytes and BytesMut are what rtc's packets are made of.
+bytes = "1"
+# Audio devices for voice chat. Bevy's audio already builds it (through rodio).
+cpal = "0.17.3"
 ring = "0.17.14"
+# WebRTC for voice chat, sans I/O (its socket is ours), on ring like the rest.
+rtc = { version = "0.21.1", default-features = false, features = ["crypto-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Opus, the codec browsers speak in a call, in pure Rust.
+rusty-opus = "1.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 toml = "1.2.1"
