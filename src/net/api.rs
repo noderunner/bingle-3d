@@ -433,6 +433,12 @@ pub struct GameDef {
     /// Still being designed.
     #[serde(default)]
     pub prototype: bool,
+    /// The game's own semantic version: below 1.0.0 it is a beta.
+    #[serde(default)]
+    pub version: String,
+    /// How many tutorials the game has.
+    #[serde(default)]
+    pub tutorials: u32,
 }
 
 /// `GET /api/games`.

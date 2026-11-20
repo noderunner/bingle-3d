@@ -4,7 +4,7 @@ Everything in `assets/` but the fonts is made here, by scripts, so it can be rea
 changed by a person or an agent, and made again (plan, decision 8).
 
 ```sh
-bash scripts/assets.sh                 # every step: environment, woods, stones
+bash scripts/assets.sh                 # every step: environment, woods, stones, engraving, cards
 bash scripts/assets.sh stones          # one step
 bash scripts/assets.sh previews        # render the assets in Cycles, to look at
 ```
@@ -42,6 +42,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg`: three board woods (teak, walnut, cherry), pale maple, and the table's felt | scanned wood and cloth, resized |
 | `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg` | the stone's profile, turned; the colours drawn with numpy |
 | `engraving` | `textures/engraving/glyphs_{albedo,normal}.png`: the coordinates' glyphs as cuts in wood, an atlas of 8 × 5 cells | each glyph of Fira Sans set as a Blender text object and rendered from above in Cycles; the cut's colour (walls darkening to its bottom) and its walls' slopes worked out from that shape |
+| `cards` | `pictures/cards/points.jpg`: the picture on the cards of the games played on a square board's points, in the client's main screen | Cycles, 512 × 512: a teak board of nine lines by nine with its star points, and slate and shell stones from `assets/appearance/points.toml`, from the player's side |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
 
 How the client reads them:

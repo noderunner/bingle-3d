@@ -161,9 +161,16 @@ A game's own rules and its players' words keep their terms.
 - `src/config.rs`: `config.toml` and `keys.toml` (guest keys, and the session token of an account
   signed in). Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
-- `src/browser.rs`: the panel listing the server's games; it becomes the game browser. Its `Action`
-  is what every panel's buttons do. `src/families.rs`: the games to start grouped by family, and
-  the names of a family and its members, with no Bevy in it. `src/game_panel.rs`: the panel beside a watched game.
+- `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
+  and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
+  or the games being played (*Active*). Its `Action` is what every panel's buttons do. The
+  interface is blended in linear light: prefer opaque colours to faint see-through ones.
+  `src/families.rs`: the games to start grouped by family, the names of a family and its
+  members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
+  beside a watched game.
+- `src/escape_menu.rs`: the menu Esc opens over a game (resume, back to the main screen, quit;
+  settings, game options and profile greyed). While it is open, play's keys and the camera
+  stand aside (`escape_menu::closed`).
 - `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
   player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
   Bevy in it.
@@ -196,7 +203,8 @@ A game's own rules and its players' words keep their terms.
   hashes. Look at its Cycles previews (`bash scripts/assets.sh previews`) and at the client's
   screenshot before calling an asset done.
 - `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): a
-  piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels.
+  piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels,
+  the picture on its card in the main screen.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. The board is one slab
@@ -211,8 +219,8 @@ A game's own rules and its players' words keep their terms.
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
   lights the cells a click would be taken on and shows the move being built as see-through
   pieces.
-- `src/play.rs`: playing a seat. `Turn` is the move being built from the server's legal selections,
-  narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
+- `src/play.rs`: playing a seat (Enter plays, Backspace goes back; Esc is the escape menu's).
+  `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position

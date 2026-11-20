@@ -28,6 +28,16 @@ go-9x9 = ["c3", "g3", "e5", "c7", "g7"]
 go-13x13 = ["d4", "j4", "g7", "d10", "j10"]
 go-19x19 = ["d4", "j4", "p4", "d10", "j10", "p10", "d16", "j16", "p16"]
 
+# The picture on the game's card in the list: a teak board of lines with stones on it, rendered
+# by the asset pipeline (`assets-src/blender/cards.py`). Meridians' board is hexagonal, so this
+# square one is not its picture.
+[card.pictures]
+go-9x9 = "pictures/cards/points.jpg"
+go-13x13 = "pictures/cards/points.jpg"
+go-19x19 = "pictures/cards/points.jpg"
+gomoku = "pictures/cards/points.jpg"
+pente = "pictures/cards/points.jpg"
+
 [pieces.stone]
 model = "models/stone.glb"
 

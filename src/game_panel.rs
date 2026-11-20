@@ -312,7 +312,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
         Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
         Stage::Choosing => "There is nothing to play.".into(),
         Stage::Ready => format!(
-            "Play {}? Enter plays it, Esc takes it back.",
+            "Play {}? Enter plays it, Backspace takes it back.",
             turn.notation()
         ),
         Stage::Sending => format!("Playing {}…", turn.notation()),

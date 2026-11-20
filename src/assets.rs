@@ -22,6 +22,7 @@ files![
     "environment/room_diffuse.ktx2",
     "environment/room_specular.ktx2",
     "models/stone.glb",
+    "pictures/cards/points.jpg",
     "textures/engraving/glyphs_albedo.png",
     "textures/engraving/glyphs_normal.png",
     "textures/stone/shell_albedo.jpg",

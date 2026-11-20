@@ -1,7 +1,11 @@
-//! The first screen: which server, whether it is there, and what it has: the open games and the
-//! games it can play. Stage 2 of the plan; it grows into the game browser of stage 5.
+//! The main screen: which server, whether it is there, and what it has, laid out as the web
+//! page's home is: tabs (*Games*, and *Puzzles*, *Ratings*, *Tournaments* and *Global Chat*,
+//! which are not built yet and only shown), and in *Games* a choice between *New* (a card for
+//! each game to start, with its picture, name, marks and how many play it; picking one opens
+//! its setup) and *Active* (the games being played or waiting for players).
 //!
-//! It is a panel over the table, rebuilt whenever [`ServerStatus`] changes.
+//! It is a panel over the table, shown while no game is open, and rebuilt whenever what it
+//! shows changes.
 
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
@@ -11,11 +15,11 @@ use bevy::ui_widgets::{Activate, Button, ScrollArea, observe};
 use std::collections::HashMap;
 
 use crate::appearance::Appearances;
-use crate::families::{Family, families};
+use crate::families::{Badge, Family, families};
 use crate::fonts::UiFonts;
 use crate::friends::{FriendAction, Friends};
 use crate::net::api::{GameDef, Gesture, OpenGame};
-use crate::net::session::{Problem, Snapshot};
+use crate::net::session::Problem;
 use crate::net::tls::Fingerprint;
 use crate::net::{
     Connection, GAMES_EVERY, GameList, GameQuery, LobbyCall, Net, Request, Resign, ServerStatus,
@@ -39,7 +43,8 @@ impl Plugin for BrowserPlugin {
         }
         app.insert_resource(NewGameOnStart(self.new_game.clone()))
             .init_resource::<ChosenMembers>()
-            .add_systems(Startup, spawn_panel)
+            .init_resource::<MainScreen>()
+            .add_systems(Startup, (spawn_panel, load_card_pictures))
             .add_systems(
                 Update,
                 (
@@ -53,11 +58,13 @@ impl Plugin for BrowserPlugin {
                             .or_eager(resource_changed::<NewGame>)
                             .or_eager(resource_changed::<ChosenMembers>)
                             .or_eager(resource_changed::<Signing>)
-                            .or_eager(resource_changed::<Friends>),
+                            .or_eager(resource_changed::<Friends>)
+                            .or_eager(resource_changed::<MainScreen>),
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
                     colour_buttons,
+                    colour_cards,
                 )
                     .chain(),
             );
@@ -82,6 +89,76 @@ pub(crate) mod colours {
     pub const FIELD: Color = Color::srgba(0.0, 0.0, 0.0, 0.35);
     pub const FIELD_EDGE: Color = Color::srgb(0.30, 0.33, 0.38);
     pub const FIELD_FOCUS: Color = Color::srgb(0.45, 0.62, 0.90);
+    /// The main screen's lines and edges, its chosen tab, and what is not built yet, as the web
+    /// page's dark theme has them.
+    pub const BORDER: Color = Color::srgb(0.23, 0.23, 0.26);
+    pub const BORDER_HOVER: Color = Color::srgb(0.46, 0.45, 0.42);
+    pub const ACCENT_SOFT: Color = Color::srgb(0.12, 0.23, 0.20);
+    pub const DISABLED: Color = Color::srgb(0.40, 0.40, 0.42);
+    /// Where a game has no picture. Opaque: the interface is blended in linear light, where a
+    /// faint white over the dark panels shows far lighter than it would on the web page.
+    pub const BLANK: Color = Color::srgb(0.15, 0.16, 0.18);
+    /// The marks on a game's card: a prototype, and a beta.
+    pub const PROTOTYPE: Color = Color::srgb(0.48, 0.65, 1.0);
+    pub const BETA: Color = Color::srgb(0.88, 0.66, 0.29);
+    pub const TUTORIAL: Color = Color::srgba(0.48, 0.65, 1.0, 0.18);
+}
+
+/// Where the main screen is: which of the *Games* tab's lists shows, and the game whose setup
+/// is open in *New*, by its family's id.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub(crate) struct MainScreen {
+    pub games: GamesView,
+    pub family: Option<String>,
+}
+
+/// The *Games* tab's two lists.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GamesView {
+    /// The games to start.
+    #[default]
+    New,
+    /// The games being played or waiting for players.
+    Active,
+}
+
+/// The main screen's tabs, as the web page's. Only *Games* is built.
+const TABS: [(&str, bool); 5] = [
+    ("Games", true),
+    ("Puzzles", false),
+    ("Ratings", false),
+    ("Tournaments", false),
+    ("Global Chat", false),
+];
+
+/// The pictures on the games' cards, by game id, loaded once.
+#[derive(Resource, Debug, Default)]
+struct CardPictures(HashMap<String, Handle<Image>>);
+
+impl CardPictures {
+    /// The picture of the family's chosen member, or else of any of its members.
+    fn for_family(&self, family: &Family, chosen: &str) -> Option<Handle<Image>> {
+        self.0.get(chosen).cloned().or_else(|| {
+            family
+                .members
+                .iter()
+                .find_map(|m| self.0.get(&m.def.id).cloned())
+        })
+    }
+}
+
+fn load_card_pictures(
+    mut commands: Commands,
+    appearances: Res<Appearances>,
+    server: Res<AssetServer>,
+) {
+    let mut out = HashMap::new();
+    for id in appearances.0.iter().flat_map(|look| &look.games) {
+        if let Some(file) = appearances.card_picture(id) {
+            out.insert(id.clone(), server.load(crate::assets::path(file)));
+        }
+    }
+    commands.insert_resource(CardPictures(out));
 }
 
 /// The member of each family chosen on the list (a size, a layout), by the family's id. A family
@@ -93,9 +170,13 @@ pub(crate) struct ChosenMembers(HashMap<String, String>);
 #[derive(Component)]
 struct BrowserPanel;
 
-/// What the panel's two rebuilt parts hang from.
+/// What the panel's rebuilt parts hang from: the server's status, the tabs (and the *Games*
+/// tab's choice of list) above the list, and the list.
 #[derive(Component)]
 struct StatusArea;
+
+#[derive(Component)]
+struct HeadArea;
 
 #[derive(Component)]
 struct ListArea;
@@ -150,6 +231,14 @@ pub(crate) enum Action {
     },
     /// List only the games with a free seat (or every one again).
     FreeSeats(bool),
+    /// On the main screen: show the *Games* tab's new games or its active ones.
+    ShowGames(GamesView),
+    /// On the main screen: open the setup of the game of this family.
+    OpenFamily(String),
+    /// On the main screen: close the game's setup, back to every game.
+    AllGames,
+    /// The escape menu's (`escape_menu.rs` acts on it).
+    Menu(crate::escape_menu::MenuAction),
     /// List only this game's family (or every game), named as `name`.
     FindGames {
         family: Option<String>,
@@ -188,9 +277,10 @@ fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
             position_type: PositionType::Absolute,
             left: px(16),
             top: px(16),
-            // Above the camera hint along the bottom.
+            // Above the camera hint along the bottom, and clear of the friends panel.
             bottom: px(40),
-            width: px(440),
+            right: px(332),
+            max_width: px(1000),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(px(16)),
             row_gap: px(12),
@@ -209,6 +299,14 @@ fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
                 Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(6),
+                    ..default()
+                },
+            ),
+            (
+                HeadArea,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(10),
                     ..default()
                 },
             ),
@@ -281,13 +379,15 @@ fn rebuild_list(
     status: Res<ServerStatus>,
     list: Res<GameList>,
     new_game: Res<NewGame>,
-    chosen: Res<ChosenMembers>,
+    screen: (Res<MainScreen>, Res<ChosenMembers>, Res<CardPictures>),
     signing: Res<Signing>,
     friends: Res<Friends>,
     fonts: Res<UiFonts>,
     appearances: Res<Appearances>,
+    head_area: Single<Entity, With<HeadArea>>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
+    let (screen, chosen, pictures) = screen;
     // The sign-in form is not drawn again for a list read again: that would take the keyboard
     // from the field being typed in.
     if signing.form.is_some() && !signing.is_changed() && !status.is_changed() {
@@ -299,6 +399,19 @@ fn rebuild_list(
         scroll.0 = Vec2::ZERO;
     }
     let f = &*fonts;
+    // The tabs, over the lists only: a form stands alone.
+    let tabs = matches!(status.connection, Connection::Ready(_))
+        && signing.form.is_none()
+        && new_game.form.is_none();
+    commands
+        .entity(*head_area)
+        .despawn_related::<Children>()
+        .with_children(|head| {
+            if tabs {
+                tab_bar(head, f);
+                games_toggle(head, f, screen.games, list.games.len());
+            }
+        });
     commands
         .entity(area_id)
         .despawn_related::<Children>()
@@ -317,10 +430,20 @@ fn rebuild_list(
                     };
                     new_game::draw(area, f, form, &handles, &appearances)
                 }
-                None => {
-                    games_being_played(area, f, &list);
-                    games_to_start(area, f, snap, &chosen);
-                }
+                None => match screen.games {
+                    GamesView::Active => games_being_played(area, f, &list),
+                    GamesView::New => {
+                        let families = families(&snap.defs);
+                        match screen
+                            .family
+                            .as_ref()
+                            .and_then(|id| families.iter().find(|x| x.id == *id))
+                        {
+                            Some(family) => setup(area, f, family, &chosen, &pictures),
+                            None => gallery(area, f, &families, &chosen, &pictures),
+                        }
+                    }
+                },
             },
             _ => {
                 area.spawn(line(
@@ -330,6 +453,315 @@ fn rebuild_list(
                 ));
             }
         });
+}
+
+/// The main screen's tabs, the web page's: only *Games* can be chosen yet; the others are shown
+/// greyed, for what is to come.
+fn tab_bar(head: &mut ChildSpawnerCommands, f: &UiFonts) {
+    head.spawn((
+        Node {
+            column_gap: px(4),
+            border: UiRect::bottom(px(1)),
+            ..default()
+        },
+        BorderColor::all(colours::BORDER),
+    ))
+    .with_children(|bar| {
+        for (name, built) in TABS {
+            let (background, edge, colour) = if built {
+                (colours::ACCENT_SOFT, colours::BORDER, colours::TEXT)
+            } else {
+                (Color::NONE, Color::NONE, colours::DISABLED)
+            };
+            bar.spawn((
+                Node {
+                    padding: UiRect::axes(px(18), px(8)),
+                    border: UiRect {
+                        left: px(1),
+                        right: px(1),
+                        top: px(1),
+                        bottom: px(0),
+                    },
+                    border_radius: BorderRadius::top(px(8)),
+                    ..default()
+                },
+                BackgroundColor(background),
+                BorderColor::all(edge),
+                children![(
+                    Text::new(name),
+                    f.semibold(15.0),
+                    TextColor(colour),
+                    Pickable::IGNORE,
+                )],
+            ));
+        }
+    });
+}
+
+/// The *Games* tab's choice between its two lists.
+fn games_toggle(head: &mut ChildSpawnerCommands, f: &UiFonts, view: GamesView, active: usize) {
+    head.spawn(Node {
+        column_gap: px(2),
+        ..default()
+    })
+    .with_children(|row| {
+        row.spawn(chip(
+            f,
+            "New",
+            Action::ShowGames(GamesView::New),
+            view == GamesView::New,
+        ));
+        row.spawn(chip(
+            f,
+            &format!("Active ({active})"),
+            Action::ShowGames(GamesView::Active),
+            view == GamesView::Active,
+        ));
+    });
+}
+
+/// A card on the list of games to start.
+#[derive(Component)]
+struct GameCard;
+
+/// A card for each game to start, as the web page's gallery: its picture, its name, and its
+/// marks and how many play it.
+fn gallery(
+    area: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    families: &[Family],
+    chosen: &ChosenMembers,
+    pictures: &CardPictures,
+) {
+    area.spawn(line(
+        f.regular(13.0),
+        colours::MUTED,
+        "Pick a game to set up a match.",
+    ));
+    area.spawn(Node {
+        flex_wrap: FlexWrap::Wrap,
+        column_gap: px(10),
+        row_gap: px(10),
+        flex_shrink: 0.0,
+        ..default()
+    })
+    .with_children(|grid| {
+        for family in families {
+            let def = family
+                .member(chosen.0.get(&family.id).map(String::as_str))
+                .def;
+            grid.spawn((
+                GameCard,
+                Button,
+                Action::OpenFamily(family.id.clone()),
+                Hovered::default(),
+                Node {
+                    width: px(156),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(6),
+                    padding: UiRect::all(px(8)),
+                    border: UiRect::all(px(2)),
+                    border_radius: BorderRadius::all(px(10)),
+                    ..default()
+                },
+                BackgroundColor(colours::CARD),
+                BorderColor::all(colours::BORDER),
+                observe(on_activate),
+            ))
+            .with_children(|card| {
+                picture(card, pictures.for_family(family, &def.id), 136.0);
+                card.spawn((
+                    Text::new(family.title.as_str()),
+                    f.semibold(15.0),
+                    TextColor(colours::TEXT),
+                    Pickable::IGNORE,
+                ));
+                card.spawn(card_meta(f, family));
+            });
+        }
+    });
+}
+
+/// A game's picture, or a blank square where it has none.
+fn picture(parent: &mut ChildSpawnerCommands, image: Option<Handle<Image>>, size: f32) {
+    let mut square = parent.spawn((
+        Node {
+            width: px(size),
+            height: px(size),
+            flex_shrink: 0.0,
+            border_radius: BorderRadius::all(px(6)),
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
+    match image {
+        Some(image) => square.insert(ImageNode::new(image)),
+        None => square.insert(BackgroundColor(colours::BLANK)),
+    };
+}
+
+/// The line under a game's name: its marks, and how many play it.
+fn card_meta(f: &UiFonts, family: &Family) -> impl Bundle + use<> {
+    let badges: Vec<Badge> = family.badges();
+    let players = family.players();
+    (
+        Node {
+            flex_wrap: FlexWrap::Wrap,
+            align_items: AlignItems::Center,
+            column_gap: px(6),
+            row_gap: px(4),
+            ..default()
+        },
+        Pickable::IGNORE,
+        Children::spawn((
+            SpawnIter(
+                badges
+                    .into_iter()
+                    .map(|b| badge(f, b))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            ),
+            Spawn((
+                Text::new(players),
+                f.regular(12.0),
+                TextColor(colours::MUTED),
+                Pickable::IGNORE,
+            )),
+        )),
+    )
+}
+
+/// A mark on a card, as the web page draws it: a rounded tag, a prototype's blue and a beta's
+/// amber.
+fn badge(f: &UiFonts, badge: Badge) -> impl Bundle + use<> {
+    let (colour, edge, background) = match badge {
+        Badge::Prototype => (colours::PROTOTYPE, colours::PROTOTYPE, Color::NONE),
+        Badge::Beta => (colours::BETA, colours::BETA, Color::NONE),
+        Badge::Tutorial => (colours::TEXT, colours::BORDER, colours::TUTORIAL),
+    };
+    (
+        Node {
+            padding: UiRect::axes(px(7), px(1)),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(999)),
+            ..default()
+        },
+        BackgroundColor(background),
+        BorderColor::all(edge),
+        Pickable::IGNORE,
+        children![(
+            Text::new(badge.label()),
+            f.semibold(10.0),
+            TextColor(colour),
+            Pickable::IGNORE,
+        )],
+    )
+}
+
+/// A game picked from the cards: its picture and description, a choice of its members when it
+/// has several, and what can be done with the one chosen.
+fn setup(
+    area: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    family: &Family,
+    chosen: &ChosenMembers,
+    pictures: &CardPictures,
+) {
+    let def = family
+        .member(chosen.0.get(&family.id).map(String::as_str))
+        .def;
+    area.spawn(Node {
+        align_items: AlignItems::Center,
+        column_gap: px(12),
+        flex_shrink: 0.0,
+        ..default()
+    })
+    .with_children(|row| {
+        row.spawn(button(f, "← All games", Action::AllGames));
+        row.spawn(line(f.semibold(22.0), colours::TEXT, &family.title));
+    });
+    area.spawn(Node {
+        column_gap: px(16),
+        flex_shrink: 0.0,
+        ..default()
+    })
+    .with_children(|row| {
+        picture(row, pictures.for_family(family, &def.id), 220.0);
+        row.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            min_width: px(0),
+            row_gap: px(6),
+            ..default()
+        })
+        .with_children(|side| {
+            side.spawn(card_meta(f, family));
+            side.spawn(line(
+                f.semibold(15.0),
+                colours::TEXT,
+                &describe_def(&family.title, def),
+            ));
+            if family.members.len() > 1 {
+                side.spawn(buttons()).with_children(|row| {
+                    for member in &family.members {
+                        row.spawn(chip(
+                            f,
+                            &member.label,
+                            Action::ChooseMember {
+                                family: family.id.clone(),
+                                def_id: member.def.id.clone(),
+                            },
+                            member.def.id == def.id,
+                        ));
+                    }
+                });
+            }
+            if !def.description.is_empty() {
+                side.spawn(line(f.regular(14.0), colours::MUTED, &def.description));
+            }
+            setup_buttons(side, f, family, def);
+        });
+    });
+}
+
+/// What can be done with a game: play it against bots, set up a new game, watch two bots, or
+/// find the games of it being played.
+fn setup_buttons(side: &mut ChildSpawnerCommands, f: &UiFonts, family: &Family, def: &GameDef) {
+    side.spawn(buttons()).with_children(|row| {
+        if def.seats_required >= 2 {
+            let play = if def.seats_required == 2 {
+                "Play a bot"
+            } else {
+                "Play bots"
+            };
+            row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
+            row.spawn(button(
+                f,
+                "New game…",
+                Action::NewGame {
+                    def_id: def.id.clone(),
+                    name: def.name.clone(),
+                },
+            ));
+            // A bot match is for two seats.
+            if def.seats_required == 2 {
+                row.spawn(button(
+                    f,
+                    "Watch two bots",
+                    Action::WatchBots(def.id.clone()),
+                ));
+            }
+        }
+        row.spawn(button(
+            f,
+            "Find games",
+            Action::FindGames {
+                family: Some(family.id.clone()),
+                name: family.title.clone(),
+            },
+        ));
+    });
 }
 
 fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem) {
@@ -374,10 +806,6 @@ fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem
 }
 
 fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameList) {
-    area.spawn(heading(
-        f,
-        &format!("Games being played ({})", list.games.len()),
-    ));
     area.spawn(line(f.regular(13.0), colours::MUTED, &describe_query(list)));
     area.spawn(buttons()).with_children(|row| {
         let (label, open_seats) = if list.query.open_seats {
@@ -436,91 +864,6 @@ pub fn describe_query(list: &GameList) -> String {
         "{which}, {seats}; read again every {} s.",
         GAMES_EVERY.as_secs()
     )
-}
-
-fn games_to_start(
-    area: &mut ChildSpawnerCommands,
-    f: &UiFonts,
-    snap: &Snapshot,
-    chosen: &ChosenMembers,
-) {
-    let families = families(&snap.defs);
-    area.spawn(heading(f, &format!("Start a game ({})", families.len())));
-    for family in &families {
-        area.spawn(card())
-            .with_children(|card| family_card(card, f, family, chosen));
-    }
-}
-
-/// A game, with a choice of its members when it has several, and what can be done with the one
-/// chosen.
-fn family_card(
-    card: &mut ChildSpawnerCommands,
-    f: &UiFonts,
-    family: &Family,
-    chosen: &ChosenMembers,
-) {
-    let def = family
-        .member(chosen.0.get(&family.id).map(String::as_str))
-        .def;
-    card.spawn(line(
-        f.semibold(15.0),
-        colours::TEXT,
-        &describe_def(&family.title, def),
-    ));
-    if family.members.len() > 1 {
-        card.spawn(buttons()).with_children(|row| {
-            for member in &family.members {
-                row.spawn(chip(
-                    f,
-                    &member.label,
-                    Action::ChooseMember {
-                        family: family.id.clone(),
-                        def_id: member.def.id.clone(),
-                    },
-                    member.def.id == def.id,
-                ));
-            }
-        });
-    }
-    if !def.description.is_empty() {
-        card.spawn(line(f.regular(13.0), colours::MUTED, &def.description));
-    }
-    if def.seats_required < 2 {
-        return;
-    }
-    card.spawn(buttons()).with_children(|row| {
-        let play = if def.seats_required == 2 {
-            "Play a bot"
-        } else {
-            "Play bots"
-        };
-        row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
-        row.spawn(button(
-            f,
-            "New game…",
-            Action::NewGame {
-                def_id: def.id.clone(),
-                name: def.name.clone(),
-            },
-        ));
-        // A bot match is for two seats.
-        if def.seats_required == 2 {
-            row.spawn(button(
-                f,
-                "Watch two bots",
-                Action::WatchBots(def.id.clone()),
-            ));
-        }
-        row.spawn(button(
-            f,
-            "Find games",
-            Action::FindGames {
-                family: Some(family.id.clone()),
-                name: family.title.clone(),
-            },
-        ));
-    });
 }
 
 /// A game's title line and what is happening in it, in words.
@@ -584,18 +927,6 @@ pub(crate) fn seat_dot(colour: Color, size: f32) -> impl Bundle {
         },
         BackgroundColor(colour),
         BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-    )
-}
-
-fn heading(f: &UiFonts, text: &str) -> impl Bundle {
-    (
-        Text::new(text),
-        f.semibold(17.0),
-        TextColor(colours::TEXT),
-        Node {
-            margin: UiRect::top(px(6)),
-            ..default()
-        },
     )
 }
 
@@ -673,10 +1004,16 @@ fn on_activate(
     mut new_game: ResMut<NewGame>,
     mut chosen: ResMut<ChosenMembers>,
     mut signing: ResMut<Signing>,
+    mut screen: ResMut<MainScreen>,
     mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
+    };
+    let mut to_top = || {
+        for mut scroll in &mut list_scroll {
+            scroll.0 = Vec2::ZERO;
+        }
     };
     match action {
         Action::Retry => reconnect(&net, &mut status),
@@ -719,9 +1056,7 @@ fn on_activate(
             net.send(Request::Setup {
                 game_def_id: def_id.clone(),
             });
-            for mut scroll in &mut list_scroll {
-                scroll.0 = Vec2::ZERO;
-            }
+            to_top();
         }
         Action::SetSeat { seat, fill } => {
             if let Some(form) = new_game.form.as_mut() {
@@ -763,9 +1098,22 @@ fn on_activate(
                 ..list.query.clone()
             };
             find_games(&net, &mut list, query, name.clone());
-            for mut scroll in &mut list_scroll {
-                scroll.0 = Vec2::ZERO;
+            screen.games = GamesView::Active;
+            to_top();
+        }
+        Action::ShowGames(view) => {
+            if screen.games != *view {
+                screen.games = *view;
+                to_top();
             }
+        }
+        Action::OpenFamily(family) => {
+            screen.family = Some(family.clone());
+            to_top();
+        }
+        Action::AllGames => {
+            screen.family = None;
+            to_top();
         }
         Action::Choose(g) => play::gesture(&net, &mut watching, g),
         Action::Submit => play::submit(&net, &mut watching),
@@ -774,9 +1122,7 @@ fn on_activate(
         Action::OpenSignIn => {
             new_game.form = None;
             signing.open();
-            for mut scroll in &mut list_scroll {
-                scroll.0 = Vec2::ZERO;
-            }
+            to_top();
         }
         Action::SubmitSignIn => sign_in::submit(&net, &mut signing),
         Action::CancelSignIn => signing.form = None,
@@ -788,7 +1134,7 @@ fn on_activate(
             }
         }
         Action::SignOut => net.send(Request::SignOut),
-        Action::Friends(_) | Action::Voice(_) => {}
+        Action::Friends(_) | Action::Voice(_) | Action::Menu(_) => {}
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.
@@ -850,6 +1196,19 @@ fn colour_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor, &Chosen), 
     }
 }
 
+type CardHoverChanged = (With<GameCard>, Changed<Hovered>);
+
+/// A card's edge lightens under the pointer, as on the web page.
+fn colour_cards(mut cards: Query<(&Hovered, &mut BorderColor), CardHoverChanged>) {
+    for (hovered, mut edge) in &mut cards {
+        *edge = BorderColor::all(if hovered.0 {
+            colours::BORDER_HOVER
+        } else {
+            colours::BORDER
+        });
+    }
+}
+
 /// A button for one choice among several, coloured when it is the one made.
 pub(crate) fn chip(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
     button_in(f, label, action, chosen)
@@ -883,6 +1242,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<ChosenMembers>()
+            .init_resource::<MainScreen>()
             .init_resource::<Signing>()
             .init_resource::<crate::call::DirectCalling>()
             .insert_resource(ServerStatus {
@@ -946,6 +1306,74 @@ mod tests {
             describe_query(list),
             "Hex (7×7) (any size or layout), with a free seat; read again every 5 s."
         );
+    }
+
+    #[test]
+    fn the_main_screen_opens_a_games_setup_and_switches_lists() {
+        let (mut app, requests) = app_with(Connection::Connecting);
+        let press = |app: &mut App, action: Action| {
+            let button = app.world_mut().spawn(action).observe(on_activate).id();
+            app.world_mut().trigger(Activate { entity: button });
+        };
+        assert_eq!(*app.world().resource::<MainScreen>(), MainScreen::default());
+        press(&mut app, Action::OpenFamily("go".into()));
+        assert_eq!(
+            app.world().resource::<MainScreen>().family.as_deref(),
+            Some("go")
+        );
+        press(&mut app, Action::AllGames);
+        assert_eq!(app.world().resource::<MainScreen>().family, None);
+        press(&mut app, Action::ShowGames(GamesView::Active));
+        assert_eq!(
+            app.world().resource::<MainScreen>().games,
+            GamesView::Active
+        );
+        press(&mut app, Action::ShowGames(GamesView::New));
+        assert!(
+            requests.try_recv().is_err(),
+            "nothing is asked of the server"
+        );
+        // Finding a game's games shows them, in the active list.
+        press(
+            &mut app,
+            Action::FindGames {
+                family: Some("go".into()),
+                name: "Go".into(),
+            },
+        );
+        assert_eq!(
+            app.world().resource::<MainScreen>().games,
+            GamesView::Active
+        );
+        assert!(matches!(requests.try_recv(), Ok(Request::Games { .. })));
+    }
+
+    #[test]
+    fn only_the_games_tab_is_built() {
+        let built: Vec<&str> = TABS.iter().filter(|(_, b)| *b).map(|(n, _)| *n).collect();
+        assert_eq!(built, ["Games"]);
+        assert_eq!(TABS.len(), 5);
+    }
+
+    #[test]
+    fn a_card_shows_its_chosen_members_picture_or_any_members() {
+        let def = |id: &str| GameDef {
+            id: id.into(),
+            name: format!("Sq ({id})"),
+            seats_required: 2,
+            family: Some("a".into()),
+            description: String::new(),
+            prototype: false,
+            version: "1.0.0".into(),
+            tutorials: 0,
+        };
+        let defs = [def("a"), def("b")];
+        let family = &families(&defs)[0];
+        let mut pictures = CardPictures::default();
+        assert_eq!(pictures.for_family(family, "a"), None);
+        let b = Handle::<Image>::default();
+        pictures.0.insert("b".into(), b.clone());
+        assert_eq!(pictures.for_family(family, "a"), Some(b));
     }
 
     #[test]
@@ -1060,6 +1488,8 @@ mod tests {
             family: None,
             description: String::new(),
             prototype: true,
+            version: "1.0.0".into(),
+            tutorials: 0,
         };
         assert_eq!(
             describe_def("Solitaire", &def),

@@ -19,6 +19,7 @@ use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
+use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Selections};
 use crate::net::session::Problem;
 use crate::net::{self, Net, WatchStatus};
@@ -176,7 +177,7 @@ impl Turn {
         }
     }
 
-    /// Back, as Esc or the panel's button: first the gestures towards a selection, then the
+    /// Back, as Backspace or the panel's button: first the gestures towards a selection, then the
     /// selections made, one at a time. Nothing is sent, so nothing needs undoing on the server.
     pub fn back(&mut self) -> bool {
         match self.stage {
@@ -475,20 +476,22 @@ fn on_out(out: On<PointerOut>, spots: Query<&Spot>, mut hovering: ResMut<Hoverin
     }
 }
 
-/// Enter plays the move shown; Esc and Backspace go back. Not while a text field has the keyboard.
+/// Enter plays the move shown; Backspace goes back (Esc is the escape menu's). Not while a text
+/// field has the keyboard, nor while the escape menu is open.
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     focus: Option<Res<InputFocus>>,
+    menu: Option<Res<EscapeMenu>>,
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
 ) {
-    if focus.is_some_and(|f| f.get().is_some()) {
+    if focus.is_some_and(|f| f.get().is_some()) || !escape_menu::closed(menu.as_deref()) {
         return;
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]) {
         submit(&net, &mut watch);
     }
-    if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) {
+    if keys.just_pressed(KeyCode::Backspace) {
         back(&mut watch);
     }
 }

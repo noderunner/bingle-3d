@@ -57,11 +57,18 @@ Right-drag (or the arrow keys) orbits the camera, middle-drag or Shift with righ
 S, D) pans it across the table, and the wheel zooms (or scrolls the panel, over it). C (or the
 *Coordinates* button) shows the board's coordinates, engraved along its edges. F5 connects again.
 
+Once connected, the main screen is laid out as Bingle's web page: tabs (only *Games* works yet;
+*Puzzles*, *Ratings*, *Tournaments* and *Global Chat* are shown greyed), and in *Games* a choice
+of *New* (a card for each game, with its picture, marks such as *Beta* or *Prototype*, and how
+many play it; click one to set it up) or *Active* (the games being played or waiting for
+players). In a game, Esc opens a menu: *Resume*, *Main Menu* (back to the main screen; the game
+goes on), *Quit* (to the desktop), and *Settings*, *Game Options* and *Profile*, not built yet.
+
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
 strongest bot the others. When it is your move, a see-through stone follows the pointer where a
 click would be taken (L, or *Legal moves*, also lights every such place): click one, and the
-stone is shown there; click it again, press Enter or choose *Play* to play it, or press Esc
-(or Backspace, or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
+stone is shown there; click it again, press Enter or choose *Play* to play it, or press
+Backspace (or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
 Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
 again.
