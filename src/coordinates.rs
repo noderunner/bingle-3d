@@ -6,22 +6,27 @@
 //! far and near ends, each row's number beyond its left and right ends. A board named any other
 //! way shows none: the client does not guess.
 //!
-//! The labels are text over the scene, kept over their places on the table as the camera moves,
-//! so they read the same from any angle.
+//! They are engraved in the board's margin: glyphs of the client's font, made by the asset
+//! pipeline (`assets-src/blender/engraving.py`) as an atlas of the cut's colour and its walls'
+//! slopes, laid flat on the wood and reading from the player's side, as on a real board.
 
 use std::collections::BTreeMap;
 
+use std::f32::consts::FRAC_PI_2;
+
 use bevy::input_focus::InputFocus;
+use bevy::mesh::VertexAttributeValues;
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
-use crate::board::{Layout, SURFACE};
+use crate::board::{BOARD_HEIGHT, Layout};
 use crate::browser::colours;
 use crate::fonts::UiFonts;
 use crate::net::WatchStatus;
 use crate::net::api::BoardPosition;
+use crate::textures;
 
 pub struct CoordinatesPlugin;
 
@@ -35,7 +40,7 @@ impl Plugin for CoordinatesPlugin {
                     toggle_with_key,
                     colour_button,
                     sync_labels.run_if(resource_changed::<WatchStatus>),
-                    place_labels,
+                    show_labels,
                 )
                     .chain(),
             );
@@ -105,16 +110,55 @@ pub fn edge_labels(positions: &[BoardPosition]) -> Vec<EdgeLabel> {
     out
 }
 
-/// How far beyond its position's middle a label stands, in pitches: on the board's margin.
-const LABEL_OUT: f32 = 1.05;
+/// The glyphs in the atlas, in order, and its grid (as `engraving.py` makes it).
+const GLYPHS: &str = "0123456789abcdefghijklmnopqrstuvwxyz";
+const COLUMNS: usize = 8;
+const ROWS: usize = 5;
+/// A glyph's cell, in pitches, and how far apart a label's glyphs stand, in cells: the advance of
+/// one of the font's figures at the size the glyphs are set.
+const GLYPH_SIZE: f32 = 0.62;
+const ADVANCE: f32 = 0.44;
+/// How far beyond its position's middle a label stands, in pitches: on the board's margin,
+/// clear of the cell's points (a hexagon's are towards the far and near sides).
+const OUT_ALONG: f32 = 0.92;
+const OUT_ACROSS: f32 = 0.85;
 
-/// A label on screen, and the point on the table it stays over.
-#[derive(Component)]
-struct Label {
-    at: Vec3,
+/// Where a glyph is in the atlas, if it has one.
+fn glyph(ch: char) -> Option<usize> {
+    GLYPHS.find(ch.to_ascii_lowercase())
 }
 
-/// The labels' root, rebuilt for each board.
+/// A label's glyphs, and each one's offset from the label's middle, in cells, left to right.
+fn glyphs(text: &str) -> Vec<(usize, f32)> {
+    let found: Vec<usize> = text.chars().filter_map(glyph).collect();
+    let middle = (found.len() as f32 - 1.0) / 2.0;
+    found
+        .into_iter()
+        .enumerate()
+        .map(|(i, g)| (g, (i as f32 - middle) * ADVANCE))
+        .collect()
+}
+
+/// A glyph's square, flat on the table and reading from the player's side (its top away from
+/// them), its texture coordinates its cell of the atlas.
+fn glyph_mesh(index: usize, size: f32) -> Mesh {
+    let (col, row) = ((index % COLUMNS) as f32, (index / COLUMNS) as f32);
+    let mut mesh = Rectangle::new(size, size)
+        .mesh()
+        .build()
+        .rotated_by(Quat::from_rotation_x(-FRAC_PI_2));
+    if let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0) {
+        for uv in uvs.iter_mut() {
+            *uv = [(col + uv[0]) / COLUMNS as f32, (row + uv[1]) / ROWS as f32];
+        }
+    }
+    if let Err(e) = mesh.generate_tangents() {
+        warn!("an engraved glyph: {e}");
+    }
+    mesh
+}
+
+/// The engraved coordinates of the board being shown.
 #[derive(Component)]
 struct Labels {
     room_code: String,
@@ -123,7 +167,9 @@ struct Labels {
 fn sync_labels(
     mut commands: Commands,
     watch: Res<WatchStatus>,
-    fonts: Res<UiFonts>,
+    show: Res<ShowCoordinates>,
+    server: Res<AssetServer>,
+    (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     roots: Query<(Entity, &Labels)>,
 ) {
     let room = watch.table.as_ref().map(|t| t.room_code.as_str());
@@ -137,74 +183,81 @@ fn sync_labels(
         commands.entity(root).despawn();
     }
     let Some(table) = &watch.table else { return };
+    let labels = edge_labels(&table.info.board.positions);
+    if labels.is_empty() {
+        return;
+    }
     let layout = Layout::new(&table.info.board.positions);
+    // The cut: dark where it is deep, its walls catching the light.
+    let material = materials.add(StandardMaterial {
+        base_color_texture: Some(textures::load(
+            &server,
+            "textures/engraving/glyphs_albedo.png",
+        )),
+        normal_map_texture: Some(textures::load(
+            &server,
+            "textures/engraving/glyphs_normal.png",
+        )),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.8,
+        reflectance: 0.3,
+        ..default()
+    });
+    let size = layout.pitch * GLYPH_SIZE;
+    let mut shapes: Vec<Option<Handle<Mesh>>> = vec![None; GLYPHS.len()];
     let root = commands
         .spawn((
+            Name::new("Coordinates"),
             Labels {
                 room_code: table.room_code.clone(),
             },
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
+            Transform::default(),
+            visibility(show.0),
         ))
         .id();
-    for label in edge_labels(&table.info.board.positions) {
+    for label in labels {
         let Some(centre) = layout.centres.get(&label.position) else {
             continue;
         };
-        let at = *centre
-            + Vec3::new(label.out.x, 0.0, label.out.y) * layout.pitch * LABEL_OUT
-            + Vec3::Y * SURFACE;
-        commands.spawn((
-            Label { at },
-            Text::new(label.text),
-            fonts.semibold(14.0),
-            TextColor(Color::srgba(0.96, 0.94, 0.88, 0.92)),
-            TextShadow::default(),
-            TextLayout::justify(Justify::Center),
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(LABEL_BOX.x),
-                height: px(LABEL_BOX.y),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            Visibility::Hidden,
-            Pickable::IGNORE,
-            ChildOf(root),
-        ));
+        let out = if label.out.y != 0.0 {
+            OUT_ALONG
+        } else {
+            OUT_ACROSS
+        };
+        let middle = *centre + Vec3::new(label.out.x, 0.0, label.out.y) * layout.pitch * out;
+        for (index, offset) in glyphs(&label.text) {
+            let mesh = shapes[index]
+                .get_or_insert_with(|| meshes.add(glyph_mesh(index, size)))
+                .clone();
+            commands.spawn((
+                Name::new(format!("Coordinate {}", label.text)),
+                Mesh3d(mesh),
+                MeshMaterial3d(material.clone()),
+                // Just over the wood, which it darkens and shapes.
+                Transform::from_translation(
+                    middle + Vec3::new(offset * size, BOARD_HEIGHT + 0.0001, 0.0),
+                ),
+                ChildOf(root),
+            ));
+        }
     }
 }
 
-/// The box a label's text is centred in, in logical pixels.
-const LABEL_BOX: Vec2 = Vec2::new(32.0, 18.0);
+fn visibility(show: bool) -> Visibility {
+    if show {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
+}
 
-/// Keeps each label over its place on the table, or hidden when the coordinates are off or the
-/// place is out of sight.
-fn place_labels(
-    show: Res<ShowCoordinates>,
-    cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    mut labels: Query<(&Label, &mut Node, &mut Visibility)>,
-) {
-    let camera = cameras.iter().find(|(c, _)| c.is_active);
-    for (label, mut node, mut visibility) in &mut labels {
-        let seen = camera
-            .filter(|_| show.0)
-            .and_then(|(camera, at)| camera.world_to_viewport(at, label.at).ok());
-        match seen {
-            Some(p) => {
-                node.left = px(p.x - LABEL_BOX.x / 2.0);
-                node.top = px(p.y - LABEL_BOX.y / 2.0);
-                visibility.set_if_neq(Visibility::Inherited);
-            }
-            None => {
-                visibility.set_if_neq(Visibility::Hidden);
-            }
-        }
+/// Shows or hides the engraving as the coordinates are turned on or off.
+fn show_labels(show: Res<ShowCoordinates>, mut roots: Query<&mut Visibility, With<Labels>>) {
+    if !show.is_changed() {
+        return;
+    }
+    for mut v in &mut roots {
+        v.set_if_neq(visibility(show.0));
     }
 }
 
@@ -320,6 +373,45 @@ mod tests {
         assert!(edge_labels(&[]).is_empty());
         assert_eq!(split("aa10"), Some(("aa", "10")));
         assert_eq!(split("a1b"), None);
+    }
+
+    #[test]
+    fn a_label_is_its_glyphs_side_by_side_round_its_middle() {
+        assert_eq!(glyphs("a"), vec![(10, 0.0)]);
+        let two = glyphs("11");
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0].0, 1);
+        assert!((two[0].1 + two[1].1).abs() < 1e-6, "centred");
+        assert!(two[0].1 < two[1].1, "left to right");
+        assert_eq!(glyph('K'), glyph('k'));
+        assert!(
+            glyphs("?").is_empty(),
+            "a character with no glyph is left out"
+        );
+    }
+
+    #[test]
+    fn a_glyph_reads_from_the_players_side_on_its_cell_of_the_atlas() {
+        let mesh = glyph_mesh(GLYPHS.find('k').unwrap(), 1.0);
+        let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions");
+        };
+        let Some(VertexAttributeValues::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+        else {
+            panic!("texture coordinates");
+        };
+        assert!(p.iter().all(|v| v[1].abs() < 1e-6), "flat on the table");
+        // 'k' is the 21st glyph: row 2, column 4 of 8 by 5.
+        for (v, t) in p.iter().zip(uv) {
+            assert!(t[0] >= 4.0 / 8.0 - 1e-6 && t[0] <= 5.0 / 8.0 + 1e-6);
+            assert!(t[1] >= 2.0 / 5.0 - 1e-6 && t[1] <= 3.0 / 5.0 + 1e-6);
+            // The glyph's top (the texture's) is away from the player (-Z).
+            if v[2] < 0.0 {
+                assert!((t[1] - 2.0 / 5.0).abs() < 1e-6);
+            }
+        }
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
     }
 
     #[test]

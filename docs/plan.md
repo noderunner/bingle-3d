@@ -433,7 +433,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - The camera pans as well as orbiting (middle-drag, Shift with right-drag, W A S D). The board's
   coordinates can be shown along its edges (C, or a button): where every position is named as
   letters then a number, a column's letters at its two ends and a row's number at its two sides,
-  as text kept over the table; a board named otherwise shows none.
+  engraved in the board's margin (glyphs of the client's font, rendered by the pipeline into an
+  atlas of the cut's colour and its walls' slopes); a board named otherwise shows none.
+- To judge texture resolution, walnut is there twice: at 2K, as the other woods, and at 4K
+  ("Walnut 4K"; 6.6 MB more in the binary, four times the memory). One of them goes once the
+  maintainer has compared them on the GPU.
 - The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
   seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
   cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim

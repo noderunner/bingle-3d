@@ -65,12 +65,14 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
         });
 }
 
-/// A wood's name as a button says it.
+/// A wood's name as a button says it: `walnut_4k` is "Walnut 4K".
 fn label(wood: &str) -> String {
     let mut c = wood.chars();
-    c.next()
+    let name: String = c
+        .next()
         .map(|first| first.to_uppercase().chain(c).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    name.replace("_4k", " 4K")
 }
 
 fn choose(activate: On<Activate>, buttons: Query<&WoodButton>, mut wood: ResMut<BoardWood>) {
@@ -129,6 +131,7 @@ mod tests {
     #[test]
     fn a_wood_is_named_with_a_capital() {
         assert_eq!(label("walnut"), "Walnut");
+        assert_eq!(label("walnut_4k"), "Walnut 4K");
         assert_eq!(label(""), "");
     }
 }

@@ -216,6 +216,8 @@ A game's own rules and its players' words keep their terms.
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position
   names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.
+  Engraved in the board's margin, from the glyph atlas the pipeline renders (`engraving.py`;
+  its order and grid are in both places).
 - `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel

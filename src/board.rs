@@ -64,14 +64,15 @@ pub const PITCH: f32 = 0.028;
 pub const MAX_SIZE: f32 = 0.5;
 
 /// The slab's top, and the cells cut into it, standing a little proud of the lines between them.
-const BOARD_HEIGHT: f32 = 0.03;
+pub const BOARD_HEIGHT: f32 = 0.03;
 const CELL_HEIGHT: f32 = 0.0012;
 /// The top of the cells, where pieces stand.
 pub const SURFACE: f32 = BOARD_HEIGHT + CELL_HEIGHT;
 /// How much of a cell is left between the lines.
 const CELL_SCALE: f32 = 0.955;
-/// The wood round the cells, as a share of the pitch, and how round the slab's top edge is.
-const MARGIN: f32 = 0.7;
+/// The wood round the cells, as a share of the pitch (room for the coordinates), and how round
+/// the slab's top edge is.
+const MARGIN: f32 = 0.85;
 const RIM_RADIUS: f32 = 0.005;
 /// How dark the shading of a goal's cells is at the edge, and how far in it fades (in pitches):
 /// a third of the way across the cell.

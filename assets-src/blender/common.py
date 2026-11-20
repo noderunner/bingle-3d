@@ -101,6 +101,17 @@ def write_jpeg(path, pixels, quality):
     print(f"wrote {os.path.relpath(path, REPO)} ({os.path.getsize(path) // 1024} KiB)")
 
 
+def write_png(path, pixels):
+    """Writes values in 0..1 (already in the file's encoding) as an 8-bit PNG, RGB or RGBA."""
+    h, w, c = pixels.shape
+    data = np.clip(np.round(pixels * 255.0), 0, 255).astype(np.uint8)
+    buf = oiio.ImageBuf(oiio.ImageSpec(w, h, c, oiio.UINT8))
+    buf.set_pixels(oiio.ROI(0, w, 0, h, 0, 1, 0, c), np.ascontiguousarray(data))
+    if not buf.write(path):
+        raise SystemExit(f"{path}: {buf.geterror()}")
+    print(f"wrote {os.path.relpath(path, REPO)} ({os.path.getsize(path) // 1024} KiB)")
+
+
 # KTX2, as Bevy reads it: the format from the header, each mip level's data (every face of it, in
 # order +X, -X, +Y, -Y, +Z, -Z) compressed with Zstandard, and a basic data format descriptor.
 VK_R16G16B16A16_SFLOAT = 97

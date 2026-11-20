@@ -78,6 +78,30 @@ page = "https://polyhaven.com/a/black_walnut_veneer_01"
 by = "Jenelle van Heerden"
 
 [[source]]
+file = "black_walnut_veneer_01_diff_4k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/black_walnut_veneer_01/black_walnut_veneer_01_diff_4k.jpg"
+sha256 = "ea7daeff04a0cac8a72cc837c2ccde7a63c1982491040c32de993e56b5fb3af7"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "black_walnut_veneer_01_nor_gl_4k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/black_walnut_veneer_01/black_walnut_veneer_01_nor_gl_4k.jpg"
+sha256 = "589c09d626da7f143c943e18b8192b3fc291372ebd65a7d261192dc359144fb6"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "black_walnut_veneer_01_arm_4k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/black_walnut_veneer_01/black_walnut_veneer_01_arm_4k.jpg"
+sha256 = "542dfb05e218e9692ec55d6dfe343089b0e7b065d3a67971ea22628958d42ade"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
 file = "oak_veneer_01_diff_2k.jpg"
 url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/oak_veneer_01/oak_veneer_01_diff_2k.jpg"
 sha256 = "0718c2e1a209afe6138ccb41d70e1a18cd825d1e73db33ad7cf80806fa9ce5a4"

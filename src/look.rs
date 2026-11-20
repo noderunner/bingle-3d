@@ -22,7 +22,7 @@ pub struct Wood {
     pub finish: [f32; 3],
 }
 
-pub const WOODS: [Wood; 6] = [
+pub const WOODS: [Wood; 7] = [
     // Boards: golden teak, dark walnut, open-grained oak, warm cherry (`BOARD_WOODS`).
     Wood {
         name: "teak",
@@ -31,6 +31,12 @@ pub const WOODS: [Wood; 6] = [
     },
     Wood {
         name: "walnut",
+        metres: 1.0,
+        finish: [0.58, 0.44, 0.35],
+    },
+    // The same walnut at twice the resolution, to compare: four times the memory.
+    Wood {
+        name: "walnut_4k",
         metres: 1.0,
         finish: [0.58, 0.44, 0.35],
     },
@@ -59,7 +65,7 @@ pub const WOODS: [Wood; 6] = [
 ];
 
 /// The woods a board may be made of, the first by default.
-pub const BOARD_WOODS: [&str; 4] = ["teak", "walnut", "oak", "cherry"];
+pub const BOARD_WOODS: [&str; 5] = ["teak", "walnut", "walnut_4k", "oak", "cherry"];
 
 /// The wood a material names as `board`: whichever the board is made of.
 pub const BOARD: &str = "board";
