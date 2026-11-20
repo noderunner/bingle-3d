@@ -6,8 +6,8 @@ Everything else here is made by the asset pipeline (`assets-src/`). The scanned 
 starts from is CC0 (public domain), from [Poly Haven](https://polyhaven.com); credit is not
 required, and is given gladly:
 
-- **Teak Veneer**, **Black Walnut Veneer 01**, **Oak Veneer 01**, **Cherry Veneer**, **White Maple
-  Veneer**: Jenelle van Heerden
+- **Teak Veneer**, **Black Walnut Veneer 01**, **Cherry Veneer**, **White Maple Veneer**: Jenelle
+  van Heerden
 - **Scuba Suede** (the table's felt): colormass, Rico Cilliers
 - **Lythwood Room** (the room's light): Greg Zaal
 

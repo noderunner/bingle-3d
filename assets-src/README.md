@@ -39,7 +39,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | Step | Makes | From |
 |---|---|---|
 | `environment` | `environment/room_{diffuse,specular}.ktx2`: the room's light for Bevy's `EnvironmentMapLight` | an HDR panorama, graded for a table top (the floor below the horizon made the dim table the board stands on, colours at half saturation), then GGX-filtered per roughness level, and irradiance from spherical harmonics |
-| `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg`: four board woods (teak, walnut, oak, cherry), walnut again at 4K to compare, pale maple, and the table's felt | scanned wood and cloth, resized |
+| `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg`: three board woods (teak, walnut, cherry), pale maple, and the table's felt | scanned wood and cloth, resized |
 | `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg` | the stone's profile, turned; the colours drawn with numpy |
 | `engraving` | `textures/engraving/glyphs_{albedo,normal}.png`: the coordinates' glyphs as cuts in wood, an atlas of 8 × 5 cells | each glyph of Fira Sans set as a Blender text object and rendered from above in Cycles; the cut's colour (walls darkening to its bottom) and its walls' slopes worked out from that shape |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |

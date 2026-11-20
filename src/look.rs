@@ -22,8 +22,8 @@ pub struct Wood {
     pub finish: [f32; 3],
 }
 
-pub const WOODS: [Wood; 7] = [
-    // Boards: golden teak, dark walnut, open-grained oak, warm cherry (`BOARD_WOODS`).
+pub const WOODS: [Wood; 5] = [
+    // Boards: golden teak, dark walnut, warm cherry (`BOARD_WOODS`).
     Wood {
         name: "teak",
         metres: 1.0,
@@ -33,17 +33,6 @@ pub const WOODS: [Wood; 7] = [
         name: "walnut",
         metres: 1.0,
         finish: [0.58, 0.44, 0.35],
-    },
-    // The same walnut at twice the resolution, to compare: four times the memory.
-    Wood {
-        name: "walnut_4k",
-        metres: 1.0,
-        finish: [0.58, 0.44, 0.35],
-    },
-    Wood {
-        name: "oak",
-        metres: 1.83,
-        finish: [0.97, 0.88, 0.74],
     },
     Wood {
         name: "cherry",
@@ -65,7 +54,7 @@ pub const WOODS: [Wood; 7] = [
 ];
 
 /// The woods a board may be made of, the first by default.
-pub const BOARD_WOODS: [&str; 5] = ["teak", "walnut", "walnut_4k", "oak", "cherry"];
+pub const BOARD_WOODS: [&str; 3] = ["teak", "walnut", "cherry"];
 
 /// The wood a material names as `board`: whichever the board is made of.
 pub const BOARD: &str = "board";
@@ -397,12 +386,12 @@ mod tests {
         };
         assert!(ebony.problems().is_empty());
         assert!(ebony.is_board_wood());
-        let on_oak = ebony.on_board("oak");
-        assert_eq!(on_oak.wood.as_deref(), Some("oak"));
-        assert_eq!(on_oak.tint, ebony.tint);
-        assert!(!on_oak.is_board_wood());
+        let on_cherry = ebony.on_board("cherry");
+        assert_eq!(on_cherry.wood.as_deref(), Some("cherry"));
+        assert_eq!(on_cherry.tint, ebony.tint);
+        assert!(!on_cherry.is_board_wood());
         assert_eq!(
-            table().on_board("oak"),
+            table().on_board("cherry"),
             table(),
             "another wood stays itself"
         );

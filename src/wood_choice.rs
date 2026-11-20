@@ -65,14 +65,12 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
         });
 }
 
-/// A wood's name as a button says it: `walnut_4k` is "Walnut 4K".
+/// A wood's name as a button says it.
 fn label(wood: &str) -> String {
     let mut c = wood.chars();
-    let name: String = c
-        .next()
+    c.next()
         .map(|first| first.to_uppercase().chain(c).collect())
-        .unwrap_or_default();
-    name.replace("_4k", " 4K")
+        .unwrap_or_default()
 }
 
 fn choose(activate: On<Activate>, buttons: Query<&WoodButton>, mut wood: ResMut<BoardWood>) {
@@ -110,20 +108,20 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<BoardWood>()
             .add_systems(Update, colour_buttons);
-        let oak = app
+        let cherry = app
             .world_mut()
             .spawn((
-                WoodButton("oak"),
+                WoodButton("cherry"),
                 Hovered::default(),
                 BackgroundColor(colours::BUTTON),
                 observe(choose),
             ))
             .id();
-        app.world_mut().trigger(Activate { entity: oak });
+        app.world_mut().trigger(Activate { entity: cherry });
         app.update();
-        assert_eq!(app.world().resource::<BoardWood>().0, "oak");
+        assert_eq!(app.world().resource::<BoardWood>().0, "cherry");
         assert_eq!(
-            app.world().get::<BackgroundColor>(oak).unwrap().0,
+            app.world().get::<BackgroundColor>(cherry).unwrap().0,
             colours::CHOSEN
         );
     }
@@ -131,7 +129,6 @@ mod tests {
     #[test]
     fn a_wood_is_named_with_a_capital() {
         assert_eq!(label("walnut"), "Walnut");
-        assert_eq!(label("walnut_4k"), "Walnut 4K");
         assert_eq!(label(""), "");
     }
 }

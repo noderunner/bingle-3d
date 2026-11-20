@@ -123,7 +123,7 @@ Any game is drawn from what the server says about it: a hex board's cells as hex
 as squares, cut into one slab of wood on a felt table, lit by a real room's light; pieces as
 stones in their seat's colour, and the edges a seat must connect (its `goals`) with the board's
 rim stained and the cells along them shaded in its colour. The buttons at the bottom right
-choose the board's wood: teak, walnut, oak or cherry (and walnut at 4K, to compare).
+choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones. The client needs a Bingle whose API is 1.6 or newer.
 

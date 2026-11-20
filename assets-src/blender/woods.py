@@ -14,12 +14,9 @@ import common
 # name: (source prefix, source resolution, albedo size, normal size, arm size). The client knows
 # how much of a metre each covers (`look::WOODS`).
 WOODS = {
-    # Boards, to choose from: golden teak, dark walnut, open-grained oak, warm cherry.
+    # Boards, to choose from: golden teak, dark walnut, warm cherry.
     "teak": ("teak_veneer", "2k", 2048, 1024, 1024),
     "walnut": ("black_walnut_veneer_01", "2k", 2048, 1024, 1024),
-    # The same walnut at twice the resolution, to compare (four times the memory).
-    "walnut_4k": ("black_walnut_veneer_01", "4k", 4096, 4096, 2048),
-    "oak": ("oak_veneer_01", "2k", 2048, 1024, 1024),
     "cherry": ("cherry_veneer", "2k", 2048, 1024, 1024),
     # Pale wood, for the light side of a board.
     "maple": ("white_maple_veneer", "1k", 1024, 1024, 1024),

@@ -423,8 +423,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the orbit camera looks.
 - Every board is one slab of wood with a rounded rim, its cells cut into it and darkened lines
   between them; the grain is mapped by position, so it runs on across cells, with the grain's
-  relief three times finer than its colour. The player chooses the wood: teak, walnut, oak or
-  cherry, each with the colour of an oil finish (stopgap buttons at the bottom right). Every
+  relief three times finer than its colour. The player chooses the wood: teak, walnut or cherry,
+  each with the colour of an oil finish (stopgap buttons at the bottom right). Every
   piece is a lens-shaped stone modelled in Blender, each turned, sized and leaning a little
   differently. These are the generic defaults (`look.rs`), for every game.
 - Each goal's edge: the slab's rim along it is stained, and its cells shaded with a soft gradient
@@ -435,9 +435,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   letters then a number, a column's letters at its two ends and a row's number at its two sides,
   engraved in the board's margin (glyphs of the client's font, rendered by the pipeline into an
   atlas of the cut's colour and its walls' slopes); a board named otherwise shows none.
-- To judge texture resolution, walnut is there twice: at 2K, as the other woods, and at 4K
-  ("Walnut 4K"; 6.6 MB more in the binary, four times the memory). One of them goes once the
-  maintainer has compared them on the GPU.
+- Texture resolution, judged on the GPU: walnut at 4K against 2K was not worth four times the
+  memory, so the woods stay at 2K. Oak was tried and left out: its open grain caught too much
+  glare.
 - The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
   seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
   cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim
