@@ -38,6 +38,7 @@ use std::collections::BTreeMap;
 
 use crate::call::DirectCalling;
 use crate::friends::{self, Friends};
+use crate::login::{LoginScreen, Screen};
 use crate::new_game::NewGame;
 use crate::sign_in::Signing;
 use crate::voice_chat::VoiceChat;
@@ -48,6 +49,20 @@ use tls::Fingerprint;
 pub struct NetPlugin {
     /// A server for this run, in place of the configured one.
     pub server: Option<String>,
+    /// Skip the login screen this run (the command line asked for something on the server),
+    /// or show it whatever the config says (`--sign-in`).
+    pub start: Start,
+}
+
+/// Where a run starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start {
+    /// As the config says: the main screen if it logs in by itself, else the login screen.
+    AsConfigured,
+    /// On the main screen, with what is kept.
+    StraightIn,
+    /// On the login screen.
+    Login,
 }
 
 impl Plugin for NetPlugin {
@@ -57,6 +72,7 @@ impl Plugin for NetPlugin {
         for notice in &notices {
             warn!("{notice}");
         }
+        let auto_login = store.config.auto_login;
         let session = Session::new(self.server.as_deref(), store);
         let status = ServerStatus {
             server: session.server(),
@@ -64,9 +80,23 @@ impl Plugin for NetPlugin {
             notices,
             retry_in: None,
         };
+        let mut login = LoginScreen::new(&session.server(), auto_login);
         let net = Net::spawn(session);
-        net.send(Request::Connect);
+        let straight_in = match self.start {
+            Start::AsConfigured => auto_login,
+            Start::StraightIn => true,
+            Start::Login => false,
+        };
+        let screen = if straight_in {
+            net.send(Request::Connect);
+            Screen::Main
+        } else {
+            login.probe(&net, true);
+            Screen::Login
+        };
         app.insert_resource(net)
+            .insert_resource(screen)
+            .insert_resource(login)
             .insert_resource(status)
             .init_resource::<WatchStatus>()
             .init_resource::<GameList>()
@@ -78,7 +108,10 @@ impl Plugin for NetPlugin {
             .add_systems(PreUpdate, poll_network)
             .add_systems(
                 Update,
-                (retry_later, refresh_now, rewatch_later, refresh_games),
+                (
+                    (retry_later, refresh_now, refresh_games).run_if(on_main),
+                    rewatch_later,
+                ),
             );
     }
 }
@@ -131,6 +164,14 @@ pub enum Request {
     SecondFactor { pending: String, code: Code },
     /// End the account's session.
     SignOut,
+    /// The login screen's server: use this address from now on, and say whether it is there,
+    /// can be used, and who this client would be there. `asked` comes back with the answer.
+    Probe { address: String, asked: u64 },
+    /// Go on as a guest: any account's session ended, and this guest key taken if one is given
+    /// (else the one kept, or a new one); then connect.
+    ContinueAsGuest { key: Option<String> },
+    /// Remember the server used (if `server`) and whether to log in by itself next time.
+    Remember { server: bool, auto_login: bool },
     /// Read the account's friends list.
     Friends,
     /// Change the friends list, or answer an invitation.
@@ -253,6 +294,10 @@ pub enum Target {
 enum Reply {
     Connected(Snapshot),
     Failed(Problem),
+    Probed {
+        asked: u64,
+        result: Result<session::Probe, Problem>,
+    },
     Opened {
         watch: u64,
         opened: Box<Opened>,
@@ -705,6 +750,29 @@ fn handle(
 ) -> Option<Reply> {
     match request {
         Request::Connect => Some(connected(session.connect())),
+        Request::Probe { address, asked } => {
+            session.use_server(&address);
+            Some(Reply::Probed {
+                asked,
+                result: session.probe(),
+            })
+        }
+        Request::ContinueAsGuest { key } => {
+            // A guest: no account's session is kept (nor left on the server).
+            if let Err(problem) = session.sign_out() {
+                warn!("signing out: {}", problem.message());
+            }
+            if let Some(key) = key
+                && let Err(problem) = session.adopt_guest_key(&key)
+            {
+                return Some(Reply::Failed(problem));
+            }
+            Some(connected(session.connect()))
+        }
+        Request::Remember { server, auto_login } => {
+            session.remember(server, auto_login);
+            None
+        }
         Request::Trust(fp) => Some(connected(session.trust(fp))),
         Request::Watch { target, watch } => {
             if let Some(old) = watching.take() {
@@ -931,7 +999,9 @@ fn poll_network(
     mut friends: ResMut<Friends>,
     mut call: ResMut<DirectCalling>,
     mut voice: ResMut<VoiceChat>,
+    (screen, mut login): (Option<Res<Screen>>, Option<ResMut<LoginScreen>>),
 ) {
+    let on_login = screen.as_deref() == Some(&Screen::Login);
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         match replies.try_recv() {
@@ -1098,6 +1168,10 @@ fn poll_network(
                     // Who the client is has changed, and with it what it may see: read it all
                     // again, as that account.
                     reconnect(&net, &mut status);
+                    // Logged in from the login screen: in once connected.
+                    if let Some(login) = login.as_mut() {
+                        login.entering = on_login;
+                    }
                 }
             }
             Ok(Reply::SignedOut(result)) => {
@@ -1105,7 +1179,10 @@ fn poll_network(
                     warn!("signing out: {}", problem.message());
                 }
                 signing.signed_out(result);
-                reconnect(&net, &mut status);
+                // Logged out to the login screen: nothing to read until the player goes in.
+                if !on_login {
+                    reconnect(&net, &mut status);
+                }
             }
             Ok(Reply::Friends(result)) => {
                 if let Err(problem) = &result {
@@ -1176,6 +1253,11 @@ fn poll_network(
                     status.connection = Connection::Ready(snapshot);
                 }
             }
+            Ok(Reply::Probed { asked, result }) => {
+                if let Some(login) = login.as_mut() {
+                    login.probed(asked, result);
+                }
+            }
             Ok(Reply::Failed(problem)) => {
                 warn!("{}", problem.message());
                 status.retry_in = problem
@@ -1195,6 +1277,12 @@ fn poll_network(
             }
         }
     }
+}
+
+/// Whether the main screen shows (rather than the login screen), for what only it does: trying
+/// a lost server again, reading the list of games.
+fn on_main(screen: Option<Res<Screen>>) -> bool {
+    screen.as_deref() != Some(&Screen::Login)
 }
 
 fn retry_later(time: Res<Time>, net: Res<Net>, mut status: ResMut<ServerStatus>) {

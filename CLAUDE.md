@@ -168,8 +168,8 @@ A game's own rules and its players' words keep their terms.
   `src/families.rs`: the games to start grouped by family, the names of a family and its
   members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
   beside a watched game.
-- `src/escape_menu.rs`: the menu Esc opens over a game (resume, back to the main screen, quit;
-  settings, game options and profile greyed). While it is open, play's keys and the camera
+- `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
+  main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`).
 - `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
   player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
@@ -181,7 +181,14 @@ A game's own rules and its players' words keep their terms.
   messages (kept per friend address, unread counted here: the server keeps no record of it). The list is filled by
   the network thread, which also keeps the account's own socket (`/ws-dm`) open and says it is
   here every minute (`AccountLink` in `net/mod.rs`).
-- `src/sign_in.rs`: signing in and out. `Form` has no Bevy in it; the password has a masked
+- `src/login.rs`: the login screen at start (`Screen::Login`; `Screen::Main` is the rest): the
+  server's address, checked by `Request::Probe` with a light (green, yellow for an API that does
+  not go together, red), the sign-in's fields, *Continue as guest* with an optional guest key
+  (checked with the server before it is kept), and auto-login (`config.toml`'s `auto_login`:
+  what is kept is used, never a password). What only stands beside the main screen is marked
+  `MainOnly`. The game list's reading and a lost server's retry run only on the main screen.
+- `src/sign_in.rs`: signing in and out. `Form` has no Bevy in it, and its fields are drawn on
+  the login screen; the password has a masked
   field of its own, since Bevy's `TextInput` cannot hide what is typed. While signed in,
   `session.rs` sends the session's token wherever it would send the guest key. **Never log a
   password or a token.**

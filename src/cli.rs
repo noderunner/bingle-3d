@@ -16,7 +16,7 @@ Options:
   --join ROOM        take an open seat in the game in this room (or watch it, if it
                      has none)
   --new-game GAME    open the form that sets up a new game of GAME
-  --sign-in          open the form that signs in to an account
+  --sign-in          start on the login screen, even with auto-login on
   --friends          open the friends panel (signed in)
   --talk HANDLE      open the conversation with this friend (signed in)
   --call HANDLE      ring this friend once they are online, or answer them if they
@@ -49,7 +49,7 @@ pub struct Options {
     pub watch: Option<Watch>,
     /// The game to set up a new game of, once connected.
     pub new_game: Option<String>,
-    /// Open the sign-in form at start.
+    /// Start on the login screen, whatever the config says.
     pub sign_in: bool,
     /// Open the friends panel at start.
     pub friends: bool,
@@ -66,6 +66,25 @@ pub struct Options {
     /// Try the microphone and the speaker, then quit.
     pub voice_check: bool,
     pub help: bool,
+}
+
+impl Options {
+    /// Where the run starts: an option that does something on the server goes straight in,
+    /// with what is kept; `--sign-in` shows the login screen; else as the config says.
+    pub fn start(&self) -> crate::net::Start {
+        if self.sign_in {
+            crate::net::Start::Login
+        } else if self.watch.is_some()
+            || self.new_game.is_some()
+            || self.friends
+            || self.talk.is_some()
+            || self.call.is_some()
+        {
+            crate::net::Start::StraightIn
+        } else {
+            crate::net::Start::AsConfigured
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

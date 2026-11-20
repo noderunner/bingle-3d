@@ -148,6 +148,18 @@ impl Problem {
     }
 }
 
+/// What the login screen learns of a server before logging in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Probe {
+    pub server: String,
+    pub version: String,
+    pub api_version: String,
+    /// The account this client's kept session belongs to there, if it is still good.
+    pub account: Option<Account>,
+    /// Whether this client keeps a guest key for it.
+    pub guest_key: bool,
+}
+
 pub struct Session {
     url: Result<ServerUrl, String>,
     store: Store,
@@ -168,7 +180,31 @@ impl Session {
     /// `server` overrides the configured server for this run.
     pub fn new(server: Option<&str>, store: Store) -> Self {
         let address = server.unwrap_or(store.server()).to_string();
-        let url = ServerUrl::parse(&address)
+        let (url, trust, tls, agent) = Self::reach(&address, &store);
+        Session {
+            url,
+            store,
+            trust,
+            tls,
+            agent,
+            infos: HashMap::new(),
+            bots: None,
+            account: None,
+            session_ended: false,
+        }
+    }
+
+    /// The address read, and what reaches it: the certificates trusted there, and an agent.
+    fn reach(
+        address: &str,
+        store: &Store,
+    ) -> (
+        Result<ServerUrl, String>,
+        Arc<Trust>,
+        Arc<ClientConfig>,
+        Agent,
+    ) {
+        let url = ServerUrl::parse(address)
             .map_err(|e| format!("The server address \"{address}\" cannot be used: {e}."));
         let pins = match &url {
             Ok(url) => store
@@ -180,16 +216,75 @@ impl Session {
         let trust = Trust::new(pins);
         let tls = super::tls::client_config(trust.clone());
         let agent = agent(tls.clone());
-        Session {
-            url,
-            store,
-            trust,
-            tls,
-            agent,
-            infos: HashMap::new(),
-            bots: None,
-            account: None,
-            session_ended: false,
+        (url, trust, tls, agent)
+    }
+
+    /// From now on, talk to the server at this address (the login screen's). What was read from
+    /// another server is forgotten.
+    pub fn use_server(&mut self, address: &str) {
+        let (url, trust, tls, agent) = Self::reach(address.trim(), &self.store);
+        if url.is_ok() && url == self.url {
+            return;
+        }
+        self.url = url;
+        self.trust = trust;
+        self.tls = tls;
+        self.agent = agent;
+        self.infos.clear();
+        self.bots = None;
+        self.account = None;
+        self.session_ended = false;
+    }
+
+    /// Whether the server is there and this client can use its API, and who this client would be
+    /// there: the account its kept session belongs to, or a guest (with a key kept, or not).
+    pub fn probe(&mut self) -> Result<Probe, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let (index, api_version) = self.index(&url)?;
+        self.check_account(&url)?;
+        Ok(Probe {
+            server: url.to_string(),
+            version: index.version,
+            api_version,
+            account: self.account.clone(),
+            guest_key: self.store.guest_key(&url.origin()).is_some(),
+        })
+    }
+
+    /// Takes a guest key the player typed in, once the server says it knows it: from then on
+    /// this client is that guest here. One it does not know is refused, and the key kept before
+    /// stays.
+    pub fn adopt_guest_key(&mut self, key: &str) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let key = key.trim();
+        match self.call::<OpenGames>(&url, "GET", "/api/games", Some(key), None) {
+            Ok(_) => {}
+            Err(Problem::Refused { status: 401, .. }) => {
+                return Err(Problem::Refused {
+                    status: 401,
+                    message: "the server does not know that guest key".into(),
+                });
+            }
+            Err(other) => return Err(other),
+        }
+        if let Err(e) = self
+            .store
+            .set_guest_key(&url.origin(), Some(key.to_string()))
+        {
+            bevy::log::warn!("could not save the guest key: {e}");
+        }
+        Ok(())
+    }
+
+    /// Remembers the server now used (when `server` is true) and whether to log in by itself
+    /// at the next start.
+    pub fn remember(&mut self, server: bool, auto_login: bool) {
+        let address = match (&self.url, server) {
+            (Ok(url), true) => Some(url.to_string()),
+            _ => None,
+        };
+        if let Err(e) = self.store.remember(address.as_deref(), auto_login) {
+            bevy::log::warn!("could not save the config: {e}");
         }
     }
 
@@ -208,7 +303,24 @@ impl Session {
 
     pub fn connect(&mut self) -> Result<Snapshot, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        let index: Index = match self.get(&url, "/api", None) {
+        let (index, api_version) = self.index(&url)?;
+        self.check_account(&url)?;
+        let defs: Vec<GameDef> = self.get_as_me(&url, "/api/game-defs")?;
+        let games: OpenGames = self.get_as_me(&url, "/api/games")?;
+        Ok(Snapshot {
+            server: url.to_string(),
+            version: index.version,
+            api_version,
+            defs,
+            games: games.games,
+            account: self.account.clone(),
+            session_ended: std::mem::take(&mut self.session_ended),
+        })
+    }
+
+    /// The server's index, and its API version once this client is known to be able to use it.
+    fn index(&mut self, url: &ServerUrl) -> Result<(Index, String), Problem> {
+        let index: Index = match self.get(url, "/api", None) {
             Err(Problem::Refused { status: 404, .. }) => {
                 return Err(Problem::NotBingle(format!(
                     "{url} answered, but it has no Bingle API (GET /api was not found)."
@@ -241,18 +353,7 @@ impl Session {
                 )));
             }
         };
-        self.check_account(&url)?;
-        let defs: Vec<GameDef> = self.get_as_me(&url, "/api/game-defs")?;
-        let games: OpenGames = self.get_as_me(&url, "/api/games")?;
-        Ok(Snapshot {
-            server: url.to_string(),
-            version: index.version,
-            api_version,
-            defs,
-            games: games.games,
-            account: self.account.clone(),
-            session_ended: std::mem::take(&mut self.session_ended),
-        })
+        Ok((index, api_version))
     }
 
     /// Who the session's token is, if this client holds one for this server.
@@ -1348,6 +1449,53 @@ pub(crate) mod tests {
 
     pub(crate) fn session(addr: &str) -> Session {
         Session::new(Some(addr), Store::load(None))
+    }
+
+    #[test]
+    fn a_probe_switches_server_and_says_what_it_is_without_making_a_guest() {
+        let (good, seen) = serve(bingle(INDEX, &["bgg_new"]));
+        let mut s = session("http://127.0.0.1:1");
+        assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
+        s.use_server(&good);
+        let probe = s.probe().expect("there");
+        assert_eq!(probe.api_version, "1.6.0");
+        assert_eq!(probe.account, None);
+        assert!(!probe.guest_key);
+        let paths: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            ["/api"],
+            "only the index: no guest key is made to look"
+        );
+        let (old, _) = serve(bingle(r#"{"version":"9.0.0","api_version":"2.0.0"}"#, &[]));
+        s.use_server(&old);
+        assert!(matches!(s.probe(), Err(Problem::Incompatible(_))));
+    }
+
+    #[test]
+    fn a_guest_key_typed_is_kept_only_if_the_server_knows_it() {
+        let (addr, _) = serve(bingle(INDEX, &["bgg_old", "bgg_mine"]));
+        let mut s = session(&addr);
+        let origin = ServerUrl::parse(&addr).unwrap().origin();
+        s.store
+            .set_guest_key(&origin, Some("bgg_old".into()))
+            .unwrap();
+        let refused = s.adopt_guest_key("bgg_typo").unwrap_err();
+        assert!(matches!(refused, Problem::Refused { status: 401, .. }));
+        assert_eq!(
+            s.store.guest_key(&origin),
+            Some("bgg_old"),
+            "the kept one stays"
+        );
+        s.adopt_guest_key(" bgg_mine ").expect("known");
+        assert_eq!(s.store.guest_key(&origin), Some("bgg_mine"));
+        s.connect().expect("connects as that guest");
+        assert_eq!(s.store.guest_key(&origin), Some("bgg_mine"));
     }
 
     #[test]

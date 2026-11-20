@@ -29,6 +29,7 @@ fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     let font = fonts.regular(15.0);
     let colour = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7));
     commands.spawn((
+        crate::login::MainOnly,
         Text::new(HINT),
         font.clone(),
         colour,

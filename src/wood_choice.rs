@@ -26,14 +26,17 @@ struct WoodButton(&'static str);
 
 fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            right: px(12),
-            bottom: px(34),
-            column_gap: px(6),
-            align_items: AlignItems::Center,
-            ..default()
-        })
+        .spawn((
+            crate::login::MainOnly,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(12),
+                bottom: px(34),
+                column_gap: px(6),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        ))
         .with_children(|row| {
             row.spawn((
                 Text::new("Board"),

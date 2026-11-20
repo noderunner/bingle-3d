@@ -75,13 +75,16 @@ impl Settings<'_> {
 
 fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            right: px(12),
-            bottom: px(66),
-            column_gap: px(6),
-            ..default()
-        })
+        .spawn((
+            crate::login::MainOnly,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(12),
+                bottom: px(66),
+                column_gap: px(6),
+                ..default()
+            },
+        ))
         .with_children(|row| {
             for toggle in Toggle::ALL {
                 row.spawn((

@@ -488,6 +488,32 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
   see-through, than the same colours on the web page. The new parts use opaque colours.
 
+### The login screen
+
+- The client starts on a login screen (`login.rs`) rather than connecting at once: the server's
+  address, the sign-in's username and password (and a second factor's code), *Log in*,
+  *Continue as guest*, an optional guest key, and *Auto-login*.
+- The address is checked when the player leaves its field, presses Enter in it, and at start:
+  the network thread switches its session to it (`use_server`) and reads `GET /api`, with the
+  same version check as connecting, and who the kept session is there (`Request::Probe`). The
+  light beside it: green (usable), yellow (a Bingle whose API and the client's do not go
+  together: either is out of date), red (nothing usable: not there, not Bingle, a bad address,
+  or a certificate not trusted, which can be trusted there by its fingerprint). No guest key is
+  made to look.
+- *Continue as guest* ends any account's session kept for that server, then takes the guest
+  key typed once the server says it knows it (a key it does not know is refused, and the kept
+  one stays), else the kept one, else a new one. A kept session still good on the server is
+  offered as *Continue as <handle>*.
+- *Auto-login* (`auto_login` in `config.toml`) goes straight to the main screen at the next
+  start, with the session token or guest key kept in `keys.toml`. **No password is ever kept**:
+  an account's session is what lasts. Options that act on the server at start (`--watch`,
+  `--play-bot`, `--new-game`, `--friends`, …) go straight in too; `--sign-in` shows the login
+  screen whatever the config says. An address the player typed is remembered once in.
+- Esc's menu is now also on the main screen (*Main Menu* greyed there), with *Logout*: out of
+  any game, the account's session ended, auto-login turned off, back to the login screen with
+  the username filled in. *Sign in* on the main screen goes to the login screen too; its old
+  form on the list panel is gone.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;

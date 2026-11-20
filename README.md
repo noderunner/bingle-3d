@@ -57,12 +57,22 @@ Right-drag (or the arrow keys) orbits the camera, middle-drag or Shift with righ
 S, D) pans it across the table, and the wheel zooms (or scrolls the panel, over it). C (or the
 *Coordinates* button) shows the board's coordinates, engraved along its edges. F5 connects again.
 
+The client starts on a login screen: the server's address, with a light beside it once it has
+been checked (when you leave the field, or press Enter): green when the client can use the
+server, yellow when a Bingle answered but its version and the client's do not go together (one
+of them needs updating), red when nothing usable answered. Then *Log in* with a username and
+password, or *Continue as guest*, with a guest key you were given before (optional: left empty,
+the one kept for that server is used, or the server gives a new one). *Auto-login* skips this
+screen at the next start, with the session or guest key kept (never a password); *Logout* in the
+escape menu (Esc) comes back to it and turns auto-login off.
+
 Once connected, the main screen is laid out as Bingle's web page: tabs (only *Games* works yet;
 *Puzzles*, *Ratings*, *Tournaments* and *Global Chat* are shown greyed), and in *Games* a choice
 of *New* (a card for each game, with its picture, marks such as *Beta* or *Prototype*, and how
 many play it; click one to set it up) or *Active* (the games being played or waiting for
-players). In a game, Esc opens a menu: *Resume*, *Main Menu* (back to the main screen; the game
-goes on), *Quit* (to the desktop), and *Settings*, *Game Options* and *Profile*, not built yet.
+players). Esc opens a menu, on the main screen or in a game: *Resume*, *Main Menu* (back to the
+main screen from a game; the game goes on), *Logout*, *Quit* (to the desktop), and *Settings*,
+*Game Options* and *Profile*, not built yet.
 
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
 strongest bot the others. When it is your move, a see-through stone follows the pointer where a
@@ -95,7 +105,7 @@ cargo run -- --play-bot hex-7              # a new game of Hex (7×7) against th
 cargo run -- --host hex-7                  # a new game of Hex (7×7), waiting for a person
 cargo run -- --join 7ZKMXP                 # a free seat in this room's game (or watch it)
 cargo run -- --new-game hex-7              # the form that sets up a new game of Hex (7×7)
-cargo run -- --sign-in                     # the form that signs in to an account
+cargo run -- --sign-in                     # the login screen, even with auto-login on
 cargo run -- --friends                     # the friends panel open (signed in)
 cargo run -- --talk ana                    # the conversation with the friend @ana
 ```
@@ -168,8 +178,8 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
 - **A guest key** is made the first time the client meets a server and kept in `keys.toml`,
   beside `config.toml` and readable only by you, so the server knows it is the same guest next
   time. Delete the file to start again as a new guest.
-- **Signing in** to an account (*Sign in*, under the server's status) keeps the session in
-  `keys.toml` too, so the client stays signed in between runs until *Sign out*. Your games as a
+- **Logging in** to an account (on the login screen, or *Sign in* under the server's status) keeps the session in
+  `keys.toml` too, so the client stays signed in between runs until *Sign out* or *Logout*. Your games as a
   guest on that server become the account's. Accounts are made on the server's web page.
   Signed in, the *Friends* panel on the right lists your friends and who of them is online,
   requests, and invitations to games, and *Write* opens a conversation with a friend; your

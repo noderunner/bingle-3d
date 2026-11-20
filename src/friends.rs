@@ -493,6 +493,7 @@ struct FriendsPanel;
 fn spawn_panel(mut commands: Commands) {
     commands.spawn((
         FriendsPanel,
+        crate::login::MainOnly,
         Node {
             display: Display::None,
             position_type: PositionType::Absolute,
