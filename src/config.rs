@@ -1,9 +1,9 @@
 //! What the client remembers between runs, in the platform's config directory: `config.toml`
 //! (which server, and the certificates the player has trusted), and `keys.toml` beside it (the
-//! guest key each server gave this client).
+//! guest key each server gave this client, and the session of the account signed in there).
 //!
 //! The keys are kept apart so that `config.toml` can be read, edited and shared without giving a
-//! guest away. On Linux the keys file is readable by its owner only.
+//! guest or an account away. On Linux the keys file is readable by its owner only.
 //!
 //! A file that cannot be read is never overwritten: the client says so and runs on defaults, so a
 //! typo in a hand-edited config does not lose it.
@@ -49,6 +49,9 @@ pub struct TrustedCertificate {
 pub struct Keys {
     /// A guest key per server origin.
     pub guest: BTreeMap<String, String>,
+    /// The session token (`bgs_…`) of the account signed in, per server origin.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub session: BTreeMap<String, String>,
 }
 
 /// The two files, read at start-up and written when something worth remembering changes.
@@ -168,6 +171,19 @@ impl Store {
         self.save_keys()
     }
 
+    /// The token of the account signed in to this server, if one is.
+    pub fn session_token(&self, origin: &str) -> Option<&str> {
+        self.keys.session.get(origin).map(String::as_str)
+    }
+
+    pub fn set_session_token(&mut self, origin: &str, token: Option<String>) -> io::Result<()> {
+        match token {
+            Some(t) => self.keys.session.insert(origin.to_string(), t),
+            None => self.keys.session.remove(origin),
+        };
+        self.save_keys()
+    }
+
     fn save_config(&self) -> io::Result<()> {
         if !self.config_writable {
             return Ok(());
@@ -183,7 +199,8 @@ impl Store {
         }
         let Some(dir) = &self.dir else { return Ok(()) };
         let text = format!(
-            "# Guest keys this client was given, one per server. Keep this file to yourself.\n{}",
+            "# Guest keys and sign-ins this client was given, one per server. Keep this file to \
+             yourself.\n{}",
             toml::to_string(&self.keys).map_err(io::Error::other)?
         );
         write_atomically(&dir.join("keys.toml"), &text, true)
@@ -275,9 +292,14 @@ mod tests {
             .unwrap();
         store.trust("https://box:8443", "AB:CD").unwrap();
         store.trust("https://box:8443", "AB:CD").unwrap();
+        store
+            .set_session_token("https://box:8443", Some("bgs_xyz".into()))
+            .unwrap();
 
         let again = Store::load(Some(dir.clone()));
         assert_eq!(again.guest_key("http://127.0.0.1:8080"), Some("bgg_abc"));
+        assert_eq!(again.session_token("https://box:8443"), Some("bgs_xyz"));
+        assert_eq!(again.session_token("http://127.0.0.1:8080"), None);
         assert_eq!(
             again.trusted("https://box:8443").collect::<Vec<_>>(),
             ["AB:CD"]
@@ -285,7 +307,10 @@ mod tests {
         assert_eq!(again.trusted("https://other:8443").count(), 0);
 
         let config = fs::read_to_string(dir.join("config.toml")).unwrap();
-        assert!(!config.contains("bgg_"), "no key in config.toml: {config}");
+        assert!(
+            !config.contains("bgg_") && !config.contains("bgs_"),
+            "no key in config.toml: {config}"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

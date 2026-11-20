@@ -86,11 +86,12 @@ cargo run -- --play-bot hex-7              # a new game of Hex (7×7) against th
 cargo run -- --host hex-7                  # a new game of Hex (7×7), waiting for a person
 cargo run -- --join 7ZKMXP                 # a free seat in this room's game (or watch it)
 cargo run -- --new-game hex-7              # the form that sets up a new game of Hex (7×7)
+cargo run -- --sign-in                     # the form that signs in to an account
 ```
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
 as squares, pieces as stones in their seat's colour, and the edges a seat must connect (its
-`goals`) as strips in its colour. The client needs a Bingle whose API is 1.4 or newer.
+`goals`) as strips in its colour. The client needs a Bingle whose API is 1.5 or newer.
 
 ## Connecting to a server
 
@@ -120,6 +121,9 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
 - **A guest key** is made the first time the client meets a server and kept in `keys.toml`,
   beside `config.toml` and readable only by you, so the server knows it is the same guest next
   time. Delete the file to start again as a new guest.
+- **Signing in** to an account (*Sign in*, under the server's status) keeps the session in
+  `keys.toml` too, so the client stays signed in between runs until *Sign out*. Your games as a
+  guest on that server become the account's. Accounts are made on the server's web page.
 - `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
 
 **Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)

@@ -21,6 +21,7 @@ mod new_game;
 mod play;
 mod run_limit;
 mod scene;
+mod sign_in;
 mod table;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
@@ -66,7 +67,11 @@ fn main() -> AppExit {
         },
         browser::BrowserPlugin {
             new_game: opts.new_game.clone(),
+            sign_in: opts.sign_in,
         },
+        sign_in::SignInPlugin,
+        // Tab moves between the fields of a form.
+        bevy::input_focus::tab_navigation::TabNavigationPlugin,
         board::BoardPlugin,
         play::PlayPlugin,
         game_panel::GamePanelPlugin {

@@ -158,7 +158,8 @@ A game's own rules and its players' words keep their terms.
 - `src/table.rs`: the watched game as the server last reported it. Every event carries the whole
   position, so it replaces what is known; `move_seq` decides what is stale and what is a gap
   (reload).
-- `src/config.rs`: `config.toml` and `keys.toml`. Keys never go in `config.toml`, and a file that
+- `src/config.rs`: `config.toml` and `keys.toml` (guest keys, and the session token of an account
+  signed in). Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
 - `src/browser.rs`: the panel listing the server's games; it becomes the game browser. Its `Action`
   is what every panel's buttons do. `src/families.rs`: the games to start grouped by family, and
@@ -169,6 +170,10 @@ A game's own rules and its players' words keep their terms.
 - `src/lobby.rs`: a game not yet started that this client has a seat in, on the game's panel:
   sit, put a bot in a seat, remove, leave, start. `offers` has no Bevy in it; the server decides
   who may do what.
+- `src/sign_in.rs`: signing in and out. `Form` has no Bevy in it; the password has a masked
+  field of its own, since Bevy's `TextInput` cannot hide what is typed. While signed in,
+  `session.rs` sends the session's token wherever it would send the guest key. **Never log a
+  password or a token.**
 - `src/clock.rs`: time in a timed game: the server's RFC 3339 timestamps, the time each seat has
   left (counted down between the server's reports) and how it reads.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is

@@ -21,14 +21,20 @@ use crate::net::{
 };
 use crate::new_game::{self, Fill, Form, NewGame};
 use crate::play;
+use crate::sign_in::{self, Signing};
 
 pub struct BrowserPlugin {
     /// A game to open the new game form for, once connected (`--new-game`).
     pub new_game: Option<String>,
+    /// Open the sign-in form at start (`--sign-in`).
+    pub sign_in: bool,
 }
 
 impl Plugin for BrowserPlugin {
     fn build(&self, app: &mut App) {
+        if self.sign_in {
+            app.add_systems(Startup, |mut signing: ResMut<Signing>| signing.open());
+        }
         app.insert_resource(NewGameOnStart(self.new_game.clone()))
             .init_resource::<ChosenMembers>()
             .add_systems(Startup, spawn_panel)
@@ -36,12 +42,15 @@ impl Plugin for BrowserPlugin {
                 Update,
                 (
                     new_game_on_start.run_if(resource_changed::<ServerStatus>),
-                    rebuild_status.run_if(resource_changed::<ServerStatus>),
+                    rebuild_status.run_if(
+                        resource_changed::<ServerStatus>.or_eager(resource_changed::<Signing>),
+                    ),
                     rebuild_list.run_if(
                         resource_changed::<ServerStatus>
                             .or_eager(resource_changed::<GameList>)
                             .or_eager(resource_changed::<NewGame>)
-                            .or_eager(resource_changed::<ChosenMembers>),
+                            .or_eager(resource_changed::<ChosenMembers>)
+                            .or_eager(resource_changed::<Signing>),
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
@@ -66,6 +75,10 @@ pub(crate) mod colours {
     /// A choice that is made, among others that could be.
     pub const CHOSEN: Color = Color::srgb(0.27, 0.52, 0.42);
     pub const CHOSEN_HOVER: Color = Color::srgb(0.33, 0.60, 0.49);
+    /// A field to type in, its edge, and its edge while it has the keyboard.
+    pub const FIELD: Color = Color::srgba(0.0, 0.0, 0.0, 0.35);
+    pub const FIELD_EDGE: Color = Color::srgb(0.30, 0.33, 0.38);
+    pub const FIELD_FOCUS: Color = Color::srgb(0.45, 0.62, 0.90);
 }
 
 /// The member of each family chosen on the list (a size, a layout), by the family's id. A family
@@ -149,6 +162,16 @@ pub(crate) enum Action {
     AskAgain,
     /// Stop watching and go back to the list.
     Back,
+    /// Open the sign-in form.
+    OpenSignIn,
+    /// Send the sign-in form's step.
+    SubmitSignIn,
+    /// Close the sign-in form.
+    CancelSignIn,
+    /// On the sign-in form: ask for a recovery code (or the app's code again).
+    UseRecoveryCode(bool),
+    /// End the account's session.
+    SignOut,
 }
 
 fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
@@ -202,6 +225,7 @@ fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
 fn rebuild_status(
     mut commands: Commands,
     status: Res<ServerStatus>,
+    signing: Res<Signing>,
     fonts: Res<UiFonts>,
     status_area: Single<Entity, With<StatusArea>>,
 ) {
@@ -224,8 +248,16 @@ fn rebuild_status(
                             snap.version, snap.api_version
                         ),
                     ));
+                    sign_in::status(area, f, snap.account.as_ref(), snap.session_ended, &signing);
                 }
-                Connection::Failed(problem) => problem_block(area, f, problem),
+                Connection::Failed(problem) => {
+                    problem_block(area, f, problem);
+                    if *problem == Problem::NeedsAccount && signing.form.is_none() {
+                        area.spawn(buttons()).with_children(|row| {
+                            row.spawn(button(f, "Sign in", Action::OpenSignIn));
+                        });
+                    }
+                }
             }
             for notice in &status.notices {
                 area.spawn(line(f.regular(13.0), colours::WARN, notice));
@@ -233,15 +265,25 @@ fn rebuild_status(
         });
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the list area is drawn from everything that can stand in it"
+)]
 fn rebuild_list(
     mut commands: Commands,
     status: Res<ServerStatus>,
     list: Res<GameList>,
     new_game: Res<NewGame>,
     chosen: Res<ChosenMembers>,
+    signing: Res<Signing>,
     fonts: Res<UiFonts>,
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
+    // The sign-in form is not drawn again for a list read again: that would take the keyboard
+    // from the field being typed in.
+    if signing.form.is_some() && !signing.is_changed() && !status.is_changed() {
+        return;
+    }
     let (area_id, mut scroll) = list_area.into_inner();
     // A list read again keeps its place; a new connection starts at the top.
     if !matches!(status.connection, Connection::Ready(_)) {
@@ -252,6 +294,9 @@ fn rebuild_list(
         .entity(area_id)
         .despawn_related::<Children>()
         .with_children(|area| match &status.connection {
+            _ if signing.form.is_some() => {
+                sign_in::draw(area, f, signing.form.as_ref().unwrap());
+            }
             Connection::Ready(snap) => match &new_game.form {
                 Some(form) => new_game::draw(area, f, form),
                 None => {
@@ -592,6 +637,7 @@ fn on_activate(
     mut list: ResMut<GameList>,
     mut new_game: ResMut<NewGame>,
     mut chosen: ResMut<ChosenMembers>,
+    mut signing: ResMut<Signing>,
     mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
@@ -633,6 +679,7 @@ fn on_activate(
         },
         Action::KeepPlaying => watching.resign = Resign::No,
         Action::NewGame { def_id, name } => {
+            signing.form = None;
             new_game.form = Some(Form::new(def_id, name));
             net.send(Request::Setup {
                 game_def_id: def_id.clone(),
@@ -689,6 +736,23 @@ fn on_activate(
         Action::Submit => play::submit(&net, &mut watching),
         Action::Undo => play::back(&mut watching),
         Action::AskAgain => play::ask_again(&net, &mut watching),
+        Action::OpenSignIn => {
+            new_game.form = None;
+            signing.open();
+            for mut scroll in &mut list_scroll {
+                scroll.0 = Vec2::ZERO;
+            }
+        }
+        Action::SubmitSignIn => sign_in::submit(&net, &mut signing),
+        Action::CancelSignIn => signing.form = None,
+        Action::UseRecoveryCode(recovery) => {
+            if let Some(form) = signing.form.as_mut() {
+                form.recovery = *recovery;
+                form.code.clear();
+                form.problem = None;
+            }
+        }
+        Action::SignOut => net.send(Request::SignOut),
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.
@@ -783,6 +847,7 @@ mod tests {
             .init_resource::<GameList>()
             .init_resource::<NewGame>()
             .init_resource::<ChosenMembers>()
+            .init_resource::<Signing>()
             .insert_resource(ServerStatus {
                 server: "https://box:8443".into(),
                 connection,

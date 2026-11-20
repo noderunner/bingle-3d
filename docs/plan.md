@@ -1,9 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 5 under way: a game can be played against the server's bots or a person, the
-games being played can be found, and a game can wait in its lobby for its host's start
-(2026-11-19). Stage 4's last check, a whole game against the web
-page by hand, is the maintainer's. The desktop client comes first: Hex, a game
+Status: stage 6 under way: a game can be played against the server's bots or a person, found,
+set up and started from its lobby, and the player can sign in to an account (2026-11-19).
+Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
 ## Goal
@@ -51,7 +50,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.4.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.5.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -200,8 +199,7 @@ README, this plan, `.gitignore`.
   that part ("7×7"); members that share no such name keep their own, under the name of the member
   whose id is the family's. That member is chosen to begin with. Chips are in natural order (7×7
   before 11×11). The choice is kept while the client runs.
-- **Next**: the "done when" check, by hand against the web page both ways; then stage 6, whose
-  question for Bingle (how a native client signs in) is raised first.
+- **Next**: the "done when" check, by hand against the web page both ways.
 
 ### Stage 6: accounts
 
@@ -209,11 +207,29 @@ Friends, direct messages and calls need a signed-in account (ADR 0105); a guest 
 
 - Sign in with a handle and password (and a second factor when the account has one), keep the
   session between runs beside the config, and sign out.
-- **To settle with Bingle first**: API tokens' scopes (`play`, `create_game`, `read_metrics`) do not
-  cover friends or direct messages, and `/ws-dm` is authenticated by the browser's session. Either
-  the client holds a session cookie like a browser (sending `X-Bingle-Session` on state-changing
-  requests), or Bingle gains a token scope or a sign-in flow for native clients. Raise it as a
-  Bingle issue before building this stage.
+- **Settled with Bingle**: a sign-in made for native clients that answers with a session token
+  ([bingle#227](https://github.com/noderunner/bingle/issues/227), built in bingle#228, API 1.5,
+  Bingle's ADR 0138). The other ways were a browser's session cookie (with `X-Bingle-Session`),
+  or new scopes on API tokens (made on the web page and pasted in, and not a sign-in).
+- As built. *Sign in* under the server's status opens a form in place of the lists: the handle
+  and the password (`POST /auth/login` with `token: true`), then, for an account with a second
+  factor, the code from its authenticator app or a recovery code (`POST /auth/second` with
+  `pending`). The guest key goes with the sign-in as its bearer, so the guest's seats become the
+  account's; the key then stops working and is forgotten. The session's token (`bgs_…`) is kept
+  in `keys.toml` per server, and from then on every call and the game's socket carry it in place
+  of the guest key. The status reads *Signed in as …* with *Sign out* (`POST /auth/logout`; the
+  token is forgotten even if the server cannot be told). A token the server no longer knows
+  (expired, signed out everywhere, a new password) is forgotten, the client goes on as a guest,
+  and says so. Signed in, the client sits down under the account's display name. An account
+  that must change its password is told to do so on the web page: the client cannot yet.
+- Text entry is Bevy's `TextInput` for the handle and the code. It cannot hide what is typed yet,
+  so the password has a field of the client's own (`sign_in.rs`): a dot for each character,
+  typing, Backspace and pasting, no cursor to move; the password is never logged and is cleared
+  once sent. Tab moves between fields (Bevy's `TabNavigationPlugin`), Enter sends, Escape closes,
+  and the camera's arrows and the move keys stand aside while a field has the keyboard. A
+  server that admits only accounts offers *Sign in* beside its refusal.
+- Not built: signing up, signing in through a provider (OIDC: it needs a browser), changing a
+  password. `--sign-in` opens the form at start.
 
 ### Stage 7: friends
 
