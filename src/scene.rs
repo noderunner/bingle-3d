@@ -126,7 +126,8 @@ fn light_cameras(
             DepthOfField {
                 mode: DepthOfFieldMode::Gaussian,
                 focal_distance: 0.75,
-                aperture_f_stops: 4.0,
+                // Gentle: the far side of the board is softened, not blurred.
+                aperture_f_stops: 8.0,
                 ..default()
             },
             // The table fades into the room past arm's length, rather than ending.

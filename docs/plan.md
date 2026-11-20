@@ -428,7 +428,12 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   piece is a lens-shaped stone modelled in Blender, each turned, sized and leaning a little
   differently. These are the generic defaults (`look.rs`), for every game.
 - Each goal's edge: the slab's rim along it is stained, and its cells shaded with a soft gradient
-  towards it, in the seat's colour; a corner on two seats' edges is split between them.
+  towards it (fading out a third of the way across), in the seat's colour; a corner on two seats'
+  edges is split between them.
+- The camera pans as well as orbiting (middle-drag, Shift with right-drag, W A S D). The board's
+  coordinates can be shown along its edges (C, or a button): where every position is named as
+  letters then a number, a column's letters at its two ends and a row's number at its two sides,
+  as text kept over the table; a board named otherwise shows none.
 - The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
   seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
   cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim

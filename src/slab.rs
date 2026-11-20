@@ -243,7 +243,8 @@ pub fn shading(
     colour: LinearRgba,
     strength: f32,
 ) -> Mesh {
-    const RINGS: usize = 6;
+    // Close together, so that a short fade near the side is still smooth.
+    const RINGS: usize = 12;
     const PER_SIDE: usize = 4;
     let mut b = Builder::default();
     let add = |b: &mut Builder, v: Vec2| -> u32 {

@@ -13,6 +13,7 @@ mod camera;
 mod cli;
 mod clock;
 mod config;
+mod coordinates;
 mod families;
 mod fonts;
 mod friends;
@@ -81,6 +82,7 @@ fn main() -> AppExit {
         textures::TexturesPlugin,
         appearance::AppearancePlugin,
         wood_choice::WoodChoicePlugin,
+        coordinates::CoordinatesPlugin,
     ))
     .add_plugins((
         fonts::FontsPlugin,

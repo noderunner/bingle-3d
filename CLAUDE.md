@@ -214,7 +214,9 @@ A game's own rules and its players' words keep their terms.
   narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
-- `src/camera.rs`: the orbit camera. The left mouse button is kept for picking; nothing else reads
+- `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position
+  names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.
+- `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the

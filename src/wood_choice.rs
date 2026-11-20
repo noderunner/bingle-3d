@@ -1,5 +1,5 @@
-//! A row of buttons choosing the board's wood (`board::BoardWood`), at the bottom right. A stopgap
-//! until the interface has a place for settings like this one.
+//! A row of buttons choosing the board's wood (`board::BoardWood`), at the bottom right above the
+//! hint line. A stopgap until the interface has a place for settings like this one.
 
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
@@ -29,7 +29,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
         .spawn(Node {
             position_type: PositionType::Absolute,
             right: px(12),
-            bottom: px(8),
+            bottom: px(34),
             column_gap: px(6),
             align_items: AlignItems::Center,
             ..default()

@@ -73,9 +73,10 @@ const CELL_SCALE: f32 = 0.955;
 /// The wood round the cells, as a share of the pitch, and how round the slab's top edge is.
 const MARGIN: f32 = 0.7;
 const RIM_RADIUS: f32 = 0.005;
-/// How dark the shading of a goal's cells is at the edge, and how far in it fades (in pitches).
+/// How dark the shading of a goal's cells is at the edge, and how far in it fades (in pitches):
+/// a third of the way across the cell.
 const SHADE_STRENGTH: f32 = 0.75;
-const SHADE_FADE: f32 = 0.75;
+const SHADE_FADE: f32 = CELL_SCALE / 3.0;
 
 /// The wood the board is made of: one of `look::BOARD_WOODS`, chosen by the player.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]

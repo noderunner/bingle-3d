@@ -53,8 +53,9 @@ cargo test                                  # unit tests, no window needed
 cargo clippy --all-targets -- -D warnings   # as CI runs it
 ```
 
-Right-drag (or the arrow keys) orbits the camera, and the wheel zooms (or scrolls the panel, over
-it). F5 connects again.
+Right-drag (or the arrow keys) orbits the camera, middle-drag or Shift with right-drag (or W, A,
+S, D) pans it across the table, and the wheel zooms (or scrolls the panel, over it). C (or the
+*Coordinates* button) shows the board's coordinates along its edges. F5 connects again.
 
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
 strongest bot the others. When it is your move, the cells you may play on are lit: click one, and
