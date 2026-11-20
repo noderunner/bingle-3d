@@ -18,7 +18,7 @@ import common  # noqa: E402
 # than quietly committing them.
 BLENDER = (5, 3)
 
-STEPS = ["environment", "woods", "stones", "engraving"]
+STEPS = ["environment", "woods", "stones", "engraving", "cards"]
 
 
 def main():

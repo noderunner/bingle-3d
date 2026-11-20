@@ -1,6 +1,6 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 9 under way: a game can be played against the server's bots or a person, found,
+Status: stage 9 under way, with a main screen and an escape menu: a game can be played against the server's bots or a person, found,
 set up and started from its lobby; the player can sign in to an account, has friends and can talk
 to them; Hex has a look of its own, made by the asset pipeline (2026-11-20).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
@@ -136,7 +136,8 @@ README, this plan, `.gitignore`.
   position also makes the choices before it that only one selection allows (the stone, in Hex),
   and a choice that is not a position (swapping sides) is a button. Each selection made asks the
   server what may follow (`made`, `ply`); the move that ends the impulse is shown as see-through
-  pieces and waits for a second click, Enter or *Play*, and Esc or Backspace goes back. The move is
+  pieces and waits for a second click, Enter or *Play*, and Backspace goes back (Esc did too, until
+  the escape menu took it). The move is
   sent whole, by notation, with its `ply`; it arrives on the socket like everyone else's. A move
   refused because the game moved on reads the state again. API 1.1 still covers all of it.
 - Each seat's goal on the board: the client targets API 1.2 for the game definition's `goals`
@@ -461,6 +462,31 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   out: they are behind an experimental feature, noisy and costly; TAA's filtering does enough.
 - **Next**: the maintainer's eye on it, on the GPU; then per-piece models (a piece kind per
   model), and a look for the next game.
+
+### The main screen and the escape menu (UI basics)
+
+- The list panel is now the main screen, laid out as the web page's home: the server's status
+  above, then tabs (*Games*; *Puzzles*, *Ratings*, *Tournaments* and *Global Chat* are shown
+  greyed until they are built), and in *Games* a toggle between *New* and *Active*.
+- *New* is the web page's gallery: a card for each family (`families.rs`), with its picture, its
+  title, its marks (*Prototype*, else *Beta* while the default member's `version` is below 1.0,
+  and *Tutorial* when a member has one; `version` and `tutorials` are API 1.6's, so no new
+  schema) and how many play it ("2–4 players", every member counted). A card opens the game's
+  setup in place of the cards (*← All games* returns): a larger picture, the members as chips,
+  the description, and *Play a bot*, *New game…*, *Watch two bots* and *Find games* (which shows
+  *Active* filtered to the game).
+- A card's picture is the appearance file's (`[card.pictures]`, by game id), so shared code
+  names no game; a game without one has a blank square. Go, Gomoku and Pente show a teak board of
+  lines with slate and shell stones, rendered by the pipeline (`cards` step); Meridians, on a
+  hexagonal board, has none yet, rather than a square board's.
+- In a game, Esc opens the escape menu (`escape_menu.rs`): *Resume*, *Main Menu* (as the game
+  panel's *Back*: the game goes on at the server), *Settings*, *Game Options* and *Profile*
+  (greyed until built) and *Quit*. It covers the window, so clicks reach neither the board nor
+  the panels, and the move keys and the camera stand aside. A text field with the keyboard is
+  let go of by the first Esc. Backspace now takes a gesture back, which Esc did before.
+- Found while building it: the interface is blended in linear light (the cameras are HDR), so a
+  faint white over the dark panels shows much lighter, and a nearly opaque panel much more
+  see-through, than the same colours on the web page. The new parts use opaque colours.
 
 ### After that
 

@@ -38,6 +38,68 @@ impl<'a> Family<'a> {
         id.and_then(|id| self.members.iter().find(|m| m.def.id == id))
             .unwrap_or(&self.members[self.default])
     }
+
+    /// The marks on the family's card, as the web page puts them: *Prototype* while the rules are
+    /// still changing, else *Beta* while its version is below 1.0 (both as its default member
+    /// says), and *Tutorial* when any member has one.
+    pub fn badges(&self) -> Vec<Badge> {
+        let lead = self.members[self.default].def;
+        let mut out = Vec::new();
+        if lead.prototype {
+            out.push(Badge::Prototype);
+        } else if is_beta(&lead.version) {
+            out.push(Badge::Beta);
+        }
+        if self.members.iter().any(|m| m.def.tutorials > 0) {
+            out.push(Badge::Tutorial);
+        }
+        out
+    }
+
+    /// How many can sit at the family's tables, every member counted: "2 players", "3–5
+    /// players". Empty when no member says.
+    pub fn players(&self) -> String {
+        let seats = self
+            .members
+            .iter()
+            .map(|m| m.def.seats_required)
+            .filter(|n| *n > 0);
+        let (Some(lo), Some(hi)) = (seats.clone().min(), seats.max()) else {
+            return String::new();
+        };
+        match (lo, hi) {
+            (1, 1) => "1 player".into(),
+            _ if lo == hi => format!("{lo} players"),
+            _ => format!("{lo}\u{2013}{hi} players"),
+        }
+    }
+}
+
+/// A mark on a game's card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Badge {
+    Prototype,
+    Beta,
+    Tutorial,
+}
+
+impl Badge {
+    pub fn label(self) -> &'static str {
+        match self {
+            Badge::Prototype => "PROTOTYPE",
+            Badge::Beta => "BETA",
+            Badge::Tutorial => "Tutorial",
+        }
+    }
+}
+
+/// Whether a game's version is a beta: below 1.0.0, or not given.
+pub fn is_beta(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.trim().parse::<u64>().ok())
+        .is_none_or(|major| major < 1)
 }
 
 /// The definitions grouped into families, in natural order of their titles.
@@ -149,7 +211,56 @@ mod tests {
             family: family.map(Into::into),
             description: String::new(),
             prototype: false,
+            version: "1.0.0".into(),
+            tutorials: 0,
         }
+    }
+
+    #[test]
+    fn a_card_says_prototype_or_beta_and_whether_it_teaches() {
+        let mut a = def("a", "A", None);
+        assert!(families(std::slice::from_ref(&a))[0].badges().is_empty());
+        a.version = "0.4.1".into();
+        assert_eq!(
+            families(std::slice::from_ref(&a))[0].badges(),
+            [Badge::Beta]
+        );
+        a.prototype = true;
+        a.tutorials = 2;
+        assert_eq!(
+            families(std::slice::from_ref(&a))[0].badges(),
+            [Badge::Prototype, Badge::Tutorial],
+            "a prototype is not also called a beta"
+        );
+        assert!(
+            is_beta(""),
+            "a game that gives no version is a beta, as on the page"
+        );
+        assert!(!is_beta("1.10.0"));
+        assert!(!is_beta("2.0.0"));
+    }
+
+    #[test]
+    fn a_card_says_how_many_play_its_members() {
+        let mut small = def("x-3", "X (3 players)", Some("x"));
+        small.seats_required = 3;
+        let mut big = def("x", "X (5 players)", Some("x"));
+        big.seats_required = 5;
+        assert_eq!(
+            families(&[small.clone(), big])[0].players(),
+            "3\u{2013}5 players"
+        );
+        assert_eq!(
+            families(std::slice::from_ref(&small))[0].players(),
+            "3 players"
+        );
+        small.seats_required = 1;
+        assert_eq!(
+            families(std::slice::from_ref(&small))[0].players(),
+            "1 player"
+        );
+        small.seats_required = 0;
+        assert_eq!(families(&[small])[0].players(), "");
     }
 
     fn summary(f: &Family) -> (String, Vec<String>, String) {

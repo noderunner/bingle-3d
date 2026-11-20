@@ -1,8 +1,7 @@
 //! Bingle 3D: a native client for the Bingle game server.
 //!
-//! Stage 4 of docs/plan.md: a panel that connects to a Bingle server and lists its games, and a
-//! table in 3D on which a game can be watched, or played against the server's bots, from the API
-//! alone.
+//! A main screen that connects to a Bingle server and lists its games, and a table in 3D on which
+//! a game can be watched or played, from the API alone (docs/plan.md).
 
 mod appearance;
 mod assets;
@@ -14,6 +13,7 @@ mod cli;
 mod clock;
 mod config;
 mod coordinates;
+mod escape_menu;
 mod families;
 mod fonts;
 mod friends;
@@ -116,6 +116,7 @@ fn main() -> AppExit {
         // Tab moves between the fields of a form.
         bevy::input_focus::tab_navigation::TabNavigationPlugin,
         board::BoardPlugin,
+        escape_menu::EscapeMenuPlugin,
         play::PlayPlugin,
         game_panel::GamePanelPlugin {
             on_start: opts.watch.clone().map(|w| match w {

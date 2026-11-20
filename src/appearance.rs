@@ -12,6 +12,8 @@
 //!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
 //!   of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
 //!   game's board, as a Go board's star points are.
+//! - `card.pictures.<game id>`: the picture on the game's card in the main screen's list (an
+//!   image under `pictures/`); a game without one has a blank space there.
 //!
 //! The private overlay's games (plan, decision 2) will add files from a folder; this is where
 //! they will be read.
@@ -37,6 +39,17 @@ pub struct Appearance {
     pub materials: BTreeMap<String, MaterialSpec>,
     #[serde(default)]
     pub board: BoardLook,
+    #[serde(default)]
+    pub card: CardLook,
+}
+
+/// How a game shows on its card in the list of games to start.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardLook {
+    /// The card's picture, by game id: a file of the client's.
+    #[serde(default)]
+    pub pictures: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -114,6 +127,14 @@ impl Appearance {
                 out.push(format!("piece {id}: no model {}", piece.model));
             }
         }
+        for (id, picture) in &self.card.pictures {
+            if !assets::exists(picture) {
+                out.push(format!("card of {id}: no picture {picture}"));
+            }
+            if !self.games.contains(id) {
+                out.push(format!("card of {id}: not one of this file's games"));
+            }
+        }
         if self.games.is_empty() {
             out.push("for no game".into());
         }
@@ -155,6 +176,11 @@ impl Appearances {
 
     pub fn for_game(&self, id: &str) -> Option<&Appearance> {
         self.0.iter().find(|a| a.games.iter().any(|g| g == id))
+    }
+
+    /// The file of the picture on this game's card, if it has one.
+    pub fn card_picture(&self, id: &str) -> Option<&str> {
+        self.for_game(id)?.card.pictures.get(id).map(String::as_str)
     }
 
     /// The colour a seat of a game is shown in: its appearance's, or the generic one.
@@ -243,6 +269,19 @@ mod tests {
     }
 
     #[test]
+    fn games_on_a_square_of_points_have_a_picture_and_others_none() {
+        let all = Appearances::built_in();
+        for id in ["go-9x9", "go-13x13", "go-19x19", "gomoku", "pente"] {
+            let picture = all.card_picture(id).unwrap_or_else(|| panic!("{id}"));
+            assert!(assets::exists(picture), "{id}: {picture}");
+        }
+        // A hexagonal board of points would be misdrawn by a square one's picture.
+        assert_eq!(all.card_picture("meridians"), None);
+        assert_eq!(all.card_picture("hex-11"), None);
+        assert_eq!(all.card_picture("no-such-game"), None);
+    }
+
+    #[test]
     fn mistakes_are_found() {
         let a = Appearance::parse(
             r#"
@@ -251,10 +290,12 @@ mod tests {
             model = "models/none.glb"
             [seats.red]
             pieces = "missing"
+            [card.pictures]
+            other = "pictures/none.jpg"
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 2, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 4, "{:?}", a.problems());
         assert!(
             Appearance::parse("games = []\ncolour = 1").is_err(),
             "unknown keys are refused, so a misspelling is not ignored"

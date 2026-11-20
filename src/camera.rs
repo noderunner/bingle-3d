@@ -133,8 +133,13 @@ fn orbit_input(
     time: Res<Time>,
     pointer: PointerOverUi,
     focus: Option<Res<InputFocus>>,
+    menu: Option<Res<crate::escape_menu::EscapeMenu>>,
     mut cameras: Query<&mut OrbitCamera>,
 ) {
+    // The escape menu covers the table: the table stays as it is behind it.
+    if !crate::escape_menu::closed(menu.as_deref()) {
+        return;
+    }
     let mut turn = Vec2::ZERO;
     let mut slide = Vec2::ZERO;
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);

@@ -21,7 +21,7 @@ impl Plugin for HudPlugin {
 #[derive(Component)]
 struct FpsText;
 
-const HINT: &str = "Play: click, Enter, Esc  ·  Orbit: right-drag or arrows  ·  \
+const HINT: &str = "Play: click, Enter, Backspace  ·  Menu: Esc  ·  Orbit: right-drag or arrows  ·  \
                     Pan: middle-drag or W A S D  ·  Zoom: wheel  ·  Coordinates: C  ·  Legal moves: L  ·  \
                     Reconnect: F5";
 

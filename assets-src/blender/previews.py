@@ -156,7 +156,7 @@ def scene():
     bpy.context.scene.camera = cam
 
 
-def render(path, samples=128):
+def render(path, samples=128, size=(1280, 800), jpeg=False):
     s = bpy.context.scene
     s.render.engine = "CYCLES"
     prefs = bpy.context.preferences.addons["cycles"].preferences
@@ -173,7 +173,11 @@ def render(path, samples=128):
             continue
     s.cycles.samples = samples
     s.cycles.use_denoising = True
-    s.render.resolution_x, s.render.resolution_y = 1280, 800
+    s.render.resolution_x, s.render.resolution_y = size
+    s.render.resolution_percentage = 100
+    if jpeg:
+        s.render.image_settings.file_format = "JPEG"
+        s.render.image_settings.quality = 88
     s.render.filepath = path
     bpy.ops.render.render(write_still=True)
     print(f"rendered {os.path.relpath(path, common.REPO)} on {s.cycles.device}")
