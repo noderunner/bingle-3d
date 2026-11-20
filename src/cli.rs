@@ -18,6 +18,7 @@ Options:
   --new-game GAME    open the form that sets up a new game of GAME
   --sign-in          open the form that signs in to an account
   --friends          open the friends panel (signed in)
+  --talk HANDLE      open the conversation with this friend (signed in)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -43,6 +44,8 @@ pub struct Options {
     pub sign_in: bool,
     /// Open the friends panel at start.
     pub friends: bool,
+    /// Open the conversation with this friend at start.
+    pub talk: Option<String>,
     pub help: bool,
 }
 
@@ -82,6 +85,7 @@ impl Options {
                 "-h" | "--help" => opts.help = true,
                 "--sign-in" => opts.sign_in = true,
                 "--friends" => opts.friends = true,
+                "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--frames" => {
                     let v = value("a number of frames")?;
                     let n: u32 = v
@@ -236,6 +240,7 @@ mod tests {
         assert!(parse(&["--sign-in"]).unwrap().sign_in);
         assert!(!parse(&[]).unwrap().sign_in);
         assert!(parse(&["--friends"]).unwrap().friends);
+        assert_eq!(parse(&["--talk", "bob"]).unwrap().talk, Some("bob".into()));
     }
 
     #[test]

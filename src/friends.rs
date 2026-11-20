@@ -1,5 +1,10 @@
 //! The signed-in account's friends: who is online, requests in and out, invitations to games,
-//! and the settings that go with them (Bingle's ADR 0105 and 0106).
+//! the settings that go with them (Bingle's ADR 0105 and 0106), and direct messages.
+//!
+//! Messages arrive on the account's socket and are kept per friend, by their address, for as
+//! long as the client runs; a conversation opened is read from the server, which keeps the last
+//! 200 messages of a pair for two hours. The server keeps no record of what was read, so the
+//! messages counted as unread are those that arrived while their conversation was not open.
 //!
 //! The list lives in [`Friends`], filled by the network thread: when the account's socket opens
 //! or says the list changed, and after every change made here. Whether a friend is online is not
@@ -9,7 +14,7 @@
 //! The panel stands on the right of the screen while an account is signed in, during a game
 //! too, since invitations come at any time. Closed, it is one button that counts what is waiting.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use bevy::input::ButtonState;
@@ -22,7 +27,7 @@ use bevy::ui_widgets::Activate;
 
 use crate::browser::{Action, button, buttons, chip, colours, line};
 use crate::fonts::UiFonts;
-use crate::net::api::{FriendSettings, FriendsList};
+use crate::net::api::{DirectMessage, FriendSettings, FriendsList};
 use crate::net::session::Problem;
 use crate::net::{Connection, FriendCall, Net, Request, ServerStatus, Target, WatchStatus, watch};
 use crate::sign_in::text_field;
@@ -30,9 +35,17 @@ use crate::sign_in::text_field;
 /// How often the list is read again while the panel is open, for who is online.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(10);
 
+/// The longest message the server takes, in characters.
+pub const MESSAGE_MAX: usize = 500;
+
+/// How many of a conversation's latest messages the panel shows.
+const SHOWN: usize = 40;
+
 pub struct FriendsPlugin {
     /// Open the panel at start (`--friends`).
     pub open: bool,
+    /// Open the conversation with this friend, by handle, once the list is read (`--talk`).
+    pub talk: Option<String>,
 }
 
 impl Plugin for FriendsPlugin {
@@ -40,6 +53,7 @@ impl Plugin for FriendsPlugin {
         if self.open {
             app.add_systems(Startup, |mut friends: ResMut<Friends>| friends.open = true);
         }
+        app.insert_resource(TalkOnStart(self.talk.clone()));
         app.add_systems(Startup, spawn_panel)
             .add_observer(on_friend_action)
             .add_systems(
@@ -48,6 +62,7 @@ impl Plugin for FriendsPlugin {
                     follow_account,
                     follow_game,
                     refresh_while_open,
+                    talk_on_start,
                     keep_typed,
                     rebuild.run_if(
                         resource_changed::<Friends>.or_eager(resource_changed::<ServerStatus>),
@@ -76,9 +91,36 @@ pub struct Friends {
     pub invite_room: Option<String>,
     /// The friends invited to it from here.
     pub invited: BTreeSet<String>,
-    /// The handle field had the keyboard when the panel was last drawn.
-    typing: bool,
+    /// This account's own address, as its socket said.
+    pub address: Option<String>,
+    /// What was said with each friend, by their address.
+    pub talks: HashMap<String, Talk>,
+    /// The friend whose conversation the panel shows, by address.
+    pub talking: Option<String>,
+    /// The message being written.
+    pub writing: String,
+    /// A message sent and not answered yet.
+    pub sending: bool,
+    /// The field that had the keyboard when the panel was last drawn.
+    typing: Typing,
     refresh: Timer,
+}
+
+/// What was said with one friend.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Talk {
+    /// Oldest first.
+    pub messages: Vec<DirectMessage>,
+    /// Arrived from them while the conversation was not open.
+    pub unread: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Typing {
+    #[default]
+    Nowhere,
+    Ask,
+    Write,
 }
 
 impl Default for Friends {
@@ -92,18 +134,76 @@ impl Default for Friends {
             removing: None,
             invite_room: None,
             invited: BTreeSet::new(),
-            typing: false,
+            address: None,
+            talks: HashMap::new(),
+            talking: None,
+            writing: String::new(),
+            sending: false,
+            typing: Typing::Nowhere,
             refresh: Timer::new(REFRESH_EVERY, TimerMode::Repeating),
         }
     }
 }
 
 impl Friends {
-    /// Requests to answer and invitations not answered yet: what the closed panel counts.
+    /// Requests to answer, invitations not answered yet and messages not read: what the closed
+    /// panel counts.
     pub fn waiting(&self) -> usize {
-        self.list.as_ref().map_or(0, |l| {
+        let asks = self.list.as_ref().map_or(0, |l| {
             l.incoming.len() + l.invites.iter().filter(|i| i.pending()).count()
-        })
+        });
+        asks + self.talks.values().map(|t| t.unread).sum::<usize>()
+    }
+
+    /// Messages from this friend not read yet.
+    pub fn unread(&self, address: &str) -> usize {
+        self.talks.get(address).map_or(0, |t| t.unread)
+    }
+
+    /// Opens the conversation with the friend at `address`: what they said is read.
+    pub fn talk_with(&mut self, address: &str) {
+        self.talking = Some(address.to_string());
+        self.talks.entry(address.to_string()).or_default().unread = 0;
+        self.writing.clear();
+        self.problem = None;
+    }
+
+    /// The server's record of a conversation, with whatever arrived since it was asked for.
+    pub fn history(&mut self, with: &str, messages: Vec<DirectMessage>) {
+        let talk = self.talks.entry(with.to_string()).or_default();
+        for message in messages {
+            keep(&mut talk.messages, message);
+        }
+    }
+
+    /// A message arrived on the account's socket: to this account, or sent by it (from here or
+    /// elsewhere).
+    pub fn received(&mut self, message: DirectMessage) {
+        let mine = self.address.as_deref() == Some(message.from.as_str());
+        let with = if mine { &message.to } else { &message.from }.clone();
+        let open = self.open && self.talking.as_deref() == Some(with.as_str());
+        let talk = self.talks.entry(with).or_default();
+        if keep(&mut talk.messages, message) && !mine && !open {
+            talk.unread += 1;
+        }
+    }
+
+    /// The server answered a message sent.
+    pub fn written(&mut self, to: &str, result: Result<DirectMessage, Problem>) {
+        self.sending = false;
+        match result {
+            Ok(message) => {
+                self.problem = None;
+                if self.talking.as_deref() == Some(to) {
+                    self.writing.clear();
+                }
+                keep(
+                    &mut self.talks.entry(to.to_string()).or_default().messages,
+                    message,
+                );
+            }
+            Err(problem) => self.problem = Some(problem),
+        }
     }
 
     /// The server answered a friends call.
@@ -148,6 +248,18 @@ impl Friends {
     }
 }
 
+/// Adds a message to a conversation, in order, unless it is there already (a message sent comes
+/// back both as the answer and on the socket). Whether it was new.
+fn keep(messages: &mut Vec<DirectMessage>, message: DirectMessage) -> bool {
+    match messages.binary_search_by_key(&message.id, |m| m.id) {
+        Ok(_) => false,
+        Err(at) => {
+            messages.insert(at, message);
+            true
+        }
+    }
+}
+
 /// What a button on the friends panel does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FriendAction {
@@ -164,6 +276,28 @@ pub enum FriendAction {
     /// Accept an invitation and join its game.
     Join(String),
     Settings(FriendSettings),
+    /// Open the conversation with the friend at this address.
+    Talk(String),
+    /// Back to the list.
+    StopTalking,
+    /// Send the message written.
+    Send,
+}
+
+/// Sends the message written, to the friend whose conversation is open.
+fn send(net: &Net, friends: &mut Friends) {
+    let text = friends.writing.trim();
+    let Some(to) = friends.talking.clone() else {
+        return;
+    };
+    if text.is_empty() || friends.sending {
+        return;
+    }
+    net.send(Request::Write {
+        to,
+        text: text.to_string(),
+    });
+    friends.sending = true;
 }
 
 /// Sends what the handle field holds as a friend request.
@@ -211,6 +345,17 @@ fn on_friend_action(
             accept: true,
         })),
         FriendAction::Settings(settings) => net.send(Request::FriendSettings(Some(*settings))),
+        FriendAction::Talk(address) => {
+            friends.talk_with(address);
+            net.send(Request::Messages {
+                with: address.clone(),
+            });
+        }
+        FriendAction::StopTalking => {
+            friends.talking = None;
+            friends.problem = None;
+        }
+        FriendAction::Send => send(&net, &mut friends),
     }
 }
 
@@ -258,6 +403,28 @@ fn follow_game(watching: Res<WatchStatus>, mut friends: ResMut<Friends>) {
     }
 }
 
+/// The friend `--talk` named, until the list shows their address.
+#[derive(Resource)]
+struct TalkOnStart(Option<String>);
+
+fn talk_on_start(mut pending: ResMut<TalkOnStart>, net: Res<Net>, mut friends: ResMut<Friends>) {
+    let Some(handle) = &pending.0 else { return };
+    let Some(address) = friends.list.as_ref().and_then(|l| {
+        l.friends
+            .iter()
+            .find(|x| {
+                x.handle
+                    .eq_ignore_ascii_case(handle.trim_start_matches('@'))
+            })
+            .map(|x| x.address.clone())
+    }) else {
+        return;
+    };
+    pending.0 = None;
+    friends.talk_with(&address);
+    net.send(Request::Messages { with: address });
+}
+
 fn refresh_while_open(time: Res<Time>, net: Res<Net>, mut friends: ResMut<Friends>) {
     let friends = friends.bypass_change_detection();
     if friends.open && friends.list.is_some() && friends.refresh.tick(time.delta()).just_finished()
@@ -270,21 +437,38 @@ fn refresh_while_open(time: Res<Time>, net: Res<Net>, mut friends: ResMut<Friend
 #[derive(Component)]
 struct AskField;
 
-/// What is typed in the handle field, kept, so that a panel drawn again shows it; and whether it
+/// The field a message is written in.
+#[derive(Component)]
+struct WriteField;
+
+/// The panel's fields: the handle's, and the message's.
+type TextFields<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static EditableText, Has<WriteField>),
+    Or<(With<AskField>, With<WriteField>)>,
+>;
+
+/// What is typed in the panel's fields, kept, so that a panel drawn again shows it; and which
 /// has the keyboard, so that it keeps it.
-fn keep_typed(
-    focus: Res<InputFocus>,
-    fields: Query<(Entity, &EditableText), With<AskField>>,
-    mut friends: ResMut<Friends>,
-) {
+fn keep_typed(focus: Res<InputFocus>, fields: TextFields, mut friends: ResMut<Friends>) {
     let friends = friends.bypass_change_detection();
-    for (entity, text) in &fields {
+    let mut typing = Typing::Nowhere;
+    for (entity, text, write) in &fields {
         let typed = text.value().to_string();
-        if friends.asking != typed {
-            friends.asking = typed;
+        let kept = if write {
+            &mut friends.writing
+        } else {
+            &mut friends.asking
+        };
+        if *kept != typed {
+            *kept = typed;
         }
-        friends.typing = focus.get() == Some(entity);
+        if focus.get() == Some(entity) {
+            typing = if write { Typing::Write } else { Typing::Ask };
+        }
     }
+    friends.typing = typing;
 }
 
 #[derive(Component)]
@@ -367,6 +551,10 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
         p.spawn(line(f.regular(13.0), colours::MUTED, "Reading the list…"));
         return;
     };
+    if let Some(address) = &friends.talking {
+        talk(p, f, friends, list, address);
+        return;
+    }
 
     for invite in &list.invites {
         let text = format!("{} invites you to {}", invite.from, invite.game);
@@ -467,6 +655,11 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
                     ));
                 }
             }
+            let write = match friends.unread(&friend.address) {
+                0 => "Write".to_string(),
+                n => format!("Write  ·  {n}"),
+            };
+            row.spawn(act(f, &write, FriendAction::Talk(friend.address.clone())));
             if friends.removing.as_ref() == Some(&friend.handle) {
                 row.spawn(act(
                     f,
@@ -509,7 +702,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
     p.spawn(line(f.semibold(14.0), colours::TEXT, "Ask a friend"));
     let mut field = p.spawn((AskField, text_field(f, &friends.asking), TabIndex(0)));
     field.observe(on_ask_key);
-    if friends.typing {
+    if friends.typing == Typing::Ask {
         field.insert(AutoFocus);
     }
     p.spawn(buttons()).with_children(|row| {
@@ -557,6 +750,85 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
     }
 }
 
+/// The conversation with the friend at `address`, in place of the list.
+fn talk(
+    p: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    friends: &Friends,
+    list: &FriendsList,
+    address: &str,
+) {
+    let friend = list.friends.iter().find(|x| x.address == address);
+    let name = friend.map_or("A friend who has gone", |x| x.name.as_str());
+    p.spawn(buttons()).with_children(|row| {
+        row.spawn(act(f, "Back to friends", FriendAction::StopTalking));
+    });
+    p.spawn(line(f.semibold(15.0), colours::TEXT, name));
+    let messages = friends
+        .talks
+        .get(address)
+        .map_or(&[][..], |t| &t.messages[..]);
+    if messages.is_empty() {
+        p.spawn(line(
+            f.regular(13.0),
+            colours::MUTED,
+            "Nothing said yet. Messages are kept for two hours.",
+        ));
+    }
+    for message in &messages[messages.len().saturating_sub(SHOWN)..] {
+        let mine = friends.address.as_deref() == Some(message.from.as_str());
+        let who = if mine { "You" } else { name };
+        p.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            flex_shrink: 0.0,
+            ..default()
+        })
+        .with_children(|block| {
+            block.spawn(line(
+                f.semibold(12.0),
+                if mine { colours::MUTED } else { colours::GOOD },
+                who,
+            ));
+            block.spawn(line(f.regular(14.0), colours::TEXT, &message.text));
+        });
+    }
+    if friend.is_some_and(|x| !x.can_write) {
+        p.spawn(line(
+            f.regular(13.0),
+            colours::WARN,
+            &format!("{name} is not here, so a message would not reach them."),
+        ));
+    }
+    let mut field = p.spawn((WriteField, text_field(f, &friends.writing), TabIndex(0)));
+    field.insert(EditableText {
+        max_characters: Some(MESSAGE_MAX),
+        ..EditableText::new(&friends.writing)
+    });
+    field.observe(on_write_key);
+    if friends.typing != Typing::Ask {
+        field.insert(AutoFocus);
+    }
+    p.spawn(buttons()).with_children(|row| {
+        if friends.sending {
+            row.spawn(line(f.regular(13.0), colours::MUTED, "Sending…"));
+        } else {
+            row.spawn(act(f, "Send", FriendAction::Send));
+        }
+    });
+}
+
+/// Enter in the message field sends it.
+fn on_write_key(
+    mut key: On<FocusedInput<KeyboardInput>>,
+    net: Res<Net>,
+    mut friends: ResMut<Friends>,
+) {
+    if key.input.state == ButtonState::Pressed && key.input.logical_key == Key::Enter {
+        key.propagate(false);
+        send(&net, &mut friends);
+    }
+}
+
 /// Enter in the handle field asks.
 fn on_ask_key(
     mut key: On<FocusedInput<KeyboardInput>>,
@@ -578,8 +850,86 @@ mod tests {
         Friend {
             handle: handle.into(),
             name: format!("@{handle}"),
+            address: format!("addr-{handle}"),
             online,
+            can_write: online,
         }
+    }
+
+    fn message(id: u64, from: &str, to: &str, text: &str) -> DirectMessage {
+        DirectMessage {
+            id,
+            from: from.into(),
+            to: to.into(),
+            name: from.into(),
+            text: text.into(),
+            at: String::new(),
+        }
+    }
+
+    #[test]
+    fn messages_are_kept_by_friend_in_order_once_and_counted_until_read() {
+        let mut friends = Friends {
+            address: Some("me".into()),
+            open: true,
+            ..Default::default()
+        };
+        friends.received(message(2, "bo", "me", "hi"));
+        friends.received(message(3, "cy", "me", "hey"));
+        friends.received(message(2, "bo", "me", "hi"));
+        assert_eq!(friends.unread("bo"), 1, "the same message twice is one");
+        assert_eq!(friends.waiting(), 2);
+
+        // Opening the conversation reads it; the history fills in what came before.
+        friends.talk_with("bo");
+        assert_eq!(friends.unread("bo"), 0);
+        friends.history(
+            "bo",
+            vec![
+                message(1, "me", "bo", "hello"),
+                message(2, "bo", "me", "hi"),
+            ],
+        );
+        let ids: Vec<u64> = friends.talks["bo"].messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, [1, 2]);
+
+        // While it is open, theirs are read as they come; this account's own never count.
+        friends.received(message(4, "bo", "me", "still there?"));
+        friends.received(message(5, "me", "cy", "from the web page"));
+        assert_eq!(friends.unread("bo"), 0);
+        assert_eq!(friends.unread("cy"), 1);
+        assert_eq!(friends.talks["cy"].messages.len(), 2);
+
+        // Sent from here: the answer and the socket bring the same message.
+        friends.writing = "yes".into();
+        friends.sending = true;
+        friends.written("bo", Ok(message(6, "me", "bo", "yes")));
+        friends.received(message(6, "me", "bo", "yes"));
+        assert!(!friends.sending && friends.writing.is_empty());
+        assert_eq!(friends.talks["bo"].messages.len(), 4);
+
+        // Refused: what was written stays, to send again.
+        friends.writing = "again".into();
+        friends.sending = true;
+        let gone = Problem::Refused {
+            status: 404,
+            message: "session: that friend is not here".into(),
+        };
+        friends.written("bo", Err(gone.clone()));
+        assert_eq!(friends.writing, "again");
+        assert_eq!(friends.problem, Some(gone));
+    }
+
+    #[test]
+    fn a_message_for_a_closed_panel_counts_even_in_the_open_conversation() {
+        let mut friends = Friends {
+            address: Some("me".into()),
+            talking: Some("bo".into()),
+            open: false,
+            ..Default::default()
+        };
+        friends.received(message(1, "bo", "me", "hi"));
+        assert_eq!(friends.waiting(), 1);
     }
 
     fn invite(room: &str, status: &str) -> FriendInvite {

@@ -31,8 +31,8 @@ use crate::config::Store;
 use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
 use api::{
-    AccountEvent, BotInfo, Event, FriendSettings, FriendsList, GameInfo, GameState, OpenGame,
-    Selections,
+    AccountEvent, BotInfo, DirectMessage, Event, FriendSettings, FriendsList, GameInfo, GameState,
+    OpenGame, Selections,
 };
 use std::collections::BTreeMap;
 
@@ -133,6 +133,10 @@ pub enum Request {
     Friend(FriendCall),
     /// Read the friends settings, or change them to these.
     FriendSettings(Option<FriendSettings>),
+    /// What was said with this address.
+    Messages { with: String },
+    /// Write to this address.
+    Write { to: String, text: String },
 }
 
 /// What a signed-in account can do with its friends list. The server decides whether it may (a
@@ -276,6 +280,18 @@ enum Reply {
         result: Result<FriendsList, Problem>,
     },
     FriendSettings(Result<FriendSettings, Problem>),
+    /// The account's own address, as its socket said when it opened.
+    AccountAddress(String),
+    Messages {
+        with: String,
+        result: Result<Vec<DirectMessage>, Problem>,
+    },
+    Written {
+        to: String,
+        result: Result<DirectMessage, Problem>,
+    },
+    /// A message arrived on the account's socket.
+    Message(Box<DirectMessage>),
 }
 
 #[derive(Resource)]
@@ -445,7 +461,9 @@ impl AccountLink {
                     info!("the friends list changed");
                     Some(Reply::Friends(session.friends()))
                 }
-                Ok(_) => None,
+                Ok(AccountEvent::Ready { address }) => Some(Reply::AccountAddress(address)),
+                Ok(AccountEvent::Message(message)) => Some(Reply::Message(Box::new(message))),
+                Ok(AccountEvent::Other(_)) => None,
                 Err(e) => {
                     warn!("skipped an account event this client cannot read: {e}");
                     None
@@ -598,6 +616,14 @@ fn handle(
             Some(Reply::FriendDone { call, result })
         }
         Request::FriendSettings(new) => Some(Reply::FriendSettings(session.friend_settings(new))),
+        Request::Messages { with } => Some(Reply::Messages {
+            result: session.history(&with),
+            with,
+        }),
+        Request::Write { to, text } => Some(Reply::Written {
+            result: session.write(&to, &text),
+            to,
+        }),
     }
 }
 
@@ -863,6 +889,20 @@ fn poll_network(
                     friends.problem = Some(problem);
                 }
             },
+            Ok(Reply::AccountAddress(address)) => {
+                if friends.address.as_ref() != Some(&address) {
+                    friends.address = Some(address);
+                }
+            }
+            Ok(Reply::Messages { with, result }) => match result {
+                Ok(messages) => friends.history(&with, messages),
+                Err(problem) => {
+                    warn!("reading the messages: {}", problem.message());
+                    friends.problem = Some(problem);
+                }
+            },
+            Ok(Reply::Written { to, result }) => friends.written(&to, result),
+            Ok(Reply::Message(message)) => friends.received(*message),
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
                 // The connection lists every game; a narrower list is asked for again.

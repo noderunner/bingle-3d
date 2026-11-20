@@ -109,9 +109,52 @@ pub struct Friend {
     pub handle: String,
     /// What the list calls them ("@ana").
     pub name: String,
+    /// Where messages to them go.
+    #[serde(default)]
+    pub address: String,
     /// They can be seen to be here (only ever true for a friend).
     #[serde(default)]
     pub online: bool,
+    /// A message would reach them: they are here, or hidden but have written themselves.
+    #[serde(default)]
+    pub can_write: bool,
+}
+
+/// One direct message, pushed as a `dm` event, answered by `POST /api/dm`, and listed by
+/// `POST /api/dm/history`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DirectMessage {
+    pub id: u64,
+    /// The sender's address, and `to` the receiver's.
+    pub from: String,
+    pub to: String,
+    /// What the sender went by.
+    #[serde(default)]
+    pub name: String,
+    pub text: String,
+    /// When it was sent (RFC 3339).
+    #[serde(default)]
+    pub at: String,
+}
+
+/// `POST /api/dm`'s body.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DirectMessageRequest {
+    pub to: String,
+    pub text: String,
+}
+
+/// `POST /api/dm/history`'s body: what was said with an address.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DirectHistoryRequest {
+    pub with: String,
+}
+
+/// `POST /api/dm/history`'s answer, oldest first.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct DirectHistory {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub messages: Vec<DirectMessage>,
 }
 
 /// An invitation to a game, from a friend.
@@ -177,11 +220,13 @@ pub struct OkResponse {
 /// A message on `GET /ws-dm`, the account's own socket, of the kinds the client acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccountEvent {
-    /// The first message: the account's address.
-    Ready,
+    /// The first message: the account's own address, the one others write to.
+    Ready { address: String },
     /// The friends list changed: read it again.
     Friends,
-    /// A kind this client skips (messages and calls, badges, and any added later).
+    /// A direct message, from a friend or sent by this account (from here or elsewhere).
+    Message(DirectMessage),
+    /// A kind this client skips (calls, badges, and any added later).
     Other(String),
 }
 
@@ -191,11 +236,21 @@ impl AccountEvent {
         struct Envelope {
             #[serde(rename = "type")]
             kind: String,
+            #[serde(default)]
+            data: serde_json::Value,
+        }
+        #[derive(Deserialize)]
+        struct ReadyData {
+            #[serde(default)]
+            address: String,
         }
         let env: Envelope = serde_json::from_str(text)?;
         Ok(match env.kind.as_str() {
-            "ready" => AccountEvent::Ready,
+            "ready" => AccountEvent::Ready {
+                address: serde_json::from_value::<ReadyData>(env.data)?.address,
+            },
             "friends" => AccountEvent::Friends,
+            "dm" => AccountEvent::Message(serde_json::from_value(env.data)?),
             other => AccountEvent::Other(other.to_string()),
         })
     }
@@ -1052,6 +1107,8 @@ mod tests {
         reads::<FriendSettings>("GET /api/friends/settings");
         reads::<FriendSettings>("PUT /api/friends/settings");
         reads::<HereResponse>("POST /api/here");
+        reads::<DirectMessage>("POST /api/dm");
+        reads::<DirectHistory>("POST /api/dm/history");
         for call in [
             "request",
             "answer",
@@ -1230,6 +1287,19 @@ mod tests {
         );
         sends("POST /api/here", json(HereRequest { here: false }));
         sends(
+            "POST /api/dm",
+            json(DirectMessageRequest {
+                to: "addr".into(),
+                text: "hello".into(),
+            }),
+        );
+        sends(
+            "POST /api/dm/history",
+            json(DirectHistoryRequest {
+                with: "addr".into(),
+            }),
+        );
+        sends(
             "POST /auth/login",
             json(LoginRequest {
                 handle: "ana".into(),
@@ -1276,7 +1346,7 @@ mod tests {
             }
         }
         acted_on.dedup();
-        assert_eq!(acted_on, ["ready", "friends"]);
+        assert_eq!(acted_on, ["ready", "dm", "friends"]);
     }
 
     #[test]

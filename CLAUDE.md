@@ -170,7 +170,8 @@ A game's own rules and its players' words keep their terms.
 - `src/lobby.rs`: a game not yet started that this client has a seat in, on the game's panel:
   sit, put a bot in a seat, remove, leave, start. `offers` has no Bevy in it; the server decides
   who may do what.
-- `src/friends.rs`: the signed-in account's friends panel, on the right. The list is filled by
+- `src/friends.rs`: the signed-in account's friends panel, on the right, and its direct
+  messages (kept per friend address, unread counted here: the server keeps no record of it). The list is filled by
   the network thread, which also keeps the account's own socket (`/ws-dm`) open and says it is
   here every minute (`AccountLink` in `net/mod.rs`).
 - `src/sign_in.rs`: signing in and out. `Form` has no Bevy in it; the password has a masked
