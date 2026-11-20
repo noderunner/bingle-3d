@@ -54,33 +54,105 @@ page = "https://polyhaven.com/a/white_maple_veneer"
 by = "Jenelle van Heerden"
 
 [[source]]
-file = "dark_wood_diff_2k.jpg"
-url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wood/dark_wood_diff_2k.jpg"
-sha256 = "ff811f97ab46f1148f2753451fd9d64abf0ab9101e85922ed9f45fc3595a3cf2"
-asset = "Dark Wood"
-page = "https://polyhaven.com/a/dark_wood"
-by = "Dimitrios Savva, Rico Cilliers, Dario Barresi"
+file = "black_walnut_veneer_01_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_diff_2k.jpg"
+sha256 = "131a5322d045f86dcf6fa413cdf34f230f8f7f96d820221a1637647108bf2304"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
 
 [[source]]
-file = "dark_wood_nor_gl_2k.jpg"
-url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wood/dark_wood_nor_gl_2k.jpg"
-sha256 = "624c7262c726cbc7da8ad02941dc6c95dec104fdc20e2804560ea112814b1d5d"
-asset = "Dark Wood"
-page = "https://polyhaven.com/a/dark_wood"
-by = "Dimitrios Savva, Rico Cilliers, Dario Barresi"
+file = "black_walnut_veneer_01_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_nor_gl_2k.jpg"
+sha256 = "8970308650c9e8b44b3fad5f14459239869a8dc74db40d00b6a095b38e7e24e9"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
 
 [[source]]
-file = "dark_wood_arm_2k.jpg"
-url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/dark_wood/dark_wood_arm_2k.jpg"
-sha256 = "92583d92c722eb58db4c5e32e35041898f7fee1ce9eca2ae63250ffb7a286fdb"
-asset = "Dark Wood"
-page = "https://polyhaven.com/a/dark_wood"
-by = "Dimitrios Savva, Rico Cilliers, Dario Barresi"
+file = "black_walnut_veneer_01_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/black_walnut_veneer_01/black_walnut_veneer_01_arm_2k.jpg"
+sha256 = "6d384b9c90729489d5971ee9b2bb05d7535792b4a3199dde6121086f8ca2dca7"
+asset = "Black Walnut Veneer 01"
+page = "https://polyhaven.com/a/black_walnut_veneer_01"
+by = "Jenelle van Heerden"
 
 [[source]]
-file = "photo_studio_loft_hall_2k.hdr"
-url = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/photo_studio_loft_hall_2k.hdr"
-sha256 = "2eadabfce70a1f27d958aa18b2572d75883f9964f4656c10e706a44cafe129d0"
-asset = "Photo Studio Loft Hall"
-page = "https://polyhaven.com/a/photo_studio_loft_hall"
-by = "Sergej Majboroda"
+file = "oak_veneer_01_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/oak_veneer_01/oak_veneer_01_diff_2k.jpg"
+sha256 = "0718c2e1a209afe6138ccb41d70e1a18cd825d1e73db33ad7cf80806fa9ce5a4"
+asset = "Oak Veneer 01"
+page = "https://polyhaven.com/a/oak_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "oak_veneer_01_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/oak_veneer_01/oak_veneer_01_nor_gl_2k.jpg"
+sha256 = "e74a9d3ddcd86473a21815a28464f4dac4ceb8f86e7f170226dede8ed70d8eb9"
+asset = "Oak Veneer 01"
+page = "https://polyhaven.com/a/oak_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "oak_veneer_01_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/oak_veneer_01/oak_veneer_01_arm_2k.jpg"
+sha256 = "c1a3453f517fe566ca01f431c72b0ab29120ffce33922f88f3b1100a720b17ce"
+asset = "Oak Veneer 01"
+page = "https://polyhaven.com/a/oak_veneer_01"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_diff_2k.jpg"
+sha256 = "dc572a16d860d56f03ae7b2df6fbf684adda4a5eee784733069d784a7dfe1a9c"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_nor_gl_2k.jpg"
+sha256 = "5be866a2ca4e92b3197f66421a8dcfd1917db11b3d75371f847b53994cbe0b22"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "cherry_veneer_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/cherry_veneer/cherry_veneer_arm_2k.jpg"
+sha256 = "0043601e7bd9df714b2872f2ff5a99233b7cf4820a2457be0eb91cb2e8f8c236"
+asset = "Cherry Veneer"
+page = "https://polyhaven.com/a/cherry_veneer"
+by = "Jenelle van Heerden"
+
+[[source]]
+file = "scuba_suede_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_diff_2k.jpg"
+sha256 = "9c0b3ed2ffc4862c571940b139680ac6f612041b9454bbddff21f90dc027033c"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "scuba_suede_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_nor_gl_2k.jpg"
+sha256 = "3bce1a0272cacffcd8f7414fb679a0ea27944b9b82dab5165a6dd079d6eda871"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "scuba_suede_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/scuba_suede/scuba_suede_arm_2k.jpg"
+sha256 = "5ae596fc8f6905587a8b471454c89106dbbc8eda7a6267eccc919b084e895c5e"
+asset = "Scuba Suede"
+page = "https://polyhaven.com/a/scuba_suede"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "lythwood_room_2k.hdr"
+url = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/lythwood_room_2k.hdr"
+sha256 = "c01266ac94735d84524853e5aa4821723346a9beec8a87b3b0001e616711fd8e"
+asset = "Lythwood Room"
+page = "https://polyhaven.com/a/lythwood_room"
+by = "Greg Zaal"

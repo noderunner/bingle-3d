@@ -183,7 +183,10 @@ A game's own rules and its players' words keep their terms.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
   ASCII only.
 - `src/scene.rs`: the table and its lights: a key light for shadows and a real room's light
-  (`EnvironmentMapLight`, on every 3D camera). **One unit is one metre, and the table top is at
+  (`EnvironmentMapLight`), and on every 3D camera SSAO, TAA (both need `Msaa::Off`), bloom on
+  highlights only, depth of field focused by the orbit camera, and fog into the dim room. The
+  key light (and the room's window, turned to it) is beyond the board: what faces the player
+  reflects the dim room, so dark polish stays dark. **One unit is one metre, and the table top is at
   y = 0**, so boards are their real size (this is what makes VR work later).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
   `embedded://<path>`; a test checks the list against the folder. `src/textures.rs`: mipmaps for
@@ -196,12 +199,17 @@ A game's own rules and its players' words keep their terms.
   piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
-  layout coordinates and the position's cells; names no game. `src/look.rs`: generic defaults for
-  how things look (a seat's colour, the woods, the stone), and `MaterialSpec`, a material as data;
-  a wooden mesh needs texture coordinates in metres (`world_uvs`). Do not read `shape`, `style`
-  or other fields ADR 0124 moves to `web.yaml`: they are leaving the API. Each seat's `connect` goals are strips along their regions'
-  outer sides, in the seat's colour (`goal_strips`). The board also lights the cells a click would be taken on
-  and shows the move being built as see-through pieces.
+  layout coordinates and the position's cells; names no game. The board is one slab
+  (`src/slab.rs`: its outline, rounded rim, and the shading of a goal's cells, geometry with no
+  systems) with the cells cut into it; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
+  (stopgap buttons), and the materials made of it are built again when it changes.
+  `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
+  and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres
+  (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
+  are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
+  (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
+  lights the cells a click would be taken on and shows the move being built as see-through
+  pieces.
 - `src/play.rs`: playing a seat. `Turn` is the move being built from the server's legal selections,
   narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh

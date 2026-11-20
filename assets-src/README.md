@@ -38,16 +38,18 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 
 | Step | Makes | From |
 |---|---|---|
-| `environment` | `environment/loft_hall_{diffuse,specular}.ktx2`: the room's light for Bevy's `EnvironmentMapLight` | an HDR panorama: GGX-filtered per roughness level, and irradiance from spherical harmonics |
-| `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg` | scanned wood, resized |
+| `environment` | `environment/room_{diffuse,specular}.ktx2`: the room's light for Bevy's `EnvironmentMapLight` | an HDR panorama, graded for a table top (the floor below the horizon made the dim table the board stands on, colours at half saturation), then GGX-filtered per roughness level, and irradiance from spherical harmonics |
+| `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg`: four board woods (teak, walnut, oak, cherry), pale maple, and the table's felt | scanned wood and cloth, resized |
 | `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg` | the stone's profile, turned; the colours drawn with numpy |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
 
 How the client reads them:
 
 - **Woods** are mapped by position, in metres (`look::world_uvs`), so a wood's texture must be
-  seamless and its real size known (`look::WOODS`). `arm` is ambient occlusion, roughness and
-  metalness in red, green and blue, as glTF reads them.
+  seamless and its real size known (`look::WOODS`), with the colour an oil finish gives the raw
+  veneer that was scanned. Its normal map is read three times finer than its colour, for the
+  pores a close look sees. `arm` is ambient occlusion, roughness and metalness in red, green and
+  blue, as glTF reads them.
 - **Textures** are JPEG, and the client makes their mipmaps when they load
   (`src/textures.rs`); a colour texture's name ends in `_albedo`, which is how it is read as
   sRGB.

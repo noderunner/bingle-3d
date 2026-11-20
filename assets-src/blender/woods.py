@@ -1,4 +1,5 @@
-"""The woods: scanned CC0 textures, resized to what the client needs and saved as JPEG.
+"""The woods (and the table's felt): scanned CC0 textures, resized to what the client needs and
+saved as JPEG.
 
 Each wood is three images, as glTF and Bevy's `StandardMaterial` read them:
 - `albedo`: the colour, in sRGB, resized in linear light;
@@ -10,15 +11,18 @@ The client makes their mipmaps when it loads them (`src/textures.rs`)."""
 
 import common
 
-# name: (source prefix, albedo size, normal and arm size). Teak and maple cover 1 m, the dark
-# wood 2 m: the client scales them to that (`src/look.rs`).
+# name: (source prefix, albedo size, normal and arm size). The client knows how much of a metre
+# each covers (`look::WOODS`).
 WOODS = {
-    # The board: a golden, fine and even grain.
+    # Boards, to choose from: golden teak, dark walnut, open-grained oak, warm cherry.
     "teak": ("teak_veneer", 2048, 1024),
+    "walnut": ("black_walnut_veneer_01", 2048, 1024),
+    "oak": ("oak_veneer_01", 2048, 1024),
+    "cherry": ("cherry_veneer", 2048, 1024),
     # Pale wood, for the light side of a board.
     "maple": ("white_maple_veneer", 1024, 1024),
-    # The table: dark, reddish, under everything.
-    "dark": ("dark_wood", 2048, 1024),
+    # Not a wood: the table's felt, made the same way.
+    "felt": ("scuba_suede", 1024, 1024),
 }
 
 

@@ -14,11 +14,20 @@ import bpy
 import common
 import stones
 
-# How much of a metre each wood's texture covers, as in `src/look.rs`.
-WOOD_METRES = {"teak": 1.0, "maple": 1.0, "dark": 2.0}
-# The board's own finish, as in `src/look.rs`.
-BOARD = {"wood": "teak", "clearcoat": 0.4, "clearcoat_roughness": 0.25}
-TABLE = {"wood": "dark"}
+# Each wood's size (how much of a metre its texture covers) and oil finish (sRGB), as in
+# `src/look.rs`, and the wood a material naming `board` is drawn in here.
+WOODS = {
+    "teak": (1.0, (1.0, 0.93, 0.84)),
+    "walnut": (1.0, (0.58, 0.44, 0.35)),
+    "oak": (1.83, (0.97, 0.88, 0.74)),
+    "cherry": (1.0, (0.78, 0.55, 0.46)),
+    "maple": (1.0, (1.0, 1.0, 1.0)),
+    "felt": (0.285, (1.0, 1.0, 1.0)),
+}
+BOARD_WOOD = "teak"
+# The board's own finish and the table, as in `src/look.rs`.
+BOARD = {"wood": "board", "clearcoat": 0.5, "clearcoat_roughness": 0.18}
+TABLE = {"wood": "felt", "tint": [0.35, 0.42, 0.40], "reflectance": 0.3}
 
 
 def appearance(name):
@@ -38,6 +47,13 @@ def image(path, colour):
 
 def material(name, spec, object_mapped):
     """A Principled BSDF from an appearance file's material."""
+    spec = dict(spec)
+    if spec.get("wood") == "board":
+        spec["wood"] = BOARD_WOOD
+    tint = list(spec.get("tint", [1.0, 1.0, 1.0]))
+    if "wood" in spec:
+        tint = [t * f for t, f in zip(tint, WOODS[spec["wood"]][1])]
+        spec["tint"] = tint
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
@@ -55,7 +71,7 @@ def material(name, spec, object_mapped):
             # Woods: mapped by position, in metres, from every side, as the client maps them.
             coords = nodes.new("ShaderNodeTexCoord")
             mapping = nodes.new("ShaderNodeMapping")
-            metres = WOOD_METRES[spec["wood"]]
+            metres = WOODS[spec["wood"]][0]
             mapping.inputs["Scale"].default_value = (1 / metres, 1 / metres, 1 / metres)
             links.new(coords.outputs["Object"], mapping.inputs["Vector"])
             links.new(mapping.outputs["Vector"], node.inputs["Vector"])
@@ -107,7 +123,7 @@ def scene():
     world = bpy.data.worlds.new("Room")
     world.use_nodes = True
     env = world.node_tree.nodes.new("ShaderNodeTexEnvironment")
-    env.image = bpy.data.images.load(common.source("photo_studio_loft_hall_2k.hdr"))
+    env.image = bpy.data.images.load(common.source("lythwood_room_2k.hdr"))
     world.node_tree.links.new(env.outputs["Color"], world.node_tree.nodes["Background"].inputs[0])
     bpy.context.scene.world = world
 

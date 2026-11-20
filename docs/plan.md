@@ -411,18 +411,32 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   scripts in `assets-src/blender/`, which fetch the CC0 sources listed in `sources.toml` (checked
   by SHA-256) and write `assets/`. `previews` renders the assets in Cycles for a person to look
   at. Blender is Flathub's, on the host (it renders on the GPU there); the toolbox has none.
-- The room: an HDR photograph of a room (Poly Haven, CC0), filtered by the pipeline into the
-  diffuse and specular cubemaps Bevy's `EnvironmentMapLight` reads, on every 3D camera, turned so
-  its windows are on the key light's side. A wooden table.
-- Every board is wood (teak), each cell its own tile over grooves of darker wood, the grain mapped
-  by position so it runs on across cells; every piece is a lens-shaped stone modelled in Blender.
-  These are the generic defaults (`look.rs`), for every game.
+- The room: an HDR photograph of a room (Poly Haven, CC0), graded by the pipeline for a table
+  top (its floor, below the horizon, made the dim table the board stands on; its colours at half
+  saturation) and filtered into the diffuse and specular cubemaps Bevy's `EnvironmentMapLight`
+  reads, on every 3D camera. It is the fill light, kept low; a key light from beyond the board,
+  with the room's window turned to it, makes the highlights and shadows, so what faces the
+  player reflects the dim room and dark polish stays dark. A felt-covered table fading into the
+  room with distance.
+- Every camera: SSAO (stones grounded, cut lines dark), TAA (fine grain steady, shadows filtered
+  over time), contact shadows, bloom on highlights only, a shallow depth of field focused where
+  the orbit camera looks.
+- Every board is one slab of wood with a rounded rim, its cells cut into it and darkened lines
+  between them; the grain is mapped by position, so it runs on across cells, with the grain's
+  relief three times finer than its colour. The player chooses the wood: teak, walnut, oak or
+  cherry, each with the colour of an oil finish (stopgap buttons at the bottom right). Every
+  piece is a lens-shaped stone modelled in Blender, each turned, sized and leaning a little
+  differently. These are the generic defaults (`look.rs`), for every game.
+- Each goal's edge: the slab's rim along it is stained, and its cells shaded with a soft gradient
+  towards it, in the seat's colour; a corner on two seats' edges is split between them.
 - The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
-  seat's pieces and goal edges are made of, and each seat's colour in the panels. Hex's: slate and
-  clamshell stones, the slate side's edges stained ebony and the shell side's in maple.
+  seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
+  cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim
+  stained ebony and the shell side's in maple.
 - As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
   each material using one is built again (Bevy does not rebuild a material when its image
-  changes). Bevy's `jpeg` feature is the only new code (zune-jpeg).
+  changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left
+  out: they are behind an experimental feature, noisy and costly; TAA's filtering does enough.
 - **Next**: the maintainer's eye on it, on the GPU; then per-piece models (a piece kind per
   model), and a look for the next game.
 
@@ -493,5 +507,5 @@ Settled 2026-11-20, with the maintainer:
    Python scripts in `assets-src/`; textures and light are scanned CC0 material (Poly Haven),
    fetched by URL and SHA-256, never committed as sources; models and procedural textures are
    made by the scripts. What they make is committed in `assets/` and compiled into the binary
-   (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a teak
-   board, the goal edges stained to match the stones.
+   (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
+   board of the player's choosing, each side's goal edges coloured to match its stones.

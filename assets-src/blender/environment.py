@@ -7,6 +7,12 @@ reads, filtered here once rather than by the GPU every frame.
 - Diffuse: the panorama's irradiance from nine spherical harmonics, divided by pi, as Bevy (and the
   glTF IBL sampler it was made for) expects.
 
+Before filtering, the panorama is graded for a table top (`grade`):
+- below the horizon is the room's floor, which the board would reflect where in the scene there
+  is a dark table: it is made dim, the colour of the felt in shadow;
+- its colours are halved in saturation, so a stone reflects a window as a highlight and not as
+  the green of the trees outside it.
+
 Bevy samples a cubemap with the world direction's z negated, so face texels are given the world
 direction (x, y, -z) of the usual cube direction."""
 
@@ -19,6 +25,25 @@ import common
 SPECULAR_SIZE = 256
 DIFFUSE_SIZE = 32
 SAMPLES = 128
+# How much colour the room keeps, and how bright the table below the horizon is, against the
+# average of the room above it.
+SATURATION = 0.5
+TABLE = np.array([0.05, 0.065, 0.065])
+
+
+def grade(pixels):
+    """The panorama made fit for a table top (see the module's notes)."""
+    img = pixels[..., :3].astype(np.float32)
+    grey = (img @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
+    img = grey + (img - grey) * SATURATION
+    h = img.shape[0]
+    lat = (0.5 - (np.arange(h) + 0.5) / h) * 180.0
+    upper = img[lat > 0].reshape(-1, 3).mean(0)
+    table = (TABLE * upper.mean()).astype(np.float32)
+    # Fully the table from 3 degrees below the horizon; the horizon itself is kept.
+    t = np.clip(-lat / 3.0, 0.0, 1.0)
+    t = (t * t * (3.0 - 2.0 * t))[:, None, None]
+    return img * (1.0 - t) + table[None, None, :] * t
 
 
 def cube_directions(size):
@@ -170,7 +195,7 @@ def irradiance(pano, size):
 
 
 def build(name, source_file):
-    pano = Panorama(common.read_image(common.source(source_file)))
+    pano = Panorama(grade(common.read_image(common.source(source_file))))
     levels = []
     count = int(math.log2(SPECULAR_SIZE)) + 1
     for i in range(count):
@@ -186,4 +211,4 @@ def build(name, source_file):
 
 
 def run():
-    build("loft_hall", "photo_studio_loft_hall_2k.hdr")
+    build("room", "lythwood_room_2k.hdr")

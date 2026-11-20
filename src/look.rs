@@ -2,39 +2,72 @@
 //! things are, and this client decides how they look. A per-game appearance (`appearance.rs`)
 //! may improve on them; no game needs one.
 //!
-//! Every board is wood on a darker wooden table, and every piece a stone in its seat's colour.
+//! Every board is a slab of wood on a felt-covered table, and every piece a stone in its seat's
+//! colour.
 
 use bevy::math::Affine2;
+
 use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::{assets, textures};
 
 /// A wood: scanned textures made by the asset pipeline (`assets-src/blender/woods.py`), as
-/// `textures/wood/<name>_{albedo,normal,arm}.jpg`, and the size in metres one copy of them covers.
+/// `textures/wood/<name>_{albedo,normal,arm}.jpg`, the size in metres one copy of them covers, and
+/// its finish: the colour (sRGB) oil gives the raw veneer that was scanned, deeper and warmer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Wood {
     pub name: &'static str,
     pub metres: f32,
+    pub finish: [f32; 3],
 }
 
-pub const WOODS: [Wood; 3] = [
-    // The board: golden, fine and even.
+pub const WOODS: [Wood; 6] = [
+    // Boards: golden teak, dark walnut, open-grained oak, warm cherry (`BOARD_WOODS`).
     Wood {
         name: "teak",
         metres: 1.0,
+        finish: [1.0, 0.93, 0.84],
+    },
+    Wood {
+        name: "walnut",
+        metres: 1.0,
+        finish: [0.58, 0.44, 0.35],
+    },
+    Wood {
+        name: "oak",
+        metres: 1.83,
+        finish: [0.97, 0.88, 0.74],
+    },
+    Wood {
+        name: "cherry",
+        metres: 1.0,
+        finish: [0.78, 0.55, 0.46],
     },
     // Pale.
     Wood {
         name: "maple",
         metres: 1.0,
+        finish: [1.0, 1.0, 1.0],
     },
-    // The table: dark and reddish.
+    // Not a wood: the table's felt, made and mapped the same way.
     Wood {
-        name: "dark",
-        metres: 2.0,
+        name: "felt",
+        metres: 0.285,
+        finish: [1.0, 1.0, 1.0],
     },
 ];
+
+/// The woods a board may be made of, the first by default.
+pub const BOARD_WOODS: [&str; 4] = ["teak", "walnut", "oak", "cherry"];
+
+/// The wood a material names as `board`: whichever the board is made of.
+pub const BOARD: &str = "board";
+
+/// How much finer the grain's relief (its normal map) is than its colour: the pores and the
+/// small ripples a close look sees, laid over the figure without stretching a single photograph.
+/// Not a whole number, so the two never line up.
+pub const DETAIL: f32 = 3.17;
 
 pub fn wood(name: &str) -> Option<Wood> {
     WOODS.iter().copied().find(|w| w.name == name)
@@ -46,8 +79,9 @@ pub fn wood(name: &str) -> Option<Wood> {
 pub struct MaterialSpec {
     /// A colour texture, by its path under `assets/`.
     pub albedo: Option<String>,
-    /// One of `WOODS`: its colour, normals and roughness, mapped by position on the table, so
-    /// a mesh using it needs texture coordinates in metres (`world_uvs`).
+    /// One of `WOODS`, or `board` for the board's own: its colour, normals and roughness,
+    /// mapped by position on the table, so a mesh using it needs texture coordinates in metres
+    /// (`world_uvs`).
     pub wood: Option<String>,
     /// Multiplies the colour (sRGB), as a stain does; the whole colour when there is no texture.
     pub tint: Option<[f32; 3]>,
@@ -58,6 +92,11 @@ pub struct MaterialSpec {
     /// A clear coat over it: how much, and how rough. Polish.
     pub clearcoat: Option<f32>,
     pub clearcoat_roughness: Option<f32>,
+    /// How much light passes through it to the other side, as through a shell (0 to 1).
+    pub translucency: Option<f32>,
+    /// Light of its own, as a lit cell's: linear RGB added to what the camera sees (Bevy does not
+    /// scale an emissive colour by the exposure), so 1 is about white.
+    pub glow: Option<[f32; 3]>,
 }
 
 impl MaterialSpec {
@@ -70,6 +109,7 @@ impl MaterialSpec {
             out.push(format!("no texture {file}"));
         }
         if let Some(name) = &self.wood
+            && name != BOARD
             && wood(name).is_none()
         {
             out.push(format!("no wood {name}"));
@@ -80,30 +120,56 @@ impl MaterialSpec {
         out
     }
 
+    /// The same, with `board` for a wood replaced by the board's wood.
+    pub fn on_board(&self, board_wood: &str) -> MaterialSpec {
+        let mut out = self.clone();
+        if out.wood.as_deref() == Some(BOARD) {
+            out.wood = Some(board_wood.to_string());
+        }
+        out
+    }
+
+    /// Whether it is made of the board's wood, whichever that is.
+    pub fn is_board_wood(&self) -> bool {
+        self.wood.as_deref() == Some(BOARD)
+    }
+
+    /// Builds it. A `board` wood here is the first of `BOARD_WOODS`: use `on_board` first to
+    /// choose another.
     pub fn build(&self, server: &AssetServer) -> StandardMaterial {
-        let tint = self
-            .tint
-            .map_or(Color::WHITE, |[r, g, b]| Color::srgb(r, g, b));
+        let tint = self.tint.unwrap_or([1.0; 3]);
         let mut m = StandardMaterial {
-            base_color: tint,
+            base_color: Color::srgb(tint[0], tint[1], tint[2]),
             perceptual_roughness: self.roughness.unwrap_or(0.5),
             reflectance: self.reflectance.unwrap_or(0.5),
             clearcoat: self.clearcoat.unwrap_or(0.0),
             clearcoat_perceptual_roughness: self.clearcoat_roughness.unwrap_or(0.5),
+            diffuse_transmission: self.translucency.unwrap_or(0.0),
+            emissive: self
+                .glow
+                .map_or(LinearRgba::BLACK, |[r, g, b]| LinearRgba::rgb(r, g, b)),
             ..default()
         };
         if let Some(file) = &self.albedo {
             m.base_color_texture = Some(textures::load(server, file));
         }
-        if let Some(w) = self.wood.as_deref().and_then(wood) {
+        let name = match self.wood.as_deref() {
+            Some(BOARD) => Some(BOARD_WOODS[0]),
+            other => other,
+        };
+        if let Some(w) = name.and_then(wood) {
             let file = |kind: &str| format!("textures/wood/{}_{kind}.jpg", w.name);
             m.base_color_texture = Some(textures::load(server, &file("albedo")));
+            // The relief, finer (`DETAIL`), from the second set of texture coordinates.
             m.normal_map_texture = Some(textures::load(server, &file("normal")));
+            m.normal_map_channel = bevy::mesh::UvChannel::Uv1;
             let arm = textures::load(server, &file("arm"));
             m.metallic_roughness_texture = Some(arm.clone());
             m.occlusion_texture = Some(arm);
             m.perceptual_roughness = self.roughness.unwrap_or(1.0);
             m.uv_transform = Affine2::from_scale(Vec2::splat(1.0 / w.metres));
+            let [r, g, b] = w.finish;
+            m.base_color = Color::srgb(tint[0] * r, tint[1] * g, tint[2] * b);
         }
         m
     }
@@ -112,7 +178,8 @@ impl MaterialSpec {
 /// Gives a mesh texture coordinates in metres by where each vertex will be on the table (its
 /// position plus `at`), for a wood: a face looking up or down is mapped from above, one looking
 /// sideways from that side, so the grain runs on across neighbouring meshes and round edges, and
-/// is never stretched. Adds the tangents a normal map needs.
+/// is never stretched. A second set, `DETAIL` times finer, is for the grain's relief. Adds the
+/// tangents a normal map needs.
 pub fn world_uvs(mut mesh: Mesh, at: Vec3) -> Mesh {
     use bevy::mesh::VertexAttributeValues;
     let (
@@ -130,7 +197,9 @@ pub fn world_uvs(mut mesh: Mesh, at: Vec3) -> Mesh {
         .zip(normals)
         .map(|(p, n)| planar_uv(Vec3::from_array(*p) + at, Vec3::from_array(*n)))
         .collect();
+    let detail: Vec<[f32; 2]> = uvs.iter().map(|[u, v]| [u * DETAIL, v * DETAIL]).collect();
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, detail);
     if let Err(e) = mesh.generate_tangents() {
         warn!("no tangents for a wooden mesh: {e}");
     }
@@ -153,36 +222,47 @@ pub fn planar_uv(p: Vec3, n: Vec3) -> [f32; 2] {
 /// made to fill most of a 28 mm cell (`assets-src/blender/stones.py`).
 pub const PIECE_MODEL: &str = "models/stone.glb";
 
-/// The board's cells: oiled teak.
+/// The board: its wood (whichever is chosen), oiled and polished.
 pub fn board() -> MaterialSpec {
     MaterialSpec {
-        wood: Some("teak".into()),
-        clearcoat: Some(0.4),
-        clearcoat_roughness: Some(0.25),
+        wood: Some(BOARD.into()),
+        clearcoat: Some(0.5),
+        clearcoat_roughness: Some(0.18),
         ..default()
     }
 }
 
-/// The board beneath its cells, seen in the grooves between them: the same wood, darker.
+/// The lines between the cells, cut into the board and darkened.
 pub fn groove() -> MaterialSpec {
     MaterialSpec {
-        tint: Some([0.45, 0.36, 0.30]),
+        tint: Some([0.30, 0.22, 0.17]),
         ..board()
     }
 }
 
-/// The table the board stands on: worn rather than polished, so it does not outshine the board.
+/// A cell a click would be taken on: the board, lit warmly, plainly enough to see at a glance.
+pub fn lit_cell() -> MaterialSpec {
+    MaterialSpec {
+        glow: Some([0.26, 0.22, 0.07]),
+        ..board()
+    }
+}
+
+/// The table the board stands on: felt, which takes the light and gives back little, so the
+/// board stands out on it.
 pub fn table() -> MaterialSpec {
     MaterialSpec {
-        wood: Some("dark".into()),
-        roughness: Some(1.6),
-        reflectance: Some(0.35),
+        wood: Some("felt".into()),
+        // A deep green-blue, darker than the scan, so the board is the brightest thing on it.
+        tint: Some([0.35, 0.42, 0.40]),
+        reflectance: Some(0.3),
         ..default()
     }
 }
 
-/// A goal's edge of the board, stained in its seat's colour (or a plain dark stain for a goal
-/// every seat shares).
+/// A goal's edge of the board (its rim and sides), stained in its seat's colour (or a plain dark
+/// stain for a goal every seat shares). Satin, not gloss: the sides face the room's window, and a
+/// gloss there shows the window rather than the wood.
 pub fn goal(colour: Option<Color>) -> MaterialSpec {
     let stain = colour.map_or([0.25, 0.22, 0.20], |c| {
         let c = c.to_srgba();
@@ -190,6 +270,8 @@ pub fn goal(colour: Option<Color>) -> MaterialSpec {
     });
     MaterialSpec {
         tint: Some(stain),
+        clearcoat: Some(0.2),
+        clearcoat_roughness: Some(0.4),
         ..board()
     }
 }
@@ -253,7 +335,14 @@ mod tests {
 
     #[test]
     fn the_generic_looks_use_only_what_the_client_has() {
-        let looks = [board(), groove(), table(), goal(None), piece(Color::BLACK)];
+        let looks = [
+            board(),
+            groove(),
+            lit_cell(),
+            table(),
+            goal(None),
+            piece(Color::BLACK),
+        ];
         for look in looks {
             assert!(
                 look.problems().is_empty(),
@@ -262,6 +351,7 @@ mod tests {
             );
         }
         assert!(assets::exists(PIECE_MODEL));
+        assert!(BOARD_WOODS.iter().all(|w| wood(w).is_some()));
         for w in WOODS {
             for kind in ["albedo", "normal", "arm"] {
                 assert!(assets::exists(&format!(
@@ -290,6 +380,26 @@ mod tests {
         };
         assert!(uvs.iter().all(|[u, _]| *u >= -0.5 && *u <= 5.5));
         assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+    }
+
+    #[test]
+    fn the_board_wood_is_whichever_is_chosen() {
+        let ebony = MaterialSpec {
+            wood: Some(BOARD.into()),
+            tint: Some([0.2, 0.1, 0.1]),
+            ..default()
+        };
+        assert!(ebony.problems().is_empty());
+        assert!(ebony.is_board_wood());
+        let on_oak = ebony.on_board("oak");
+        assert_eq!(on_oak.wood.as_deref(), Some("oak"));
+        assert_eq!(on_oak.tint, ebony.tint);
+        assert!(!on_oak.is_board_wood());
+        assert_eq!(
+            table().on_board("oak"),
+            table(),
+            "another wood stays itself"
+        );
     }
 
     #[test]

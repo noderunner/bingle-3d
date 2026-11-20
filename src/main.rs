@@ -26,10 +26,12 @@ mod play;
 mod run_limit;
 mod scene;
 mod sign_in;
+mod slab;
 mod table;
 mod textures;
 mod voice;
 mod voice_chat;
+mod wood_choice;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -78,6 +80,7 @@ fn main() -> AppExit {
         assets::AssetsPlugin,
         textures::TexturesPlugin,
         appearance::AppearancePlugin,
+        wood_choice::WoodChoicePlugin,
     ))
     .add_plugins((
         fonts::FontsPlugin,
