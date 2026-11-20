@@ -99,6 +99,12 @@ pub enum Request {
     },
     /// Give up the watched game for the seat `player_name` sits at.
     Resign { watch: u64, player_name: String },
+    /// Before the watched game starts, do this for the seat `player_name` sits at.
+    Lobby {
+        watch: u64,
+        player_name: String,
+        call: LobbyCall,
+    },
     /// Close the watched game's socket.
     StopWatching,
     /// The unfinished games that match `query`. `asked` comes back with the answer.
@@ -116,6 +122,24 @@ pub struct GameSettings {
     /// A built-in bot in each of these seats, by seat; any other seat waits for a person.
     pub bots: BTreeMap<u32, String>,
     pub time: TimeControl,
+    /// It waits for this client's start, even once every seat is taken.
+    pub lobby: bool,
+}
+
+/// What a player at the table may do before the game starts. The server decides whether they
+/// may (only the host starts the game or clears a seat), and refuses otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LobbyCall {
+    /// The host starts a game that waits in its lobby.
+    Start,
+    /// Move to this open seat.
+    Sit(u32),
+    /// Put this built-in bot in this open seat.
+    Bot { seat: u32, bot: String },
+    /// The host clears this seat, a person's or a bot's.
+    Remove(u32),
+    /// Give up this client's seat.
+    Leave,
 }
 
 /// How a game is timed.
@@ -188,6 +212,11 @@ enum Reply {
     },
     Resigned {
         watch: u64,
+        result: Result<(), Problem>,
+    },
+    Lobby {
+        watch: u64,
+        call: LobbyCall,
         result: Result<(), Problem>,
     },
     Games {
@@ -382,6 +411,20 @@ fn handle(
             let result = session.resign(&w.room_code, &player_name);
             Some(Reply::Resigned { watch, result })
         }
+        Request::Lobby {
+            watch,
+            player_name,
+            call,
+        } => {
+            let w = watching.as_ref().filter(|w| w.watch == watch)?;
+            // Who sits where afterwards comes on the socket, as a state event.
+            let result = session.lobby(&w.room_code, &player_name, &call);
+            Some(Reply::Lobby {
+                watch,
+                call,
+                result,
+            })
+        }
         Request::StopWatching => {
             if let Some(old) = watching.take() {
                 old.socket.close();
@@ -556,6 +599,23 @@ fn poll_network(
                     }
                 };
             }
+            Ok(Reply::Lobby {
+                watch: id,
+                call,
+                result,
+            }) if id == watch.id => match result {
+                // Done when the seats arrive on the socket; having left, there is nothing more
+                // to do at this table.
+                Ok(()) if call == LobbyCall::Leave => {
+                    stop_watching(&net, &mut watch);
+                    reconnect(&net, &mut status);
+                }
+                Ok(()) => {}
+                Err(problem) => {
+                    warn!("the lobby: {}", problem.message());
+                    watch.lobby_problem = Some(problem);
+                }
+            },
             // For a watch that has since been replaced.
             Ok(
                 Reply::Opened { .. }
@@ -564,7 +624,8 @@ fn poll_network(
                 | Reply::WatchFailed { .. }
                 | Reply::Selections { .. }
                 | Reply::Played { .. }
-                | Reply::Resigned { .. },
+                | Reply::Resigned { .. }
+                | Reply::Lobby { .. },
             ) => {}
             Ok(Reply::Games { asked, result }) => {
                 if asked != list.asked {
@@ -738,6 +799,8 @@ pub struct WatchStatus {
     pub turn: Option<Turn>,
     /// Giving up the game, for the seat this client plays.
     pub resign: Resign,
+    /// Why the server turned down the last thing asked of the lobby.
+    pub lobby_problem: Option<Problem>,
 }
 
 /// Where resigning stands. It takes two presses of the button, as it cannot be taken back.
@@ -767,6 +830,7 @@ pub fn watch(net: &Net, status: &mut WatchStatus, target: Target) {
     status.retry_in = None;
     status.turn = None;
     status.resign = Resign::No;
+    status.lobby_problem = None;
     net.send(Request::Watch {
         target,
         watch: status.id,
@@ -781,6 +845,7 @@ pub fn stop_watching(net: &Net, status: &mut WatchStatus) {
     status.retry_in = None;
     status.turn = None;
     status.resign = Resign::No;
+    status.lobby_problem = None;
     net.send(Request::StopWatching);
 }
 
@@ -817,6 +882,25 @@ pub fn resign(net: &Net, status: &mut WatchStatus) {
     net.send(Request::Resign {
         watch: status.id,
         player_name,
+    });
+}
+
+/// Before the watched game starts, does `call` for the seat this client plays.
+pub fn lobby(net: &Net, status: &mut WatchStatus, call: LobbyCall) {
+    let Some(player_name) = status
+        .table
+        .as_ref()
+        .filter(|t| t.state.status == "waiting")
+        .and_then(|t| t.yours())
+        .map(|s| s.name.clone())
+    else {
+        return;
+    };
+    status.lobby_problem = None;
+    net.send(Request::Lobby {
+        watch: status.id,
+        player_name,
+        call,
     });
 }
 
@@ -888,6 +972,8 @@ mod tests {
                 impulse_deadline: String::new(),
                 server_time: String::new(),
                 move_time_seconds: None,
+                lobby: false,
+                host_seat: Some(1),
                 seats: vec![
                     GameSeat {
                         seat: 1,
@@ -911,6 +997,7 @@ mod tests {
                 move_seq: 2,
                 ..Default::default()
             },
+            bots: vec![],
         }
     }
 
@@ -997,7 +1084,7 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.2.0".into(),
+                api_version: "1.4.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
             }))
@@ -1067,6 +1154,78 @@ mod tests {
         over.table.as_mut().unwrap().state.status = "finished".into();
         resign(&net, &mut over);
         assert_eq!(over.resign, Resign::No);
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn the_lobby_acts_for_this_clients_seat_shows_a_refusal_and_leaving_goes_back() {
+        let (net, requests, replies) = Net::for_test_with_replies();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(ServerStatus {
+                server: "http://127.0.0.1:8080".into(),
+                connection: Connection::Connecting,
+                notices: vec![],
+                retry_in: None,
+            })
+            .init_resource::<GameList>()
+            .init_resource::<NewGame>()
+            .add_systems(PreUpdate, poll_network);
+        let mut waiting = Table::new(opened());
+        waiting.state.status = "waiting".into();
+        let mut status = WatchStatus {
+            id: 4,
+            target: Some(Target::Room("AB12CD".into())),
+            table: Some(waiting),
+            ..Default::default()
+        };
+        lobby(&net, &mut status, LobbyCall::Remove(2));
+        assert_eq!(
+            requests.try_recv(),
+            Ok(Request::Lobby {
+                watch: 4,
+                player_name: "Ana".into(),
+                call: LobbyCall::Remove(2),
+            })
+        );
+        let refused = Problem::Refused {
+            status: 403,
+            message: "only the host".into(),
+        };
+        replies
+            .send(Reply::Lobby {
+                watch: 4,
+                call: LobbyCall::Remove(2),
+                result: Err(refused.clone()),
+            })
+            .unwrap();
+        app.insert_resource(net).insert_resource(status);
+        app.update();
+        let status = app.world().resource::<WatchStatus>();
+        assert_eq!(status.lobby_problem, Some(refused));
+        assert!(status.is_watching());
+
+        replies
+            .send(Reply::Lobby {
+                watch: 4,
+                call: LobbyCall::Leave,
+                result: Ok(()),
+            })
+            .unwrap();
+        app.update();
+        let status = app.world().resource::<WatchStatus>();
+        assert!(!status.is_watching(), "having left, back to the list");
+        assert_eq!(status.lobby_problem, None);
+        let sent: Vec<Request> = requests.try_iter().collect();
+        assert_eq!(sent, [Request::StopWatching, Request::Connect]);
+
+        // Once the game has started there is no lobby to act on.
+        let (net, requests) = Net::for_test();
+        let mut playing = WatchStatus {
+            table: Some(Table::new(opened())),
+            ..Default::default()
+        };
+        lobby(&net, &mut playing, LobbyCall::Leave);
         assert!(requests.try_recv().is_err());
     }
 

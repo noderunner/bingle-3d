@@ -8,7 +8,7 @@
 use std::time::Instant;
 
 use crate::clock::Timing;
-use crate::net::api::{Event, Game, GameInfo, GameSeat, GameState};
+use crate::net::api::{BotInfo, Event, Game, GameInfo, GameSeat, GameState};
 use crate::net::session::Opened;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +21,8 @@ pub struct Table {
     pub last_move: Option<String>,
     /// The time each seat has, in a timed game.
     pub timing: Option<Timing>,
+    /// The bots an open seat can be given before the game starts.
+    pub bots: Vec<BotInfo>,
 }
 
 /// What an event did.
@@ -48,6 +50,7 @@ impl Table {
             game: opened.game,
             state: opened.state,
             last_move: None,
+            bots: opened.bots,
         }
     }
 
@@ -65,22 +68,35 @@ impl Table {
                 self.state = state.clone();
                 Step::Changed
             }
-            Event::State { state, seats, .. } => {
+            Event::State {
+                state,
+                seats,
+                lobby,
+                host_seat,
+                ..
+            } => {
                 self.timed(state);
                 self.state = state.clone();
-                // A seat taken or given up. The event does not say which seat is this
-                // client's; that has not changed.
+                // A seat taken, changed or given up. The event does not say which seat is this
+                // client's, so it is found by its player's name, which only one person at the
+                // table goes by: after a move to another seat it is there, and after leaving, or
+                // being cleared by the host, nowhere.
                 if !seats.is_empty() {
-                    let mine = self.yours().map(|s| s.seat);
+                    let mine = self.yours().map(|s| s.name.clone());
                     self.game.seats = seats
                         .iter()
                         .map(|s| GameSeat {
-                            yours: Some(s.seat) == mine,
+                            yours: s.bot.is_empty()
+                                && mine
+                                    .as_ref()
+                                    .is_some_and(|m| s.name.eq_ignore_ascii_case(m)),
                             ..s.clone()
                         })
                         .collect();
                 }
                 self.game.status = state.status.clone();
+                self.game.lobby = *lobby;
+                self.game.host_seat = *host_seat;
                 // An undo or a new seat: the last move is no longer certain.
                 self.last_move = None;
                 Step::Changed
@@ -121,6 +137,26 @@ impl Table {
     /// The seat this client plays, if it has one.
     pub fn yours(&self) -> Option<&GameSeat> {
         self.game.seats.iter().find(|s| s.yours)
+    }
+
+    /// The game has not started, and this client has a seat at it: what the lobby is for.
+    pub fn in_lobby(&self) -> bool {
+        self.state.status == "waiting" && self.yours().is_some()
+    }
+
+    /// This client's seat is the host's.
+    pub fn hosting(&self) -> bool {
+        self.yours()
+            .is_some_and(|s| self.game.host_seat == Some(s.seat))
+    }
+
+    /// Whether nobody, person or bot, sits at `seat` yet.
+    pub fn is_open(&self, seat: u32) -> bool {
+        !self
+            .game
+            .seats
+            .iter()
+            .any(|s| s.seat == seat && (!s.name.is_empty() || !s.bot.is_empty()))
     }
 
     /// The game is waiting for this client's seat.
@@ -184,7 +220,11 @@ impl Table {
                 Some(seat) => format!("{} to move.", self.player(seat)),
                 None => "Playing.".into(),
             },
-            "waiting" => "Waiting for players.".into(),
+            "waiting" if self.info.seats.iter().any(|d| self.is_open(d.seat)) => {
+                "Waiting for players.".into()
+            }
+            "waiting" if self.game.lobby => "Waiting for the start.".into(),
+            "waiting" => "Waiting.".into(),
             other => format!("{}.", capitalised(other)),
         }
     }
@@ -271,6 +311,8 @@ mod tests {
                 impulse_deadline: String::new(),
                 server_time: String::new(),
                 move_time_seconds: None,
+                lobby: false,
+                host_seat: Some(1),
                 seats: vec![GameSeat {
                     seat: 1,
                     color: "red".into(),
@@ -280,6 +322,7 @@ mod tests {
                 }],
             },
             state: state(move_seq, &[("a1", "red")]),
+            bots: vec![],
         })
     }
 
@@ -334,6 +377,8 @@ mod tests {
             reason: "undo".into(),
             state: state(3, &[]),
             seats: vec![],
+            lobby: false,
+            host_seat: Some(1),
         };
         assert_eq!(t.apply(&undo), Step::Changed);
         assert_eq!(t.state.move_seq, 3);
@@ -357,12 +402,62 @@ mod tests {
             reason: "join".into(),
             state: state(0, &[]),
             seats: vec![seat(1, "red", "Ana"), seat(2, "blue", "Ben")],
+            lobby: false,
+            host_seat: Some(1),
         };
         assert_eq!(t.apply(&joined), Step::Changed);
         assert_eq!(t.player(2), "Ben");
         assert_eq!(t.yours().map(|s| s.seat), Some(1));
         assert_eq!(t.game.status, "active");
         assert!(t.to_play());
+    }
+
+    #[test]
+    fn in_the_lobby_this_clients_seat_follows_its_name_from_seat_to_seat() {
+        let mut t = table(0);
+        t.state.status = "waiting".into();
+        let seat = |seat: u32, name: &str, bot: &str| GameSeat {
+            seat,
+            color: if seat == 1 { "red" } else { "blue" }.into(),
+            name: name.into(),
+            bot: bot.into(),
+            yours: false,
+        };
+        let event = |seats: Vec<GameSeat>, host_seat: Option<u32>| {
+            let mut state = state(0, &[]);
+            state.status = "waiting".into();
+            state.impulse_seat = None;
+            Event::State {
+                reason: "seat".into(),
+                state,
+                seats,
+                lobby: true,
+                host_seat,
+            }
+        };
+        assert!(t.in_lobby() && t.hosting());
+        assert!(!t.is_open(1) && t.is_open(2));
+
+        // Ana moves to the second seat; the first is open.
+        t.apply(&event(vec![seat(2, "ana", "")], Some(2)));
+        assert_eq!(t.yours().map(|s| s.seat), Some(2));
+        assert!(t.game.lobby && t.hosting());
+        assert!(t.is_open(1));
+        assert_eq!(t.summary(), "Waiting for players.");
+
+        // A bot is not this client, whatever it is called.
+        t.apply(&event(
+            vec![seat(1, "Ana", "mcts"), seat(2, "Ana", "")],
+            Some(2),
+        ));
+        assert_eq!(t.yours().map(|s| s.seat), Some(2));
+        assert!(!t.is_open(1));
+        assert_eq!(t.summary(), "Waiting for the start.", "every seat is taken");
+
+        // Cleared from the table by the host: watching it, no longer in its lobby.
+        t.apply(&event(vec![seat(1, "Ben", "")], Some(1)));
+        assert_eq!(t.yours(), None);
+        assert!(!t.in_lobby() && !t.hosting());
     }
 
     #[test]

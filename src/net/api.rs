@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
-/// and 1.2 the regions each seat must connect (`goals`).
+/// 1.2 the regions each seat must connect (`goals`), and 1.4 the lobby's calls (`start`, `seat`,
+/// `leave`, `remove`, `bots`) to the schema.
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 2,
+    minor: 4,
     patch: 0,
 };
 
@@ -220,6 +221,13 @@ pub struct Game {
     /// The time each move may take, in a game timed by the move.
     #[serde(default)]
     pub move_time_seconds: Option<u64>,
+    /// It waits for its host's start, even with every seat taken.
+    #[serde(default)]
+    pub lobby: bool,
+    /// The host's seat: the person who may start the game and clear other seats before it
+    /// starts. Absent when no person sits.
+    #[serde(default)]
+    pub host_seat: Option<u32>,
 }
 
 /// A game clock: what each seat has left, and whose time is running.
@@ -286,6 +294,9 @@ pub struct CreateGameRequest {
     /// The time each move may take.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_time_seconds: Option<u64>,
+    /// Wait for the creator's start, even with every seat taken.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub lobby: bool,
 }
 
 impl CreateGameRequest {
@@ -300,6 +311,7 @@ impl CreateGameRequest {
             clock_seconds: None,
             clock_increment_seconds: None,
             move_time_seconds: None,
+            lobby: false,
         }
     }
 }
@@ -319,10 +331,42 @@ pub struct JoinResponse {
     pub seat: Option<u32>,
 }
 
-/// The body of the calls a seated player makes about the game as a whole (`resign`).
+/// The body of the calls a seated player makes about the game as a whole (`resign`, and in a
+/// game not yet started `start` and `leave`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlayerRequest {
     pub player_name: String,
+}
+
+/// The body of the lobby's calls on one seat: move to it (`seat`), or clear it (`remove`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SeatRequest {
+    pub player_name: String,
+    pub seat: u32,
+}
+
+/// `POST /api/games/{code}/bots`' body: a built-in bot in an open seat of a game not yet started.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AddBotRequest {
+    pub player_name: String,
+    pub bot: String,
+    /// The open seat it takes (the lowest, when left out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seat: Option<u32>,
+}
+
+/// `POST /api/games/{code}/bots`' answer. Who sits where arrives on the socket.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AddBotResult {
+    pub seat: u32,
+    pub status: String,
+}
+
+/// The answer of the lobby's other calls: where the game stands after one.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GameStatus {
+    pub status: String,
+    pub lobby: bool,
 }
 
 /// `POST /api/games`' answer.
@@ -459,6 +503,9 @@ pub enum Event {
         reason: String,
         state: GameState,
         seats: Vec<GameSeat>,
+        /// As in [`Game`]: it waits for its host's start, and the host's seat.
+        lobby: bool,
+        host_seat: Option<u32>,
     },
     /// A kind this client skips (chat, connections, voice, and any added later).
     Other(String),
@@ -488,6 +535,10 @@ impl Event {
             reason: String,
             #[serde(default, deserialize_with = "null_as_default")]
             seats: Vec<GameSeat>,
+            #[serde(default)]
+            lobby: bool,
+            #[serde(default)]
+            host_seat: Option<u32>,
             #[serde(flatten)]
             state: GameState,
         }
@@ -509,6 +560,8 @@ impl Event {
                     reason: d.reason,
                     state: d.state,
                     seats: d.seats,
+                    lobby: d.lobby,
+                    host_seat: d.host_seat,
                 }
             }
             other => Event::Other(other.to_string()),
@@ -611,7 +664,7 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.2.0")), Compatible);
+        assert_eq!(compatibility(Some("1.4.0")), Compatible);
         assert_eq!(compatibility(Some("1.7.2")), Compatible);
         assert_eq!(
             compatibility(Some("1.0.9")),
@@ -622,6 +675,11 @@ mod tests {
             compatibility(Some("1.1.4")),
             ServerTooOld(Some("1.1.4".into())),
             "1.1 has no goals"
+        );
+        assert_eq!(
+            compatibility(Some("1.3.2")),
+            ServerTooOld(Some("1.3.2".into())),
+            "1.3's schema has no lobby"
         );
         assert_eq!(compatibility(Some("2.0.0")), ClientTooOld("2.0.0".into()));
         assert_eq!(
@@ -667,6 +725,24 @@ mod tests {
         assert_eq!(state.move_seq, 5, "a move's seq is where the game stands");
         assert_eq!(state.impulse_seat, Some(2));
         assert_eq!(state.state.cells["c3"][0].color, "red");
+        let seated = Event::parse(
+            r#"{"type":"state","data":{"reason":"seat","status":"waiting","impulse_seat":null,
+            "move_seq":0,"ply":0,"winner_seat":null,"board_state":"","state":null,"draw_offer_seat":null,
+            "lobby":true,"host_seat":2,"seats":[{"seat":2,"color":"blue","name":"Ana"}]}}"#,
+        )
+        .unwrap();
+        let Event::State {
+            lobby,
+            host_seat,
+            seats,
+            ..
+        } = seated
+        else {
+            panic!("{seated:?}")
+        };
+        assert!(lobby);
+        assert_eq!(host_seat, Some(2));
+        assert_eq!(seats[0].name, "Ana");
         assert_eq!(
             Event::parse(r#"{"type":"chat","data":{"text":"hi"}}"#).unwrap(),
             Event::Other("chat".into())
@@ -674,7 +750,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.2.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.4.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -790,6 +866,10 @@ mod tests {
         reads::<MoveResponse>("POST /api/games/{code}/moves");
         reads::<JoinResponse>("POST /api/games/{code}/join");
         reads::<GameState>("POST /api/games/{code}/resign");
+        reads::<AddBotResult>("POST /api/games/{code}/bots");
+        for call in ["start", "seat", "leave", "remove"] {
+            reads::<GameStatus>(&format!("POST /api/games/{{code}}/{call}"));
+        }
         let root = schema();
         for full in [false, true] {
             serde_json::from_value::<ErrorBody>(instance(&root, &root["x-error"], full, 0))
@@ -886,6 +966,40 @@ mod tests {
             "POST /api/games/{code}/resign",
             json(PlayerRequest {
                 player_name: "Ana".into(),
+            }),
+        );
+        for call in ["start", "leave"] {
+            sends(
+                &format!("POST /api/games/{{code}}/{call}"),
+                json(PlayerRequest {
+                    player_name: "Ana".into(),
+                }),
+            );
+        }
+        for call in ["seat", "remove"] {
+            sends(
+                &format!("POST /api/games/{{code}}/{call}"),
+                json(SeatRequest {
+                    player_name: "Ana".into(),
+                    seat: 2,
+                }),
+            );
+        }
+        for seat in [None, Some(2)] {
+            sends(
+                "POST /api/games/{code}/bots",
+                json(AddBotRequest {
+                    player_name: "Ana".into(),
+                    bot: "mcts".into(),
+                    seat,
+                }),
+            );
+        }
+        sends(
+            "POST /api/games",
+            json(CreateGameRequest {
+                lobby: true,
+                ..CreateGameRequest::new("g", "Ana", None)
             }),
         );
         sends(

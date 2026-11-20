@@ -13,8 +13,8 @@ use crate::net::api::{GameDef, Gesture, OpenGame};
 use crate::net::session::{Problem, Snapshot};
 use crate::net::tls::Fingerprint;
 use crate::net::{
-    Connection, GAMES_EVERY, GameList, GameQuery, Net, Request, Resign, ServerStatus, Target,
-    TimeControl, WatchStatus, find_games, reconnect, resign, stop_watching, watch,
+    Connection, GAMES_EVERY, GameList, GameQuery, LobbyCall, Net, Request, Resign, ServerStatus,
+    Target, TimeControl, WatchStatus, find_games, lobby, reconnect, resign, stop_watching, watch,
 };
 use crate::new_game::{self, Fill, Form, NewGame};
 use crate::play;
@@ -93,6 +93,8 @@ pub(crate) enum Action {
     Host(String),
     /// Take an open seat in the game in this room.
     Join(String),
+    /// Before the watched game starts: change the table, or start it.
+    Lobby(LobbyCall),
     /// Give up the game (asked twice: the first press asks whether the player is sure).
     Resign,
     /// Not resigning after all.
@@ -109,6 +111,8 @@ pub(crate) enum Action {
     },
     /// On the form: how the game is timed.
     SetTime(TimeControl),
+    /// On the form: whether the game waits for this client's start.
+    SetLobby(bool),
     /// Make the game the form set up.
     StartGame,
     /// Close the form.
@@ -596,6 +600,12 @@ fn on_activate(
                 form.time = *time;
             }
         }
+        Action::SetLobby(wait) => {
+            if let Some(form) = new_game.form.as_mut() {
+                form.lobby = *wait;
+            }
+        }
+        Action::Lobby(call) => lobby(&net, &mut watching, call.clone()),
         Action::StartGame => {
             if let Some(settings) = new_game.form.as_ref().and_then(Form::settings) {
                 new_game.form = None;

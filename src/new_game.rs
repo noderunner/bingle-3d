@@ -1,5 +1,6 @@
 //! Setting up a new game: the player's seat, who plays each of the others (a built-in bot, or
-//! nobody yet, for a person to join), and how the game is timed.
+//! nobody yet, for a person to join), how the game is timed, and whether it starts by itself once
+//! every seat is taken or waits in its lobby for the player's start.
 //!
 //! [`Form`] is the setup with no Bevy in it; [`draw`] puts it on the list panel in place of the
 //! lists while it is open. What the form needs from the server (the game's seats, the bots) is
@@ -36,6 +37,8 @@ pub struct Form {
     /// Who plays each seat that is not this client's: nobody, until somebody joins, unless set.
     bots_at: BTreeMap<u32, String>,
     pub time: TimeControl,
+    /// Wait for this client's start, rather than start once every seat is taken.
+    pub lobby: bool,
 }
 
 /// Who plays a seat.
@@ -86,6 +89,7 @@ impl Form {
             mine: 1,
             bots_at: BTreeMap::new(),
             time: TimeControl::None,
+            lobby: false,
         }
     }
 
@@ -142,6 +146,7 @@ impl Form {
             seat: self.mine,
             bots: self.bots_at.clone(),
             time: self.time,
+            lobby: self.lobby,
         })
     }
 }
@@ -233,11 +238,28 @@ pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
         }
     });
 
-    let starts = if form.waits_for_people() {
-        "The seats for a person wait for somebody to join; the game starts once every seat is \
-         taken. The room code to send them is shown when the game is made."
-    } else {
-        "The game starts at once."
+    area.spawn(line(f.semibold(14.0), colours::TEXT, "Start"));
+    area.spawn(buttons()).with_children(|row| {
+        row.spawn(chip(
+            f,
+            "When every seat is taken",
+            Action::SetLobby(false),
+            !form.lobby,
+        ));
+        row.spawn(chip(f, "When I say", Action::SetLobby(true), form.lobby));
+    });
+
+    let starts = match (form.waits_for_people(), form.lobby) {
+        (true, false) => {
+            "The seats for a person wait for somebody to join; the game starts once every seat \
+             is taken. The room code to send them is shown when the game is made."
+        }
+        (true, true) => {
+            "The seats for a person wait for somebody to join. The game waits for your Start; \
+             until then seats can be changed, and bots put in them."
+        }
+        (false, false) => "The game starts at once.",
+        (false, true) => "The game waits for your Start; until then seats can be changed.",
     };
     area.spawn(line(f.regular(13.0), colours::MUTED, starts));
     area.spawn(buttons()).with_children(|row| {
@@ -297,6 +319,7 @@ mod tests {
                 seat: 1,
                 bots: BTreeMap::new(),
                 time: TimeControl::None,
+                lobby: false,
             })
         );
     }
@@ -318,7 +341,9 @@ mod tests {
         form.set(3, Fill::You);
         assert_eq!(form.fill(2), Fill::Open);
         form.time = TIMES[1].1;
+        form.lobby = true;
         let settings = form.settings().unwrap();
+        assert!(settings.lobby);
         assert_eq!(settings.seat, 3);
         assert_eq!(settings.bots, BTreeMap::from([(1, "mcts".to_string())]));
         assert_eq!(
