@@ -125,7 +125,8 @@ stones in their seat's colour, and the edges a seat must connect (its `goals`) w
 rim stained and the cells along them shaded in its colour. The buttons at the bottom right
 choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
-clamshell stones. The client needs a Bingle whose API is 1.6 or newer.
+clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
+the board's lines cross. The client needs a Bingle whose API is 1.6 or newer.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

@@ -200,8 +200,9 @@ A game's own rules and its players' words keep their terms.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. The board is one slab
-  (`src/slab.rs`: its outline, rounded rim, and the shading of a goal's cells, geometry with no
-  systems) with the cells cut into it; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
+  (`src/slab.rs`: its outline, rounded rim, grid lines, and the shading of a goal's cells,
+  geometry with no systems) with the cells cut into it, or, for a game whose appearance says
+  `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
   (stopgap buttons), and the materials made of it are built again when it changes.
   `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
   and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres

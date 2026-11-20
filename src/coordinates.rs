@@ -2,13 +2,17 @@
 //! right, a stopgap until the interface has a place for it).
 //!
 //! The server names each position (`a1`, `k11`); where every name is letters then a number, as
-//! for Hex, the letters name a column and the number a row. Each column's letters go beyond its
-//! far and near ends, each row's number beyond its left and right ends. A board named any other
+//! for Hex, the letters name a column and the number a row. Each row's number goes beyond its
+//! left and right ends, and each column's letters beyond its far and near ends where those are
+//! on the board's first and last rows (a hexagonal board's columns also end on its slanted
+//! sides, where the rows' numbers are). A board named any other
 //! way shows none: the client does not guess.
 //!
 //! They are engraved in the board's margin: glyphs of the client's font, made by the asset
 //! pipeline (`assets-src/blender/engraving.py`) as an atlas of the cut's colour and its walls'
-//! slopes, laid flat on the wood and reading from the player's side, as on a real board.
+//! slopes, laid flat on the wood and reading from the player's side, as on a real board. They
+//! stand half way across the margin between the outermost spaces (or a stone on the outermost
+//! lines) and the board's rounded rim (`board::Surface::label_at`), on any size of board.
 
 use std::collections::BTreeMap;
 
@@ -21,7 +25,8 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
-use crate::board::{BOARD_HEIGHT, Layout};
+use crate::appearance::Appearances;
+use crate::board::{BOARD_HEIGHT, Layout, Surface};
 use crate::browser::colours;
 use crate::fonts::UiFonts;
 use crate::net::WatchStatus;
@@ -70,9 +75,9 @@ fn split(id: &str) -> Option<(&str, &str)> {
     ok.then_some((letters, digits))
 }
 
-/// The labels of a board's edges: each column's letters at its two ends along the board (far and
-/// near), each row's number at its two ends across it (left and right). None, unless every
-/// position is named as a column and a row.
+/// The labels of a board's edges: each row's number at its two ends across the board (left and
+/// right), each column's letters at its ends along it (far and near) that are on the board's first
+/// and last rows. None, unless every position is named as a column and a row.
 pub fn edge_labels(positions: &[BoardPosition]) -> Vec<EdgeLabel> {
     let mut columns: BTreeMap<&str, Vec<&BoardPosition>> = BTreeMap::new();
     let mut rows: BTreeMap<&str, Vec<&BoardPosition>> = BTreeMap::new();
@@ -83,29 +88,36 @@ pub fn edge_labels(positions: &[BoardPosition]) -> Vec<EdgeLabel> {
         columns.entry(column).or_default().push(p);
         rows.entry(row).or_default().push(p);
     }
+    let (top, bottom) = positions.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+        (lo.min(p.y), hi.max(p.y))
+    });
+    let on_first_or_last_row =
+        |p: &BoardPosition| (p.y - top).abs() < 0.01 || (p.y - bottom).abs() < 0.01;
     let mut out = Vec::new();
-    let mut ends =
-        |text: &str, cells: &[&BoardPosition], key: fn(&BoardPosition) -> f32, axis: Vec2| {
-            let first = cells.iter().min_by(|a, b| key(a).total_cmp(&key(b)));
-            let last = cells.iter().max_by(|a, b| key(a).total_cmp(&key(b)));
-            if let (Some(first), Some(last)) = (first, last) {
-                out.push(EdgeLabel {
-                    text: text.to_string(),
-                    position: first.id.clone(),
-                    out: -axis,
-                });
-                out.push(EdgeLabel {
-                    text: text.to_string(),
-                    position: last.id.clone(),
-                    out: axis,
-                });
+    let mut ends = |text: &str,
+                    cells: &[&BoardPosition],
+                    key: fn(&BoardPosition) -> f32,
+                    axis: Vec2,
+                    columns: bool| {
+        let first = cells.iter().min_by(|a, b| key(a).total_cmp(&key(b)));
+        let last = cells.iter().max_by(|a, b| key(a).total_cmp(&key(b)));
+        if let (Some(first), Some(last)) = (first, last) {
+            for (end, way) in [(first, -axis), (last, axis)] {
+                if !columns || on_first_or_last_row(end) {
+                    out.push(EdgeLabel {
+                        text: text.to_string(),
+                        position: end.id.clone(),
+                        out: way,
+                    });
+                }
             }
-        };
+        }
+    };
     for (column, cells) in &columns {
-        ends(column, cells, |p| p.y, Vec2::Y);
+        ends(column, cells, |p| p.y, Vec2::Y, true);
     }
     for (row, cells) in &rows {
-        ends(row, cells, |p| p.x, Vec2::X);
+        ends(row, cells, |p| p.x, Vec2::X, false);
     }
     out
 }
@@ -114,14 +126,11 @@ pub fn edge_labels(positions: &[BoardPosition]) -> Vec<EdgeLabel> {
 const GLYPHS: &str = "0123456789abcdefghijklmnopqrstuvwxyz";
 const COLUMNS: usize = 8;
 const ROWS: usize = 5;
-/// A glyph's cell, in pitches, and how far apart a label's glyphs stand, in cells: the advance of
-/// one of the font's figures at the size the glyphs are set.
-const GLYPH_SIZE: f32 = 0.62;
-const ADVANCE: f32 = 0.44;
-/// How far beyond its position's middle a label stands, in pitches: on the board's margin,
-/// clear of the cell's points (a hexagon's are towards the far and near sides).
-const OUT_ALONG: f32 = 0.92;
-const OUT_ACROSS: f32 = 0.85;
+/// A glyph's cell, in pitches (its letters about a quarter of a pitch high), and how far apart a
+/// label's glyphs stand, in cells: a little under the advance of the font's figures, since each
+/// glyph is centred in its cell and a narrow one (1) would otherwise stand apart.
+const GLYPH_SIZE: f32 = 0.44;
+const ADVANCE: f32 = 0.36;
 
 /// Where a glyph is in the atlas, if it has one.
 fn glyph(ch: char) -> Option<usize> {
@@ -169,6 +178,7 @@ fn sync_labels(
     watch: Res<WatchStatus>,
     show: Res<ShowCoordinates>,
     server: Res<AssetServer>,
+    appearances: Res<Appearances>,
     (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     roots: Query<(Entity, &Labels)>,
 ) {
@@ -188,6 +198,7 @@ fn sync_labels(
         return;
     }
     let layout = Layout::new(&table.info.board.positions);
+    let surface = Surface::of(&table.info.board, appearances.for_game(&table.info.id));
     // The cut: dark where it is deep, its walls catching the light.
     let material = materials.add(StandardMaterial {
         base_color_texture: Some(textures::load(
@@ -219,11 +230,7 @@ fn sync_labels(
         let Some(centre) = layout.centres.get(&label.position) else {
             continue;
         };
-        let out = if label.out.y != 0.0 {
-            OUT_ALONG
-        } else {
-            OUT_ACROSS
-        };
+        let out = surface.label_at(label.out.y != 0.0, layout.pitch);
         let middle = *centre + Vec3::new(label.out.x, 0.0, label.out.y) * layout.pitch * out;
         for (index, offset) in glyphs(&label.text) {
             let mesh = shapes[index]
@@ -364,6 +371,30 @@ mod tests {
             "a row's left end is column a"
         );
         assert_eq!(at("2", Vec2::X), Some("c2"));
+    }
+
+    #[test]
+    fn on_a_hexagonal_board_a_column_ending_on_a_slanted_side_is_not_named_there() {
+        let hexhex = [
+            pos("b1", 1.0, 0.0),
+            pos("c1", 2.0, 0.0),
+            pos("a2", 0.5, 0.866),
+            pos("b2", 1.5, 0.866),
+            pos("c2", 2.5, 0.866),
+            pos("b3", 1.0, 1.732),
+            pos("c3", 2.0, 1.732),
+        ];
+        let labels = edge_labels(&hexhex);
+        assert!(
+            labels.iter().all(|l| l.text != "a"),
+            "a ends on the sides only"
+        );
+        assert_eq!(labels.iter().filter(|l| l.text == "b").count(), 2);
+        assert_eq!(
+            labels.iter().filter(|l| l.text == "2").count(),
+            2,
+            "rows still"
+        );
     }
 
     #[test]

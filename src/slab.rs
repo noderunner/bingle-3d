@@ -224,6 +224,44 @@ pub fn flat_cells(centres: &[Vec2], corners: &[Vec2], height: f32) -> Mesh {
     b.mesh()
 }
 
+/// The lines of a board played on its points: one between each two positions a pitch apart (so a
+/// square grid's are its rows and columns, and a hexagonal one's run three ways), `width` wide
+/// and `edge_width` along the board's edge, where the positions have fewer neighbours than most.
+/// Each runs half its width past its ends, so lines meet cleanly at the crossings.
+pub fn grid_lines(points: &[Vec2], pitch: f32, width: f32, edge_width: f32, height: f32) -> Mesh {
+    let near = |a: Vec2, b: Vec2| (a.distance(b) - pitch).abs() < pitch * 0.05;
+    let mut neighbours = vec![0usize; points.len()];
+    let mut pairs = Vec::new();
+    for i in 0..points.len() {
+        for j in i + 1..points.len() {
+            if near(points[i], points[j]) {
+                neighbours[i] += 1;
+                neighbours[j] += 1;
+                pairs.push((i, j));
+            }
+        }
+    }
+    let most = neighbours.iter().copied().max().unwrap_or(0);
+    let mut b = Builder::default();
+    for (i, j) in pairs {
+        let on_edge = neighbours[i] < most && neighbours[j] < most;
+        let w = if on_edge { edge_width } else { width } / 2.0;
+        let along = (points[j] - points[i]).normalize();
+        let across = along.perp() * w;
+        let (from, to) = (points[i] - along * w, points[j] + along * w);
+        let at = |v: Vec2| Vec3::new(v.x, height, v.y);
+        let q = [
+            b.vertex(at(from - across), Vec3::Y),
+            b.vertex(at(to - across), Vec3::Y),
+            b.vertex(at(to + across), Vec3::Y),
+            b.vertex(at(from + across), Vec3::Y),
+        ];
+        b.triangle(q[0], q[1], q[2]);
+        b.triangle(q[0], q[2], q[3]);
+    }
+    b.mesh()
+}
+
 /// How dark a cell's shading is at a point `d` in from the side it is drawn towards, where it is
 /// `strength`, fading smoothly to nothing `fade` in.
 pub fn shade_at(d: f32, fade: f32, strength: f32) -> f32 {
@@ -387,6 +425,24 @@ mod tests {
         let ink = flat_cells(&[Vec2::ZERO, Vec2::X], &c, 0.01);
         faces_its_normals(&ink);
         assert_eq!(ink.count_vertices(), 14);
+    }
+
+    #[test]
+    fn a_square_grid_has_its_rows_and_columns_and_a_thicker_edge() {
+        let points: Vec<Vec2> = (0..3)
+            .flat_map(|y| (0..3).map(move |x| Vec2::new(x as f32, y as f32)))
+            .collect();
+        let mesh = grid_lines(&points, 1.0, 0.1, 0.2, 0.5);
+        faces_its_normals(&mesh);
+        // Three rows and three columns of two segments each: twelve quads.
+        assert_eq!(mesh.count_vertices(), 12 * 4);
+        let p = positions(&mesh);
+        assert!(p.iter().all(|v| (v.y - 0.5).abs() < 1e-6));
+        // Each quad's width is the distance from its first corner to its last: the four
+        // segments to the middle point are inside the board, the other eight along its edge.
+        let widths: Vec<f32> = p.chunks(4).map(|q| q[0].distance(q[3])).collect();
+        assert_eq!(widths.iter().filter(|w| (*w - 0.1).abs() < 1e-5).count(), 4);
+        assert_eq!(widths.iter().filter(|w| (*w - 0.2).abs() < 1e-5).count(), 8);
     }
 
     #[test]

@@ -435,6 +435,14 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   letters then a number, a column's letters at its two ends and a row's number at its two sides,
   engraved in the board's margin (glyphs of the client's font, rendered by the pipeline into an
   atlas of the cut's colour and its walls' slopes); a board named otherwise shows none.
+- Games played on points (Go, Gomoku, Pente, Meridians; their appearance file says
+  `[board] on = "points"`, as the web page's `style: points` does for its own look): a plain slab
+  with lines cut between neighbouring positions (a square grid, or three ways on a hexagonal
+  board), thicker along the edge, and the stones on the crossings; a click lands on an unseen
+  disc at each point, which glows softly when it would be taken. A board's cells are the same
+  material as the wood round them. The coordinates are smaller, half way across the margin
+  between the outermost spaces or lines and the rim, on every board; a column is named only
+  where it ends on the first or last row.
 - Texture resolution, judged on the GPU: walnut at 4K against 2K was not worth four times the
   memory, so the woods stay at 2K. Oak was tried and left out: its open grain caught too much
   glare.

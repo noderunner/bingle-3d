@@ -29,7 +29,7 @@ use bevy::gltf::GltfAssetLabel;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 
-use crate::appearance::{Appearance, Appearances};
+use crate::appearance::{Appearance, Appearances, PlayOn};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
@@ -78,6 +78,66 @@ const RIM_RADIUS: f32 = 0.005;
 /// a third of the way across the cell.
 const SHADE_STRENGTH: f32 = 0.75;
 const SHADE_FADE: f32 = CELL_SCALE / 3.0;
+
+/// The wood beyond the outermost lines of a board played on its points, in pitches: room for a
+/// stone on the edge and the coordinates beyond it.
+const POINTS_MARGIN: f32 = 1.2;
+/// A points board's lines, and its edge's (thicker, as on a Go board), in pitches.
+const LINE_WIDTH: f32 = 0.035;
+const EDGE_LINE_WIDTH: f32 = 0.07;
+
+/// What a game is played on: its board's spaces (cells of a shape), or the points where its
+/// lines cross. The server says which positions there are and where; which of these they are
+/// drawn as is this client's choice (Bingle's ADR 0124), the game's appearance saying `points`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    Cells(CellShape),
+    Points,
+}
+
+impl Surface {
+    pub fn of(board: &Board, look: Option<&Appearance>) -> Self {
+        match look.map(|l| l.board.on) {
+            Some(PlayOn::Points) => Surface::Points,
+            _ => Surface::Cells(CellShape::of(board)),
+        }
+    }
+
+    /// The height pieces stand on.
+    pub fn height(self) -> f32 {
+        match self {
+            Surface::Cells(_) => SURFACE,
+            Surface::Points => BOARD_HEIGHT,
+        }
+    }
+
+    /// How far a position's space reaches from its middle, in pitches: towards the far and near
+    /// sides (`along`) or to either side. A point's is a stone's on it.
+    pub fn reach(self, along: bool) -> f32 {
+        match self {
+            Surface::Cells(CellShape::Hexagon) if along => 1.0 / 3f32.sqrt(),
+            Surface::Cells(CellShape::Spot) => 0.3,
+            Surface::Cells(_) => 0.5,
+            Surface::Points => 0.4,
+        }
+    }
+
+    /// Where the flat of the board ends beyond the outermost position's middle, in pitches: the
+    /// margin of wood, short of the rounded rim.
+    pub fn flat_to(self, along: bool, pitch: f32) -> f32 {
+        let margin = match self {
+            Surface::Cells(_) => self.reach(along) + MARGIN,
+            Surface::Points => POINTS_MARGIN,
+        };
+        margin - RIM_RADIUS / pitch
+    }
+
+    /// Where a coordinate goes beyond its position's middle, in pitches: half way between the
+    /// position's reach and the end of the flat.
+    pub fn label_at(self, along: bool, pitch: f32) -> f32 {
+        (self.reach(along) + self.flat_to(along, pitch)) / 2.0
+    }
+}
 
 /// The wood the board is made of: one of `look::BOARD_WOODS`, chosen by the player.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +294,8 @@ struct Kit {
     ghost: Handle<StandardMaterial>,
     /// The materials made of the board's wood, to build again when another is chosen.
     woodwork: Vec<(Handle<StandardMaterial>, MaterialSpec)>,
+    /// The height pieces stand on.
+    surface: f32,
 }
 
 /// What a board is drawn with: where its meshes and materials go, where its files come from, and
@@ -341,7 +403,7 @@ fn sync_board(
     for (mut t, mut vis) in &mut marks {
         match table.last_move.as_ref().and_then(|c| layout.centres.get(c)) {
             Some(centre) => {
-                t.translation = *centre + Vec3::Y * (SURFACE + 0.0005);
+                t.translation = *centre + Vec3::Y * (kit.surface + 0.0005);
                 *vis = Visibility::Inherited;
             }
             None => *vis = Visibility::Hidden,
@@ -375,7 +437,7 @@ fn place_pieces(
             // which this stage does not draw yet.
             continue;
         };
-        let rest = SURFACE + kit.stone_height * (at.layer as f32 + 0.5);
+        let rest = kit.surface + kit.stone_height * (at.layer as f32 + 0.5);
         let material = kit
             .materials
             .get(&at.piece.color)
@@ -459,9 +521,11 @@ fn build_board(
     layout: &Layout,
 ) -> (Entity, Kit) {
     let shape = CellShape::of(&table.info.board);
+    let surface = Surface::of(&table.info.board, tools.look);
     let pitch = layout.pitch;
-    let cell = tools.material(&look::board());
-    let target = tools.material(&look::lit_cell());
+    // One material for the board's whole top, its cells and its margin alike, so the spaces are
+    // the same wood in the same light as the wood round them.
+    let wood = tools.material(&look::board());
 
     let root = commands
         .spawn((
@@ -474,18 +538,23 @@ fn build_board(
         ))
         .id();
 
-    // The slab: round every cell, with a margin of wood and a rounded top edge.
+    // The slab: round every cell, or every point, with a margin of wood and a rounded top edge.
     let centres: Vec<Vec2> = layout
         .centres
         .values()
         .map(|c| Vec2::new(c.x, c.z))
         .collect();
     let corners = slab::cell_corners(shape, pitch);
-    let points: Vec<Vec2> = centres
-        .iter()
-        .flat_map(|c| corners.iter().map(move |k| *c + *k))
-        .collect();
-    let outline = slab::grown(&slab::hull(&points), pitch * MARGIN, 6);
+    let outline = match surface {
+        Surface::Cells(_) => {
+            let points: Vec<Vec2> = centres
+                .iter()
+                .flat_map(|c| corners.iter().map(move |k| *c + *k))
+                .collect();
+            slab::grown(&slab::hull(&points), pitch * MARGIN, 6)
+        }
+        Surface::Points => slab::grown(&slab::hull(&centres), pitch * POINTS_MARGIN, 6),
+    };
     let rim = Rim {
         height: BOARD_HEIGHT,
         radius: RIM_RADIUS,
@@ -493,7 +562,6 @@ fn build_board(
     };
     let strips = goal_strips(&table.info, layout, shape);
     if outline.len() >= 3 {
-        let top = tools.material(&look::board());
         commands.spawn((
             Name::new("Board"),
             Mesh3d(
@@ -501,7 +569,7 @@ fn build_board(
                     .meshes
                     .add(look::world_uvs(slab::top(&outline, &rim), Vec3::ZERO)),
             ),
-            MeshMaterial3d(top),
+            MeshMaterial3d(wood.clone()),
             ChildOf(root),
         ));
         // Its sides, each stretch in the wood of the goal it runs along, if any.
@@ -513,11 +581,13 @@ fn build_board(
                 .push(i);
         }
         for (owner, edges) in by_owner {
-            let spec = match owner {
-                None => look::board(),
-                Some(seat) => goal_material(tools, table, seat),
+            let material = match owner {
+                None => wood.clone(),
+                Some(seat) => {
+                    let spec = goal_material(tools, table, seat);
+                    tools.material(&spec)
+                }
             };
-            let material = tools.material(&spec);
             commands.spawn((
                 Name::new("Board's edge"),
                 Mesh3d(tools.meshes.add(look::world_uvs(
@@ -530,33 +600,93 @@ fn build_board(
         }
     }
 
-    // The lines between the cells: the whole of each cell, darkened, under the cells themselves.
     let lines = tools.material(&look::groove());
-    commands.spawn((
-        Name::new("Lines"),
-        Mesh3d(tools.meshes.add(look::world_uvs(
-            slab::flat_cells(&centres, &corners, BOARD_HEIGHT + 0.0001),
-            Vec3::ZERO,
-        ))),
-        MeshMaterial3d(lines),
-        ChildOf(root),
-    ));
-    let cell_mesh = shape.mesh(pitch, CELL_SCALE, CELL_HEIGHT);
-    for (id, centre) in &layout.centres {
-        let at = *centre + Vec3::Y * BOARD_HEIGHT;
-        commands.spawn((
-            Name::new(format!("Cell {id}")),
-            Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
-            MeshMaterial3d(cell.clone()),
-            Transform::from_translation(at),
-            Cell(id.clone()),
-            Spot(id.clone()),
-            Pickable::default(),
-            ChildOf(root),
-        ));
-    }
+    let (cell, target) = match surface {
+        Surface::Cells(_) => {
+            // The lines between the cells: the whole of each cell, darkened, under the cells.
+            commands.spawn((
+                Name::new("Lines"),
+                Mesh3d(tools.meshes.add(look::world_uvs(
+                    slab::flat_cells(&centres, &corners, BOARD_HEIGHT + 0.0001),
+                    Vec3::ZERO,
+                ))),
+                MeshMaterial3d(lines),
+                ChildOf(root),
+            ));
+            let target = tools.material(&look::lit_cell());
+            let cell_mesh = shape.mesh(pitch, CELL_SCALE, CELL_HEIGHT);
+            for (id, centre) in &layout.centres {
+                let at = *centre + Vec3::Y * BOARD_HEIGHT;
+                commands.spawn((
+                    Name::new(format!("Cell {id}")),
+                    Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
+                    MeshMaterial3d(wood.clone()),
+                    Transform::from_translation(at),
+                    Cell(id.clone()),
+                    Spot(id.clone()),
+                    Pickable::default(),
+                    ChildOf(root),
+                ));
+            }
+            (wood.clone(), target)
+        }
+        Surface::Points => {
+            // The lines, cut into the board between neighbouring points.
+            commands.spawn((
+                Name::new("Lines"),
+                Mesh3d(tools.meshes.add(look::world_uvs(
+                    slab::grid_lines(
+                        &centres,
+                        pitch,
+                        pitch * LINE_WIDTH,
+                        pitch * EDGE_LINE_WIDTH,
+                        BOARD_HEIGHT + 0.0001,
+                    ),
+                    Vec3::ZERO,
+                ))),
+                MeshMaterial3d(lines),
+                ChildOf(root),
+            ));
+            // Each point is a disc a click lands on: unseen, but glowing softly while a click
+            // there would be taken.
+            let unseen = tools.materials.add(StandardMaterial {
+                base_color: Color::NONE,
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            let glowing = tools.materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.86, 0.5, 0.22),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            let disc = tools.meshes.add(
+                Circle::new(pitch * 0.42)
+                    .mesh()
+                    .build()
+                    .rotated_by(Quat::from_rotation_x(-FRAC_PI_2)),
+            );
+            for (id, centre) in &layout.centres {
+                commands.spawn((
+                    Name::new(format!("Point {id}")),
+                    Mesh3d(disc.clone()),
+                    MeshMaterial3d(unseen.clone()),
+                    Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + 0.0003)),
+                    Cell(id.clone()),
+                    Spot(id.clone()),
+                    Pickable::default(),
+                    ChildOf(root),
+                ));
+            }
+            (unseen, glowing)
+        }
+    };
 
-    shade_goals(commands, tools, root, table, layout, shape, &strips);
+    // A goal's cells are shaded towards its edge; a points board has no cells to shade.
+    if let Surface::Cells(_) = surface {
+        shade_goals(commands, tools, root, table, layout, shape, &strips);
+    }
 
     let mark = tools.materials.add(StandardMaterial {
         base_color: Color::srgb(0.98, 0.84, 0.30),
@@ -605,6 +735,7 @@ fn build_board(
         target,
         ghost,
         woodwork: std::mem::take(&mut tools.woodwork),
+        surface: surface.height(),
     };
     (root, kit)
 }
@@ -933,7 +1064,7 @@ fn show_turn(
             continue;
         };
         let below = table.state.state.cells.get(cell).map_or(0, Vec::len);
-        let y = SURFACE + kit.stone_height * (below as f32 + 0.5);
+        let y = kit.surface + kit.stone_height * (below as f32 + 0.5);
         commands.spawn((
             Name::new(format!("Ghost at {cell}")),
             Ghost,

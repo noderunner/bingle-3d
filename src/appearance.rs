@@ -7,7 +7,10 @@
 //! - `pieces.<piece id>.model`: the glTF model a piece is drawn as;
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
 //!   its goal's edges are stained; `.colour`, the seat's colour in the panels;
-//! - `materials.<name>`: those materials (`look::MaterialSpec`).
+//! - `materials.<name>`: those materials (`look::MaterialSpec`);
+//! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
+//!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
+//!   of the same; the API does not say it.
 //!
 //! The private overlay's games (plan, decision 2) will add files from a folder; this is where
 //! they will be read.
@@ -31,6 +34,24 @@ pub struct Appearance {
     pub seats: BTreeMap<String, SeatLook>,
     #[serde(default)]
     pub materials: BTreeMap<String, MaterialSpec>,
+    #[serde(default)]
+    pub board: BoardLook,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardLook {
+    /// Where the pieces go: in the spaces, or on the points where the lines cross.
+    #[serde(default)]
+    pub on: PlayOn,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayOn {
+    #[default]
+    Cells,
+    Points,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -177,6 +198,18 @@ mod tests {
             all.seat_colour("no-such-game", "red", 1),
             look::seat_colour("red", 1)
         );
+    }
+
+    #[test]
+    fn games_on_points_say_so_and_others_are_on_cells() {
+        let all = Appearances::built_in();
+        for id in ["go-9x9", "go-19x19", "pente", "gomoku", "meridians"] {
+            let look = all
+                .for_game(id)
+                .unwrap_or_else(|| panic!("{id} has a look"));
+            assert_eq!(look.board.on, PlayOn::Points, "{id}");
+        }
+        assert_eq!(all.for_game("hex-11").unwrap().board.on, PlayOn::Cells);
     }
 
     #[test]

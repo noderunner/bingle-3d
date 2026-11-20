@@ -18,6 +18,7 @@ macro_rules! files {
 
 files![
     "appearance/hex.toml",
+    "appearance/points.toml",
     "environment/room_diffuse.ktx2",
     "environment/room_specular.ktx2",
     "models/stone.glb",
