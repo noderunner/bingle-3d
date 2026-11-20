@@ -162,8 +162,12 @@ A game's own rules and its players' words keep their terms.
   cannot be read is never overwritten.
 - `src/browser.rs`: the panel listing the server's games; it becomes the game browser. Its `Action`
   is what every panel's buttons do. `src/game_panel.rs`: the panel beside a watched game.
-- `src/new_game.rs`: the form that sets up a new game (seats, bots, time), drawn on the list panel
-  in place of the lists while it is open; `Form` has no Bevy in it.
+- `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
+  player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
+  Bevy in it.
+- `src/lobby.rs`: a game not yet started that this client has a seat in, on the game's panel:
+  sit, put a bot in a seat, remove, leave, start. `offers` has no Bevy in it; the server decides
+  who may do what.
 - `src/clock.rs`: time in a timed game: the server's RFC 3339 timestamps, the time each seat has
   left (counted down between the server's reports) and how it reads.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is

@@ -90,7 +90,7 @@ cargo run -- --new-game hex-7              # the form that sets up a new game of
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
 as squares, pieces as stones in their seat's colour, and the edges a seat must connect (its
-`goals`) as strips in its colour. The client needs a Bingle whose API is 1.2 or newer.
+`goals`) as strips in its colour. The client needs a Bingle whose API is 1.4 or newer.
 
 ## Connecting to a server
 

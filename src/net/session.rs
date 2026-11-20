@@ -21,10 +21,11 @@ use super::api::{
     JoinRequest, JoinResponse, MoveRequest, MoveResponse, OpenGame, OpenGames, PlayerRequest,
     Selections,
 };
+use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
 use super::tls::{Fingerprint, TlsConnector, Trust};
-use super::{GameQuery, GameSettings, TimeControl};
+use super::{GameQuery, GameSettings, LobbyCall, TimeControl};
 use crate::config::Store;
 
 /// What a server has, once connected.
@@ -96,6 +97,8 @@ pub struct Session {
     agent: Agent,
     /// Game definitions already read, by id: they do not change while the server runs.
     infos: HashMap<String, GameInfo>,
+    /// The server's bots, once read; nor do they.
+    bots: Option<Vec<BotInfo>>,
 }
 
 impl Session {
@@ -121,6 +124,7 @@ impl Session {
             tls,
             agent,
             infos: HashMap::new(),
+            bots: None,
         }
     }
 
@@ -197,7 +201,7 @@ impl Session {
     /// Asks the server for two of its bots to play a game, and returns the room they play in.
     pub fn start_bot_match(&mut self, game_def_id: &str) -> Result<String, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        let bots = self.bots(&url)?;
         let bot = pick_bot(&bots).ok_or_else(|| Problem::Refused {
             status: 404,
             message: "the server has no bots to play".into(),
@@ -217,7 +221,7 @@ impl Session {
     /// every other, and returns its room.
     pub fn start_game_against_bots(&mut self, game_def_id: &str) -> Result<String, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        let bots = self.bots(&url)?;
         let bot = pick_bot(&bots).ok_or_else(|| Problem::Refused {
             status: 404,
             message: "the server has no bots to play".into(),
@@ -257,7 +261,7 @@ impl Session {
     pub fn game_setup(&mut self, game_def_id: &str) -> Result<(GameInfo, Vec<BotInfo>), Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let info = self.game_info(&url, game_def_id)?;
-        let bots: Vec<BotInfo> = self.get_as_guest(&url, "/api/bots")?;
+        let bots = self.bots(&url)?;
         Ok((info, bots))
     }
 
@@ -319,6 +323,35 @@ impl Session {
             Some(&body),
         )?;
         Ok(())
+    }
+
+    /// Before the game starts, does `call` for the seat `player_name` sits at.
+    pub fn lobby(
+        &mut self,
+        room_code: &str,
+        player_name: &str,
+        call: &LobbyCall,
+    ) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let player_name = player_name.to_string();
+        let (path, body) = lobby_request(call, player_name);
+        let path = format!("/api/games/{room_code}/{path}");
+        if matches!(call, LobbyCall::Bot { .. }) {
+            let _: AddBotResult = self.as_guest(&url, "POST", &path, Some(&body))?;
+        } else {
+            let _: GameStatus = self.as_guest(&url, "POST", &path, Some(&body))?;
+        }
+        Ok(())
+    }
+
+    /// The server's bots, read once.
+    fn bots(&mut self, url: &ServerUrl) -> Result<Vec<BotInfo>, Problem> {
+        if let Some(bots) = &self.bots {
+            return Ok(bots.clone());
+        }
+        let bots: Vec<BotInfo> = self.get_as_guest(url, "/api/bots")?;
+        self.bots = Some(bots.clone());
+        Ok(bots)
     }
 
     /// What the seat on impulse may select after the selections `made`, at `ply` once known.
@@ -385,11 +418,18 @@ impl Session {
         let socket = Socket::open(&url, room_code, role, self.tls.clone())
             .map_err(|e| self.socket_problem(&url, e))?;
         let state = self.state(room_code)?;
+        // The bots a seat can be given before the game starts, by a player at the table.
+        let bots = if game.status == "waiting" && game.seats.iter().any(|s| s.yours) {
+            self.bots(&url)?
+        } else {
+            Vec::new()
+        };
         let opened = Opened {
             room_code: room_code.to_string(),
             info,
             game,
             state,
+            bots,
         };
         Ok((opened, socket))
     }
@@ -594,6 +634,8 @@ pub struct Opened {
     pub info: GameInfo,
     pub game: Game,
     pub state: GameState,
+    /// The server's bots, in a game not yet started that this client has a seat in.
+    pub bots: Vec<BotInfo>,
 }
 
 /// The bots to watch, best first among those this client knows something about: ones that look
@@ -608,7 +650,39 @@ pub fn pick_bot(bots: &[BotInfo]) -> Option<&str> {
         .map(|b| b.id.as_str())
 }
 
-/// Room codes are letters and digits, which keeps them safe to put in a path.
+/// The lobby call's path under the game, and its body.
+pub fn lobby_request(call: &LobbyCall, player_name: String) -> (&'static str, serde_json::Value) {
+    fn json(v: impl serde::Serialize) -> serde_json::Value {
+        serde_json::to_value(v).expect("a lobby call is JSON")
+    }
+    match call {
+        LobbyCall::Start => ("start", json(PlayerRequest { player_name })),
+        LobbyCall::Leave => ("leave", json(PlayerRequest { player_name })),
+        LobbyCall::Sit(seat) => (
+            "seat",
+            json(SeatRequest {
+                player_name,
+                seat: *seat,
+            }),
+        ),
+        LobbyCall::Remove(seat) => (
+            "remove",
+            json(SeatRequest {
+                player_name,
+                seat: *seat,
+            }),
+        ),
+        LobbyCall::Bot { seat, bot } => (
+            "bots",
+            json(AddBotRequest {
+                player_name,
+                bot: bot.clone(),
+                seat: Some(*seat),
+            }),
+        ),
+    }
+}
+
 /// `POST /api/games`' body for a game set up as `settings`.
 pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGameRequest {
     let (clock_seconds, clock_increment_seconds, move_time_seconds) = match settings.time {
@@ -628,6 +702,7 @@ pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGam
         clock_seconds,
         clock_increment_seconds,
         move_time_seconds,
+        lobby: settings.lobby,
         ..CreateGameRequest::new(&settings.game_def_id, player_name, None)
     }
 }
@@ -661,6 +736,7 @@ fn not_a_room_code(code: &str) -> Problem {
     Problem::BadAddress(format!("\"{code}\" is not a room code."))
 }
 
+/// Room codes are letters and digits, which keeps them safe to put in a path.
 pub fn valid_room_code(code: &str) -> bool {
     !code.is_empty() && code.len() <= 32 && code.bytes().all(|b| b.is_ascii_alphanumeric())
 }
@@ -718,6 +794,7 @@ mod tests {
         method: String,
         path: String,
         auth: Option<String>,
+        body: String,
     }
 
     type Handler = dyn Fn(&Seen) -> (u16, String) + Send + Sync;
@@ -758,7 +835,12 @@ mod tests {
                 // unread resets the connection, and the client may see that instead.
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
-                let req = Seen { method, path, auth };
+                let req = Seen {
+                    method,
+                    path,
+                    auth,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                };
                 let (status, body) = handler(&req);
                 log.lock().unwrap().push(req);
                 let _ = write!(
@@ -771,7 +853,7 @@ mod tests {
         (addr, seen)
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.2.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.4.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -807,7 +889,7 @@ mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.2.0");
+        assert_eq!(snap.api_version, "1.4.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
@@ -1019,6 +1101,73 @@ mod tests {
     }
 
     #[test]
+    fn the_lobby_calls_go_to_their_paths_for_the_seat_named() {
+        let (addr, seen) = serve(Box::new(|req: &Seen| {
+            let status = r#"{"status":"waiting","lobby":true,"host_seat":1,"move_seq":0,"impulse_seat":null}"#;
+            match (req.method.as_str(), req.path.as_str()) {
+                ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                ("POST", "/api/games/AB12CD/bots") => (
+                    200,
+                    r#"{"seat":3,"name":"Green (MCTS)","color":"green","bot":"mcts","status":"waiting"}"#
+                        .into(),
+                ),
+                ("POST", "/api/games/AB12CD/remove") => (
+                    403,
+                    r#"{"error":"session: only the host of this game can do that"}"#.into(),
+                ),
+                ("POST", _) => (200, status.into()),
+                _ => (404, r#"{"error":"api: no such endpoint"}"#.into()),
+            }
+        }));
+        let mut s = session(&addr);
+        for call in [
+            LobbyCall::Sit(2),
+            LobbyCall::Bot {
+                seat: 3,
+                bot: "mcts".into(),
+            },
+            LobbyCall::Start,
+            LobbyCall::Leave,
+        ] {
+            s.lobby("AB12CD", "Ana", &call)
+                .unwrap_or_else(|e| panic!("{call:?}: {e:?}"));
+        }
+        assert_eq!(
+            s.lobby("AB12CD", "Ana", &LobbyCall::Remove(2)),
+            Err(Problem::Refused {
+                status: 403,
+                message: "session: only the host of this game can do that".into()
+            })
+        );
+        let seen = seen.lock().unwrap();
+        let sent: Vec<(&str, serde_json::Value)> = seen
+            .iter()
+            .filter(|r| r.path != "/api/guest")
+            .map(|r| (r.path.as_str(), serde_json::from_str(&r.body).unwrap()))
+            .collect();
+        use serde_json::json;
+        assert_eq!(
+            sent,
+            [
+                (
+                    "/api/games/AB12CD/seat",
+                    json!({"player_name": "Ana", "seat": 2})
+                ),
+                (
+                    "/api/games/AB12CD/bots",
+                    json!({"player_name": "Ana", "bot": "mcts", "seat": 3})
+                ),
+                ("/api/games/AB12CD/start", json!({"player_name": "Ana"})),
+                ("/api/games/AB12CD/leave", json!({"player_name": "Ana"})),
+                (
+                    "/api/games/AB12CD/remove",
+                    json!({"player_name": "Ana", "seat": 2})
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn the_games_asked_for_are_narrowed_in_the_query() {
         assert_eq!(games_path(&GameQuery::default()), "/api/games?limit=60");
         assert_eq!(
@@ -1040,6 +1189,7 @@ mod tests {
                 seconds: 600,
                 increment: 5,
             },
+            lobby: true,
         };
         let sent = serde_json::to_value(new_game_request(&settings, "Ana")).unwrap();
         assert_eq!(
@@ -1051,12 +1201,14 @@ mod tests {
                 "seat_bots": {"1": "mcts"},
                 "clock_seconds": 600,
                 "clock_increment_seconds": 5,
+                "lobby": true,
             })
         );
         let plain = GameSettings {
             seat: 1,
             bots: BTreeMap::new(),
             time: TimeControl::PerMove { seconds: 60 },
+            lobby: false,
             ..settings
         };
         assert_eq!(

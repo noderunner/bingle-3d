@@ -855,9 +855,12 @@ mod tests {
                     impulse_deadline: String::new(),
                     server_time: String::new(),
                     move_time_seconds: None,
+                    lobby: false,
+                    host_seat: None,
                     seats: vec![],
                 },
                 state: state(1, &["a1"]),
+                bots: vec![],
             })
         }
 

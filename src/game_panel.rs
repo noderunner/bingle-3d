@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use crate::browser::{Action, button, buttons, colours, line};
 use crate::clock;
 use crate::fonts::UiFonts;
+use crate::lobby;
 use crate::look::seat_colour;
 use crate::net::api::{GameInfo, Gesture};
 use crate::net::{Connection, Net, Resign, ServerStatus, Target, WatchStatus, watch};
@@ -133,6 +134,7 @@ fn rebuild(
                         your_turn(p, f, table, turn);
                     }
                     waiting_for_players(p, f, table);
+                    lobby::draw(p, f, table, watching.lobby_problem.as_ref());
                     resigning(p, f, table, &watching.resign);
                 }
                 None => {
@@ -221,7 +223,11 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table) {
                 f.regular(14.0)
             };
             let time = table.time_left(seat.seat, Instant::now());
-            let mut text = format!("{}  —  {}", table.player(seat.seat), seat.label);
+            let mut text = if table.is_open(seat.seat) {
+                format!("{}  ·  open", seat.label)
+            } else {
+                format!("{}  —  {}", table.player(seat.seat), seat.label)
+            };
             if table.yours().is_some_and(|s| s.seat == seat.seat) {
                 text.push_str("  · you");
             }
@@ -416,7 +422,7 @@ mod tests {
         app.world_mut().resource_mut::<ServerStatus>().connection = Connection::Ready(Snapshot {
             server: "http://127.0.0.1:8080".into(),
             version: "x".into(),
-            api_version: "1.2.0".into(),
+            api_version: "1.4.0".into(),
             defs: vec![],
             games: vec![],
         });

@@ -1,7 +1,8 @@
 # Plan: a 3D client for Bingle
 
-Status: stage 5 under way: a game can be played against the server's bots or a person, and the
-games being played can be found (2026-11-19). Stage 4's last check, a whole game against the web
+Status: stage 5 under way: a game can be played against the server's bots or a person, the
+games being played can be found, and a game can wait in its lobby for its host's start
+(2026-11-19). Stage 4's last check, a whole game against the web
 page by hand, is the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
@@ -50,7 +51,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.2.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.4.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
@@ -181,10 +182,18 @@ README, this plan, `.gitignore`.
   `impulse_deadline` less `server_time`, so this machine's clock does not matter, and is counted
   down between reports; a game clock's other seats show what they have left. Under 10 s it turns
   amber.
-- **Next**: the lobby (a game that waits for its host's *Start*; add a bot to a seat, change
-  seats, leave, remove). Its calls (`/start`, `/seat`, `/leave`, `/remove`, `/bots`) are in
-  Bingle's `docs/api.md` but not its schema, so they are raised with Bingle first. Then the games
-  list grouped by family, as it is long (48 on Bingle today).
+- The lobby: while a game this client has a seat in has not started, the panel offers each open
+  seat (*Sit here*, or one of `GET /api/bots` in it), the host *Remove* on every other taken seat,
+  and *Leave*, which goes back to the list. A game made with *Start: when I say* on the form
+  (`lobby`) waits for its host's *Start*, offered once every seat is taken; one without starts by
+  itself when the last seat is. The server decides who may do what (the host is `host_seat`, and
+  passes to the next person when the host leaves); the panel only leaves out what it would
+  refuse, and shows a refusal. A `state` event does not say which seat is this client's, so it is
+  found by its player's name, which only one person at a table goes by: it follows a move to
+  another seat, and is gone once this client leaves or is removed. These calls came into Bingle's
+  schema in API 1.4 ([bingle#224](https://github.com/noderunner/bingle/issues/224)), which the
+  client now needs. A seat's faction (`seat-faction`) is not offered: Hex has none.
+- **Next**: the games list grouped by family, as it is long (48 on Bingle today).
 
 ### Stage 6: accounts
 

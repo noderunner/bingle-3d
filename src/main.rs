@@ -13,6 +13,7 @@ mod config;
 mod fonts;
 mod game_panel;
 mod hud;
+mod lobby;
 mod look;
 mod net;
 mod new_game;
