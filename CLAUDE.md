@@ -199,6 +199,10 @@ A game's own rules and its players' words keep their terms.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the
   pointer.
+- `src/call.rs`: calls between friends. `Call` is where one stands (the page's `js/dm-call.js`,
+  with no Bevy and no sound), returning the `Effect`s to carry out; `DirectCalling` holds it and
+  the voice engine, and turns them into requests. Its default opens no devices; only the plugin
+  chooses them (`--no-audio-devices` keeps them off, for runs like an agent's).
 - `src/voice/`: calls (stage 8), with no Bingle in it. `Engine` is a call: **a thread of its own**,
   the one exception to all network I/O being on the network thread (a frame of sound must leave
   every 20 ms; plan, decision 7). It is told who is in the call, who offers, and what the other
@@ -209,7 +213,7 @@ A game's own rules and its players' words keep their terms.
   buffer, the mix and a resampler, with no devices; `devices.rs` cpal's microphone and speaker;
   `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
   open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
-  host's sound).
+  host's sound): run clients with `--no-audio-devices`.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
 
 ## Dependencies and Bevy

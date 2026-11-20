@@ -26,6 +26,7 @@ use bevy::text::EditableText;
 use bevy::ui_widgets::Activate;
 
 use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::call::{Call, DirectCalling, Phase};
 use crate::fonts::UiFonts;
 use crate::net::api::{DirectMessage, FriendSettings, FriendsList};
 use crate::net::session::Problem;
@@ -65,7 +66,9 @@ impl Plugin for FriendsPlugin {
                     talk_on_start,
                     keep_typed,
                     rebuild.run_if(
-                        resource_changed::<Friends>.or_eager(resource_changed::<ServerStatus>),
+                        resource_changed::<Friends>
+                            .or_eager(resource_changed::<ServerStatus>)
+                            .or_eager(resource_changed::<DirectCalling>),
                     ),
                 )
                     .chain(),
@@ -282,6 +285,15 @@ pub enum FriendAction {
     StopTalking,
     /// Send the message written.
     Send,
+    /// Ring the friend at this address (or answer them), by the name they go by.
+    Ring {
+        address: String,
+        name: String,
+    },
+    /// End the call, or decline it.
+    HangUp,
+    /// Mute the microphone in the call, or unmute it.
+    Mute,
 }
 
 /// Sends the message written, to the friend whose conversation is open.
@@ -318,6 +330,7 @@ fn on_friend_action(
     actions: Query<&Action>,
     net: Res<Net>,
     mut friends: ResMut<Friends>,
+    mut calling: ResMut<DirectCalling>,
 ) {
     let Ok(Action::Friends(action)) = actions.get(activate.entity) else {
         return;
@@ -356,6 +369,9 @@ fn on_friend_action(
             friends.problem = None;
         }
         FriendAction::Send => send(&net, &mut friends),
+        FriendAction::Ring { address, name } => calling.ring(&net, address, name),
+        FriendAction::HangUp => calling.hang_up(&net),
+        FriendAction::Mute => calling.toggle_mute(),
     }
 }
 
@@ -501,6 +517,7 @@ fn rebuild(
     mut commands: Commands,
     status: Res<ServerStatus>,
     friends: Res<Friends>,
+    calling: Res<DirectCalling>,
     fonts: Res<UiFonts>,
     panel: Single<(Entity, &mut Node), With<FriendsPanel>>,
 ) {
@@ -517,7 +534,7 @@ fn rebuild(
         .despawn_related::<Children>()
         .with_children(|p| {
             if signed_in {
-                draw(p, f, &friends);
+                draw(p, f, &friends, &calling.call);
             }
         });
 }
@@ -526,7 +543,48 @@ fn act(f: &UiFonts, label: &str, action: FriendAction) -> impl Bundle {
     button(f, label, Action::Friends(action))
 }
 
-fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
+/// The call, above everything, the panel open or not: a ring must be seen.
+fn call_bar(p: &mut ChildSpawnerCommands, f: &UiFonts, call: &Call) {
+    if let Some(error) = &call.error {
+        p.spawn(line(f.regular(13.0), colours::WARN, error));
+    }
+    let text = match call.phase {
+        Phase::Idle => return,
+        Phase::Ringing => format!("{} is calling", call.name),
+        Phase::Calling => format!("Calling {}…", call.name),
+        Phase::Live if !call.connected => format!("Connecting to {}…", call.name),
+        Phase::Live if call.speaking => format!("In a call with {}  ·  speaking", call.name),
+        Phase::Live => format!("In a call with {}", call.name),
+    };
+    p.spawn(line(f.semibold(14.0), colours::TEXT, &text));
+    p.spawn(buttons()).with_children(|row| match call.phase {
+        Phase::Ringing => {
+            row.spawn(act(
+                f,
+                "Answer",
+                FriendAction::Ring {
+                    address: call.peer.clone(),
+                    name: call.name.clone(),
+                },
+            ));
+            row.spawn(act(f, "Decline", FriendAction::HangUp));
+        }
+        Phase::Live => {
+            row.spawn(chip(
+                f,
+                "Mute",
+                Action::Friends(FriendAction::Mute),
+                call.muted,
+            ));
+            row.spawn(act(f, "Hang up", FriendAction::HangUp));
+        }
+        _ => {
+            row.spawn(act(f, "Hang up", FriendAction::HangUp));
+        }
+    });
+}
+
+fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Call) {
     let waiting = friends.waiting();
     let title = match (friends.open, waiting) {
         (true, _) => "Friends".to_string(),
@@ -541,6 +599,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
             friends.open,
         ));
     });
+    call_bar(p, f, call);
     if !friends.open {
         return;
     }
@@ -660,6 +719,17 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends) {
                 n => format!("Write  ·  {n}"),
             };
             row.spawn(act(f, &write, FriendAction::Talk(friend.address.clone())));
+            // The server rings only a friend who is here.
+            if friend.online && call.phase == Phase::Idle {
+                row.spawn(act(
+                    f,
+                    "Call",
+                    FriendAction::Ring {
+                        address: friend.address.clone(),
+                        name: friend.name.clone(),
+                    },
+                ));
+            }
             if friends.removing.as_ref() == Some(&friend.handle) {
                 row.spawn(act(
                     f,
