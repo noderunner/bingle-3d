@@ -289,10 +289,15 @@ A game's own rules and its players' words keep their terms.
   `src/ray_pointer.rs`: a pointer that is a ray in the world, as one of Bevy's pointers: its
   own ray cast against what is `Pickable`, its trigger the primary button, so clicks reach
   `play.rs` as the mouse's do, and points at a `Panel`, a UI drawn into an image and hung in
-  the world (compiled and tested without the feature). `src/vr_menu.rs`: the headset's
-  menu, one such panel, opened by `vr.rs` in front of the player. **Run `cargo clippy --all-targets --features vr -- -D warnings` too when touching
-  it**: CI does not build the feature. An agent cannot see into the headset: starting `--vr`
-  with SteamVR running draws in the headset the maintainer may be wearing, so say so first; with
+  the world (compiled and tested without the feature). `src/world_panel.rs` hangs one: a
+  camera drawing UI into an image, and the quad showing it. `src/vr_panels.rs`: the headset's
+  menu, opened by `vr.rs` in front of the player, and the game's panel, given to a panel
+  beside the table while a session runs (`InHeadset`). **Run `cargo clippy --all-targets
+  --features vr -- -D warnings` too when touching it**: CI does not build the feature. **A
+  build with it starts in the headset by itself when a VR runtime is running**
+  (`vr::runtime_running`), except in a run `--frames` or `--screenshot` limits: pass
+  `--desktop` to any other run. An agent cannot see into the headset: starting `--vr` with
+  SteamVR running draws in the headset the maintainer may be wearing, so say so first; with
   `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
   fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.

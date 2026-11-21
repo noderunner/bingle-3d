@@ -1,20 +1,17 @@
-//! The menu in a headset: a panel that opens in front of the player (`vr.rs` opens it, from a
-//! controller's menu button), pressed with a controller's beam.
+//! The panels in a headset, hung in the world (`world_panel.rs`) and pressed with a
+//! controller's beam: Bevy UI like the window's, so their buttons are `Button`s and do what
+//! they say through `Activate`, as the window's do.
 //!
-//! It is Bevy UI like the window's, drawn by a camera of its own into an image, and the image
-//! is shown on a `Panel` in the world (`ray_pointer.rs`), so its buttons are `Button`s and an
-//! item does what it says through `Activate`, as the window's do. The camera draws only while
-//! the menu is open.
-//!
-//! What is in it: resume; play the move and go back (as Enter and Backspace); sit at the table
-//! again; whether the legal moves and the coordinates are shown; the place; quit.
+//! - **The menu** opens in front of the player (`vr.rs` opens it, from a controller's menu
+//!   button): resume; play the move and go back (as Enter and Backspace); sit at the table
+//!   again; whether the legal moves and the coordinates are shown; the place; quit.
+//! - **The game's panel** (`game_panel.rs`) stands beside the table, at the player's front
+//!   left, while a headset's session runs (`InHeadset`): the same panel as the window's,
+//!   drawn into the world instead of the window, and back in the window when the session ends.
 
-use bevy::camera::{ClearColorConfig, ImageRenderTarget, RenderTarget};
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
 use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::board::ShowLegalMoves;
@@ -22,23 +19,35 @@ use crate::browser::colours;
 use crate::coordinates::ShowCoordinates;
 use crate::environment::{Chosen, Environments};
 use crate::fonts::UiFonts;
+use crate::game_panel::{self, GamePanel};
 use crate::net::{Net, Request, WatchStatus};
 use crate::play;
-use crate::ray_pointer::Panel;
+use crate::world_panel::{self, Hung, Look};
 
-pub struct VrMenuPlugin;
+pub struct VrPanelsPlugin;
 
-impl Plugin for VrMenuPlugin {
+impl Plugin for VrPanelsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VrMenu>()
             .init_resource::<SitAgain>()
-            .add_systems(Startup, spawn_menu)
+            .init_resource::<InHeadset>()
+            .add_systems(Startup, (spawn_menu, hang_game_panel))
             .add_systems(
                 Update,
-                (show.run_if(resource_changed::<VrMenu>), colour_items),
+                (
+                    show_menu,
+                    colour_items,
+                    move_game_panel.run_if(resource_changed::<InHeadset>),
+                    show_game_panel,
+                ),
             );
     }
 }
+
+/// Whether a headset's session is running (`vr.rs` says): the game's panel is in the world
+/// then, and in the window otherwise.
+#[derive(Resource, Debug, Default)]
+pub struct InHeadset(pub bool);
 
 /// Whether the menu is open.
 #[derive(Resource, Debug, Default)]
@@ -54,9 +63,42 @@ pub struct SitAgain(pub bool);
 #[derive(Component)]
 pub struct MenuPanel;
 
-/// The menu's image, in pixels, and how big a pixel is in the world, in metres: 0.32 by 0.38.
-const PIXELS: UVec2 = UVec2::new(640, 760);
-const PIXEL: f32 = 0.0005;
+/// The menu: 0.32 by 0.38 metres.
+const MENU: Look = Look {
+    size: UVec2::new(640, 760),
+    scale: 1.0,
+    metres: 0.0005,
+    background: BACKGROUND,
+};
+
+/// The game's panel: as wide as the window's, and tall enough for a lobby, 0.32 by 0.60
+/// metres; drawn sharper than the window's, and nothing where the panel does not reach.
+const GAME: Look = Look {
+    size: UVec2::new(game_panel::WIDTH as u32, 600),
+    scale: 2.0,
+    metres: 0.001,
+    background: Color::NONE,
+};
+
+/// Where the game's panel stands: at the front left of a player sat at the table, its top a
+/// little above the table top, turned towards them.
+fn beside_table() -> Transform {
+    let top = 0.42;
+    let at = Vec3::new(-0.58, top - GAME.in_world().y / 2.0, 0.32);
+    // Where the eyes of someone sat at the table are, about (`vr.rs`).
+    let eyes = Vec3::new(0.0, 0.45, 0.75);
+    let away = Vec3::new(at.x - eyes.x, 0.0, at.z - eyes.z).normalize();
+    // The panel faces its +z, so its −z looks away from the player.
+    Transform::from_translation(at).looking_to(away, Vec3::Y)
+}
+
+/// The game's panel hung in the world.
+#[derive(Resource)]
+struct GamePanelInWorld(Hung);
+
+/// The menu hung in the world.
+#[derive(Resource)]
+struct MenuInWorld(Hung);
 /// How far ahead of the eyes the menu opens, and how far below them, in metres.
 const AHEAD: f32 = 0.5;
 const BELOW: f32 = 0.12;
@@ -104,31 +146,19 @@ fn spawn_menu(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let image = images.add(Image::new_target_texture(
-        PIXELS.x,
-        PIXELS.y,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    ));
-    let camera = commands
-        .spawn((
-            Camera2d,
-            Camera {
-                order: -1,
-                is_active: false,
-                clear_color: ClearColorConfig::Custom(BACKGROUND),
-                ..default()
-            },
-            RenderTarget::Image(ImageRenderTarget {
-                handle: image.clone(),
-                scale_factor: 1.0,
-            }),
-        ))
-        .id();
+    let hung = world_panel::hang(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        MENU,
+    );
+    commands.entity(hung.quad).insert(MenuPanel);
+    commands.insert_resource(MenuInWorld(hung));
     let f = &*fonts;
     commands
         .spawn((
-            UiTargetCamera(camera),
+            UiTargetCamera(hung.camera),
             Node {
                 width: percent(100),
                 height: percent(100),
@@ -174,27 +204,23 @@ fn spawn_menu(
                 row.spawn(item(f, "Quit", Item::Quit));
             });
         });
+}
 
-    let size = PIXELS.as_vec2() * PIXEL;
-    commands.spawn((
-        MenuPanel,
-        Panel {
-            size,
-            pixels: PIXELS,
-            image: image.clone(),
-        },
-        Mesh3d(meshes.add(Rectangle::from_size(size))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(image),
-            unlit: true,
-            fog_enabled: false,
-            ..default()
-        })),
-        NotShadowCaster,
-        NotShadowReceiver,
-        Transform::default(),
-        Visibility::Hidden,
-    ));
+fn hang_game_panel(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let hung = world_panel::hang(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        GAME,
+    );
+    commands.entity(hung.quad).insert(beside_table());
+    commands.insert_resource(GamePanelInWorld(hung));
 }
 
 fn heading(f: &UiFonts, text: &str, size: f32) -> impl Bundle {
@@ -304,25 +330,45 @@ fn on_item(
     }
 }
 
-/// Shows the panel while the menu is open, and has its camera draw only then.
-fn show(
+/// Shows the menu while it is open.
+fn show_menu(
     menu: Res<VrMenu>,
-    mut panels: Query<&mut Visibility, With<MenuPanel>>,
-    mut cameras: Query<&mut Camera, With<Camera2d>>,
-    targets: Query<&UiTargetCamera>,
+    hung: Res<MenuInWorld>,
+    mut cameras: Query<&mut Camera>,
+    mut visibilities: Query<&mut Visibility>,
 ) {
-    for mut visibility in &mut panels {
-        *visibility = if menu.open {
-            Visibility::Visible
+    world_panel::show(hung.0, menu.open, &mut cameras, &mut visibilities);
+}
+
+/// Gives the game's panel to the world while a headset's session runs, and back to the
+/// window when it ends.
+fn move_game_panel(
+    mut commands: Commands,
+    in_headset: Res<InHeadset>,
+    hung: Res<GamePanelInWorld>,
+    mut panels: Query<(Entity, &mut Node), With<GamePanel>>,
+) {
+    for (panel, mut node) in &mut panels {
+        if in_headset.0 {
+            commands.entity(panel).insert(UiTargetCamera(hung.0.camera));
+            (node.left, node.top) = (px(0), px(0));
         } else {
-            Visibility::Hidden
-        };
-    }
-    for target in &targets {
-        if let Ok(mut camera) = cameras.get_mut(target.0) {
-            camera.is_active = menu.open;
+            commands.entity(panel).remove::<UiTargetCamera>();
+            (node.left, node.top) = (px(game_panel::MARGIN), px(game_panel::MARGIN));
         }
     }
+}
+
+/// Shows the game's panel in the world while it is there and a game is being watched.
+fn show_game_panel(
+    in_headset: Res<InHeadset>,
+    watching: Res<WatchStatus>,
+    hung: Res<GamePanelInWorld>,
+    mut cameras: Query<&mut Camera>,
+    mut visibilities: Query<&mut Visibility>,
+) {
+    let shown = in_headset.0 && watching.is_watching();
+    world_panel::show(hung.0, shown, &mut cameras, &mut visibilities);
 }
 
 fn colour_items(settings: Settings, mut items: Query<(&Item, &Hovered, &mut BackgroundColor)>) {
@@ -345,6 +391,20 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         a.distance(b) < 1e-4
+    }
+
+    #[test]
+    fn the_game_panel_stands_at_the_front_left_turned_to_the_player() {
+        let at = beside_table();
+        assert!(at.translation.x < -0.4 && at.translation.z > 0.0);
+        // Its top a little above the table top, and upright.
+        let top = at.translation.y + GAME.in_world().y / 2.0;
+        assert!((0.3..0.5).contains(&top));
+        assert!(close(at.rotation * Vec3::Y, Vec3::Y));
+        // Its face towards the eyes, along the ground.
+        let face = at.rotation * Vec3::Z;
+        let to_eyes = (Vec3::new(0.0, 0.45, 0.75) - at.translation) * Vec3::new(1.0, 0.0, 1.0);
+        assert!(face.dot(to_eyes.normalize()) > 0.999);
     }
 
     #[test]

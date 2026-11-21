@@ -43,8 +43,11 @@ mod voice_chat;
 // Used only by the headset so far.
 mod vr;
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
-mod vr_menu;
+mod vr_panels;
 mod wood_choice;
+// Used only by the headset so far.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod world_panel;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -86,8 +89,19 @@ fn main() -> AppExit {
         }),
         ..default()
     });
+    // In a headset: when asked, or when one is waiting (its runtime already running).
     #[cfg(feature = "vr")]
-    let plugins = if opts.vr {
+    let in_headset = opts.vr
+        || (opts.looks_for_headset()
+            && vr::runtime_running().is_some_and(|runtime| {
+                eprintln!(
+                    "bingle-3d: {runtime} is running: starting in the headset \
+                     (--desktop stays in the window)"
+                );
+                true
+            }));
+    #[cfg(feature = "vr")]
+    let plugins = if in_headset {
         vr::with_headset(plugins)
     } else {
         plugins
@@ -96,7 +110,7 @@ fn main() -> AppExit {
     // After the headset's own plugins: one of them makes a schedule anew, and what was put in
     // it before would be lost.
     #[cfg(feature = "vr")]
-    if opts.vr {
+    if in_headset {
         app.add_plugins(vr::VrPlugin);
     }
     app

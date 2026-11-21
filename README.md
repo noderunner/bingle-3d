@@ -162,10 +162,13 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 your side), degrees above it, and metres from its middle.
 
 **In a headset** (first steps: the place and the table at their real size, controllers that
-point and click, and a menu; the rest of the interface is still only in the window). Build with the `vr` feature, start SteamVR, then:
+point and click, the game's panel beside the table and a menu; the main screen is still only in
+the window). Build with the `vr` feature. A build with it starts in the headset by itself when
+SteamVR (or Monado, or WiVRn) is already running, and in the window otherwise; `--vr` starts in
+the headset whatever is running (which starts SteamVR), and `--desktop` stays in the window.
 
 ```sh
-cargo run --features vr -- --vr --environment garden --play-bot go-9x9
+cargo run --features vr -- --environment garden --play-bot go-9x9
 ```
 
 What it needs besides the usual build:
@@ -185,7 +188,9 @@ does, and the upper one (B or Y) goes back. The left stick walks you ahead or ba
 sideways; the right stick turns you and lifts or lowers you, and pressing it sits you at the
 table again. The left controller's menu button, or pressing the left stick, opens a menu in
 front of you: play the move, go back, sit again, show the legal moves or the coordinates,
-change the place, quit. SteamVR's controller bindings can change all of these.
+change the place, quit. The game's panel (the players, whose move it is, the clock, its buttons)
+stands at your front left while you are in the headset, and is back in the window when you
+leave it. SteamVR's controller bindings can change all of these.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

@@ -2,7 +2,7 @@
 //!
 //! First steps (docs/plan.md, VR): the environment chosen, at its real size, drawn for each
 //! eye, with the player sat at the table, and a controller in each hand that points and
-//! clicks, and a menu that opens in front of them (`vr_menu.rs`). The window stays as it is,
+//! clicks, and a menu that opens in front of them (`vr_panels.rs`), and the game's panel beside the table. The window stays as it is,
 //! with the interface and the flat camera.
 //!
 //! **Where the player sits.** The headset's poses are in the room's own space, under the
@@ -134,6 +134,76 @@ fn moved_root(root: Transform, head: Transform, sticks: Sticks, seconds: f32) ->
     }
 }
 
+/// The OpenXR runtimes looked for at start, by the name of the process that is their server,
+/// and what they are called.
+#[cfg(any(feature = "vr", test))]
+const RUNTIMES: &[(&str, &str)] = &[
+    ("vrserver", "SteamVR"),
+    ("monado-service", "Monado"),
+    ("wivrn-server", "WiVRn"),
+];
+
+/// The runtime a process is the server of, if any: by its name, as Linux's `/proc` or
+/// Windows' `tasklist` gives it.
+#[cfg(any(feature = "vr", test))]
+fn runtime_named(process: &str) -> Option<&'static str> {
+    let name = process.trim().trim_matches('"').to_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    RUNTIMES
+        .iter()
+        .find(|(server, _)| *server == name)
+        .map(|(_, runtime)| *runtime)
+}
+
+/// The OpenXR runtime that is running on this machine, if one is: a headset is waiting, and
+/// the client starts in it. Only a runtime already running counts: asking OpenXR itself
+/// would start SteamVR when it is not.
+#[cfg(feature = "vr")]
+pub fn runtime_running() -> Option<&'static str> {
+    processes().iter().find_map(|name| runtime_named(name))
+}
+
+#[cfg(all(feature = "vr", target_os = "linux"))]
+fn processes() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        })
+        .filter_map(|e| std::fs::read_to_string(e.path().join("comm")).ok())
+        .collect()
+}
+
+#[cfg(all(feature = "vr", windows))]
+fn processes() -> Vec<String> {
+    use std::os::windows::process::CommandExt;
+    // No console window flashing up for it.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Ok(out) = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return vec![];
+    };
+    // A line is `"vrserver.exe","1234",...`: the name is its first field.
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.split(',').next().map(str::to_string))
+        .collect()
+}
+
+#[cfg(all(feature = "vr", not(any(target_os = "linux", windows))))]
+fn processes() -> Vec<String> {
+    vec![]
+}
+
 /// What the client asks of a controller.
 #[cfg(any(feature = "vr", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,7 +311,9 @@ mod headset {
     use crate::play;
     use crate::ray_pointer::{self, RayPointer, RayPointerPlugin};
     use crate::scene::Headset;
-    use crate::vr_menu::{MenuPanel, SitAgain, VrMenu, VrMenuPlugin, place_in_front};
+    use crate::vr_panels::{
+        InHeadset, MenuPanel, SitAgain, VrMenu, VrPanelsPlugin, place_in_front,
+    };
     use bevy::app::PluginGroupBuilder;
     use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
     use bevy::window::{PresentMode, PrimaryWindow};
@@ -293,7 +365,7 @@ mod headset {
                 focused_mode: UpdateMode::Continuous,
                 unfocused_mode: UpdateMode::Continuous,
             })
-            .add_plugins((RayPointerPlugin, VrMenuPlugin))
+            .add_plugins((RayPointerPlugin, VrPanelsPlugin))
             .add_observer(mark_eye)
             .add_systems(
                 Startup,
@@ -491,8 +563,18 @@ mod headset {
         commands.entity(eye.entity).insert(Headset);
     }
 
-    fn report_state(state: Option<Res<XrState>>, mut last: Local<Option<XrState>>) {
+    /// Says how the headset's session stands, in the log and to the panels: the game's panel
+    /// is in the world while it is ready or running.
+    fn report_state(
+        state: Option<Res<XrState>>,
+        mut last: Local<Option<XrState>>,
+        mut in_headset: ResMut<InHeadset>,
+    ) {
         let now = state.map(|s| *s);
+        let running = matches!(now, Some(XrState::Ready | XrState::Running));
+        if in_headset.0 != running {
+            in_headset.0 = running;
+        }
         if now != *last {
             match now {
                 Some(XrState::Unavailable) | None => {
@@ -733,6 +815,16 @@ mod tests {
                 .dot(Vec3::new(ahead.x, 0.0, ahead.z).normalize())
                 > 0.999
         );
+    }
+
+    #[test]
+    fn a_runtime_is_known_by_its_server_on_linux_and_on_windows() {
+        assert_eq!(runtime_named("vrserver\n"), Some("SteamVR"));
+        assert_eq!(runtime_named("\"vrserver.exe\""), Some("SteamVR"));
+        assert_eq!(runtime_named("VRServer.EXE"), Some("SteamVR"));
+        assert_eq!(runtime_named("monado-service"), Some("Monado"));
+        assert_eq!(runtime_named("vrmonitor"), None);
+        assert_eq!(runtime_named("\"steam.exe\""), None);
     }
 
     #[test]

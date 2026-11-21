@@ -600,15 +600,21 @@ Steps:
    pointers (`src/ray_pointer.rs`), so its trigger on a cell or a piece is the click the mouse
    makes, through `play.rs` unchanged. A face button plays the move and another goes back.
    The sticks move the player about: ahead and back and sideways, a turn, up and down.
-3. **A menu in the headset** (built, to be tried): the left hand's menu button opens a panel
-   in front of the player (`src/vr_menu.rs`), Bevy UI drawn into an image by a camera of its
-   own and pressed with the same beam (`ray_pointer::Panel`): the move, sitting again, what
-   is shown, the place, quit. It is the pattern for any interface in the world.
+3. **A menu in the headset** (built; it works in the maintainer's headset): the left hand's
+   menu button opens a panel in front of the player (`src/vr_panels.rs`), Bevy UI drawn into
+   an image by a camera of its own and pressed with the same beam (`src/world_panel.rs`,
+   `ray_pointer::Panel`): the move, sitting again, what is shown, the place, quit.
+4. **The game's panel in the world** (built, to be tried): the window's own panel, given to a
+   panel beside the table while a headset's session runs, and back to the window after. And
+   **starting in the headset by itself** when a VR runtime is already running (its server
+   process is looked for: SteamVR's `vrserver`, Monado's, WiVRn's), as games do; `--vr` and
+   `--desktop` decide instead, and a run that `--frames` or `--screenshot` limits does not
+   look.
    Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
    headset's own onto them.
-4. The game's panel in the world, as the menu is; then the rest of the interface.
-5. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
-6. Hand tracking, and picking a piece up.
+5. The rest of the interface in the world (the main screen: finding and starting a game).
+6. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
+7. Hand tracking, and picking a piece up.
 
 Open: the headset sets the room's floor aside (the head is put at a sitter's eye point, so any
 chair does); whether the floor should count where the player really kneels. CI does not build

@@ -7,7 +7,7 @@
 //! clicks knows the difference (`play.rs`). **A new input device becomes gestures here.**
 //!
 //! It also points at a `Panel`: a flat interface hung in the world, drawn by a UI camera into
-//! an image (`vr_menu.rs`). Over one, the pointer is told it is at that pixel of the image, and
+//! an image (`world_panel.rs`). Over one, the pointer is told it is at that pixel of the image, and
 //! Bevy's UI picking does the rest: buttons there are pressed as the mouse presses them.
 
 use bevy::asset::uuid::Uuid;
@@ -54,12 +54,14 @@ pub struct RayPointer {
     on_panel: Option<Location>,
 }
 
-/// A flat interface in the world: an image of `pixels`, shown `size` metres wide and high,
-/// centred on its origin and facing its +z. It is pointed at only while it is shown.
+/// A flat interface in the world (`world_panel.rs`): an image of `pixels` (the UI's logical
+/// pixels, `scale` of the image's to each), shown `size` metres wide and high, centred on its
+/// origin and facing its +z. It is pointed at only while it is shown.
 #[derive(Component, Clone, Debug)]
 pub struct Panel {
     pub size: Vec2,
     pub pixels: UVec2,
+    pub scale: f32,
     pub image: Handle<Image>,
 }
 
@@ -184,7 +186,7 @@ fn cast(
                     let location = Location {
                         target: NormalizedRenderTarget::Image(ImageRenderTarget {
                             handle: panel.image.clone(),
-                            scale_factor: 1.0,
+                            scale_factor: panel.scale,
                         }),
                         position: pixel,
                     };
@@ -443,6 +445,7 @@ mod tests {
                 Panel {
                     size: Vec2::splat(0.3),
                     pixels: UVec2::splat(300),
+                    scale: 1.0,
                     image: Handle::default(),
                 },
                 Transform::from_xyz(0.0, 0.0, -0.7),

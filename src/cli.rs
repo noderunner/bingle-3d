@@ -32,9 +32,10 @@ Options:
                      garden
   --view Y,P,R       where the camera starts: degrees round the table (0 is your
                      side), degrees above it, metres from its middle (for pictures)
-  --vr               draw the table in a headset too, through OpenXR (SteamVR must be
-                     running; only in a build with the vr feature). Home sits you
-                     at the table again
+  --vr               draw the table in a headset too, through OpenXR (only in a build
+                     with the vr feature, which does so by itself when SteamVR is
+                     already running). Home sits you at the table again
+  --desktop          stay in the window, even with SteamVR running
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -78,6 +79,8 @@ pub struct Options {
     pub view: Option<String>,
     /// Draw in a headset too.
     pub vr: bool,
+    /// Stay in the window, even with a headset waiting.
+    pub desktop: bool,
     pub help: bool,
 }
 
@@ -142,6 +145,7 @@ impl Options {
                 "--relay-only" => opts.relay_only = true,
                 "--voice" => opts.voice = true,
                 "--vr" => opts.vr = true,
+                "--desktop" => opts.desktop = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--environment" => opts.environment = Some(value("an environment's name")?),
                 "--view" => {
@@ -178,7 +182,18 @@ impl Options {
                 _ => return Err(format!("unknown option {arg:?}")),
             }
         }
+        if opts.vr && opts.desktop {
+            return Err("only one of --vr and --desktop".into());
+        }
         Ok(opts)
+    }
+
+    /// Whether to look for a headset waiting, and start in it if there is one: not when told
+    /// where to start, nor in a run that a script limits (`--frames`, `--screenshot`), which
+    /// should do the same whatever else runs on the machine.
+    #[cfg_attr(not(feature = "vr"), allow(dead_code))]
+    pub fn looks_for_headset(&self) -> bool {
+        !self.vr && !self.desktop && self.last_frame().is_none()
     }
 
     /// The frame to stop at, if the run is limited: `--frames`, or the default screenshot frame.
@@ -321,6 +336,18 @@ mod tests {
         assert!(parse(&["--environment"]).is_err());
         assert!(parse(&["--vr"]).unwrap().vr);
         assert!(!parse(&[]).unwrap().vr);
+        assert!(parse(&["--desktop"]).unwrap().desktop);
+        assert!(parse(&["--vr", "--desktop"]).is_err());
+        // A headset is looked for unless told, or in a script's run.
+        assert!(parse(&[]).unwrap().looks_for_headset());
+        assert!(!parse(&["--vr"]).unwrap().looks_for_headset());
+        assert!(!parse(&["--desktop"]).unwrap().looks_for_headset());
+        assert!(!parse(&["--frames", "10"]).unwrap().looks_for_headset());
+        assert!(
+            !parse(&["--screenshot", "a.png"])
+                .unwrap()
+                .looks_for_headset()
+        );
     }
 
     #[test]
