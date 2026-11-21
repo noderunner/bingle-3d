@@ -573,8 +573,8 @@ nothing of (decision 9). First draft, for the maintainer's eye.
 - Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
   reward it; the private overlay's games' appearance loaded from a configured folder, without
   this repository naming them (decision 2).
-- Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
-  tutorials and puzzles.
+- Maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles. (Release builds:
+  decision 11.)
 
 ### VR: usable (2026-11-21)
 
@@ -625,12 +625,19 @@ Steps:
    an OpenXR game as Touch controllers, with no right Menu button, unless the game asks for
    Valve's `XR_VALVE_frame_controller_interaction`; the client asks for it (a runtime without
    it goes on without), and suggests bindings for the Frame's own profile where it is taken.
-6. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
-7. Hand tracking, and picking a piece up.
+6. **On the Steam Frame itself** (built; it runs on the maintainer's Frame, with no PC): a
+   build for arm64 Linux, made on x86-64 against Valve's Steam Runtime 4 arm64 SDK
+   (`scripts/frame-sysroot.sh`, `scripts/release-build.sh steam-frame`), with the OpenXR loader
+   built for it in `lib/` beside the binary, uploaded by Valve's SteamOS Devkit Client
+   (README). It is far too slow to play for now: the Frame's graphics are a phone's, and the
+   scene was tuned on a desktop card. Next: a lighter standalone preset (each eye's
+   resolution, shadows, MSAA, a lighter garden), measured on the device.
+7. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
+8. Hand tracking, and picking a piece up.
 
 Open: the headset sets the room's floor aside (the head is put at a sitter's eye point, so any
 chair does); whether the floor should count where the player really kneels. CI does not build
-the `vr` feature yet.
+the `vr` feature yet (the release workflow does, on a tag).
 
 A note on hands: [Frametop](https://github.com/Frametop/frametop) tracks hands on the
 Steam Frame itself and publishes them to files rather than through OpenXR, so using it would mean
@@ -690,3 +697,14 @@ Settled 2026-11-20, with the maintainer:
     the `vr` feature so that the usual build and CI are as before. Until it is released for
     Bevy 0.20 it is taken by revision from the pull request that ports it
     (awtterpip/bevy_oxr#212); move to the release when there is one.
+
+Settled 2026-11-21, with the maintainer:
+
+11. **Releases are cut by tags, with builds for Windows, Linux and the Steam Frame.** Pushing
+    `vX.Y.Z` (Cargo.toml's version) runs `.github/workflows/release.yml`, which builds the three
+    with the `vr` feature and publishes them as a GitHub release; a merge cuts nothing. Linux
+    is built on the oldest supported Ubuntu (glibc 2.35) and ships the OpenXR loader beside
+    the binary, found through its runpath (`$ORIGIN/lib`); Windows links the loader in. The
+    Frame's build is cross-compiled against Valve's Steam Runtime 4 arm64 SDK sysroot, pinned
+    by version and SHA-256, and runs in the Frame's `steamrt4 arm64` runtime. The first is
+    0.0.1.

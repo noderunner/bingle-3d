@@ -40,6 +40,19 @@ only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/d
 - **No game is named in shared code.** Game-specific appearance lives in per-game files, so
   games kept out of public repositories (Bingle's private overlay) can bring their own.
 
+## Downloads
+
+Builds for Windows, Linux and the Steam Frame are on the
+[releases page](https://github.com/noderunner/bingle-3d/releases): unpack one and run the
+program inside, no compiling needed. All have VR in them: they start in the headset when SteamVR
+is running, and in a window otherwise.
+
+- **Windows**: run `bingle-3d.exe` (the program is unsigned, so Windows may warn: *More info*,
+  *Run anyway*).
+- **Linux** (x86-64, glibc 2.35 or newer): run `./bingle-3d`. The OpenXR loader is in `lib/`
+  beside it.
+- **Steam Frame**, on the headset itself with no PC: see [below](#on-the-steam-frame).
+
 ## Building
 
 You need [rustup](https://rustup.rs/); `rust-toolchain.toml` picks the compiler (Rust 1.100), and
@@ -176,6 +189,7 @@ What it needs besides the usual build:
 - **On Windows, CMake**, since the OpenXR loader is built from source there:
   `winget install Kitware.CMake`, then a new terminal.
 - **On Linux, the OpenXR loader** (`libopenxr_loader.so.1`; Fedora's `openxr-libs`), at run time.
+  A release has its own in `lib/`.
 - **SteamVR set as the OpenXR runtime** (in SteamVR's settings, under OpenXR).
 
 You are sat at the table when the headset is
@@ -200,6 +214,43 @@ On the Steam Frame, the client asks SteamVR for the Frame's own controllers (Val
 `XR_VALVE_frame_controller_interaction`), so the right *Menu* button opens the escape menu and
 the left *View* button the menu; A and B play the move and go back, as the D-pad's bottom and
 top do.
+
+### On the Steam Frame
+
+The Frame runs Linux on arm64, and a build for it is made on an x86-64 Linux machine against
+Valve's Steam Runtime 4 arm64 SDK (its files, about 750 MB, fetched once into `target/`). It
+needs clang and CMake (in the toolbox: `sudo dnf install cmake`).
+
+```sh
+rustup target add aarch64-unknown-linux-gnu
+bash scripts/frame-sysroot.sh                 # Valve's files, checked by their SHA-256
+bash scripts/release-build.sh steam-frame     # into target/dist/bingle-3d-steam-frame/
+```
+
+To put it on the headset:
+
+1. On the Frame, *Steam Settings > System > Enable Developer Mode*; then, under *Developer*,
+   *Set User Password*.
+2. On the PC, install the **SteamOS Devkit Client** from Steam (it is under *Software*). On the
+   Frame, *Settings > Developer > Pair new host*; in the client's *Devkits* tab, *Register* it.
+3. In the client's *Title Upload*: a name, the folder `target/dist/bingle-3d-steam-frame` (or a
+   release's unpacked), start command `bingle-3d`, and the runtime **steamrt4 arm64**. Valve's
+   Frame pages say "Sniper": that arm64 runtime was retired, and on the Frame "Sniper" is the
+   x86 one, which runs the program through an emulator that refuses it, silently.
+4. Upload. It is then in the Frame's library under *Non-Steam*, started from the Steam menu.
+   Give it `%command% --vr` as its launch options.
+
+Its log is Steam's, on the Frame (`ssh steamos@frame`, then `~/.local/share/Steam/logs`).
+It is slow on the Frame for now: the scene was made for a desktop graphics card.
+
+### Releases
+
+A release is cut by a tag, never by a merge: set `version` in `Cargo.toml` (in a pull request),
+and once that is merged, tag main's commit `v` and that version (`v0.0.1`) and push the tag.
+[The release workflow](.github/workflows/release.yml) builds the three archives with
+`scripts/release-build.sh` and publishes them as a GitHub release; it refuses a tag that
+disagrees with `Cargo.toml`. A pull request that changes the release's scripts runs the builds
+without publishing.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

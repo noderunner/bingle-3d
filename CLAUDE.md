@@ -305,6 +305,11 @@ A game's own rules and its players' words keep their terms.
   `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
   fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
+- `scripts/release-build.sh`: a release for one platform (Linux, Windows, the Steam Frame), as
+  `.github/workflows/release.yml` runs it on a tag (plan, decision 11). The Frame's is
+  cross-built against Valve's sysroot (`scripts/frame-sysroot.sh`); `scripts/openxr-loader.sh`
+  builds the OpenXR loader a Linux build ships in `lib/`. **Cutting a release is pushing a
+  tag: only when the maintainer asks for one.**
 
 ## Dependencies and Bevy
 
