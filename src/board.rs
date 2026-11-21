@@ -761,6 +761,22 @@ fn build_board(
     ghost.alpha_mode = AlphaMode::Blend;
     let materials = seat_materials(&table.info, tools);
     let ghost = tools.materials.add(ghost);
+    // A bowl of each seat's stones beside the board, for a game whose look has them.
+    if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
+        && let Some(spec) = tools.look.and_then(|l| l.materials.get(&bowls.material))
+    {
+        let bowl = tools.material(&spec.clone());
+        let stones: Vec<Handle<StandardMaterial>> = table
+            .info
+            .seats
+            .iter()
+            .map(|s| materials.get(&s.color).cloned().unwrap_or_default())
+            .collect();
+        let half = outline
+            .iter()
+            .fold(Vec2::ZERO, |half, (point, _)| half.max(point.abs()));
+        crate::bowls::spawn(commands, root, tools.server, bowls, bowl, &stones, half);
+    }
     let kit = Kit {
         stone,
         stone_height: STONE_THICKNESS * stone_scale,

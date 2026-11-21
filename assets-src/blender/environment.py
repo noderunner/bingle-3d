@@ -195,13 +195,20 @@ def irradiance(pano, size):
 
 
 def build(name, source_file):
-    pano = Panorama(grade(common.read_image(common.source(source_file))))
+    return build_from(name, grade(common.read_image(common.source(source_file))))
+
+
+def build_from(name, pixels, specular_gain=1.0):
+    """The two cubemaps of a panorama already fit to use: its centre is the far side of the
+    table, and it goes round to the right. `specular_gain` dims what polished things reflect
+    against the light they are lit by."""
+    pano = Panorama(pixels)
     levels = []
     count = int(math.log2(SPECULAR_SIZE)) + 1
     for i in range(count):
         size = SPECULAR_SIZE >> i
         roughness = i / (count - 1)
-        levels.append(specular_level(pano, size, roughness))
+        levels.append(specular_level(pano, size, roughness) * specular_gain)
         print(f"  specular level {i}: {size}², roughness {roughness:.3f}")
     common.write_ktx2_cube_rgba16f(common.output("environment", f"{name}_specular.ktx2"), levels)
     diffuse, main = irradiance(pano, DIFFUSE_SIZE)

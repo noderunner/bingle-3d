@@ -73,6 +73,8 @@ impl Plugin for NetPlugin {
             warn!("{notice}");
         }
         let auto_login = store.config.auto_login;
+        // Where the table stands is the scene's to build; the config is this thread's to keep.
+        app.insert_resource(crate::environment::Kept(store.config.environment.clone()));
         let session = Session::new(self.server.as_deref(), store);
         let status = ServerStatus {
             server: session.server(),
@@ -172,6 +174,8 @@ pub enum Request {
     ContinueAsGuest { key: Option<String> },
     /// Remember the server used (if `server`) and whether to log in by itself next time.
     Remember { server: bool, auto_login: bool },
+    /// Keep where the table stands (an environment's id) for the next run.
+    RememberEnvironment(String),
     /// Read the account's friends list.
     Friends,
     /// Change the friends list, or answer an invitation.
@@ -771,6 +775,10 @@ fn handle(
         }
         Request::Remember { server, auto_login } => {
             session.remember(server, auto_login);
+            None
+        }
+        Request::RememberEnvironment(id) => {
+            session.remember_environment(&id);
             None
         }
         Request::Trust(fp) => Some(connected(session.trust(fp))),

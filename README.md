@@ -144,7 +144,22 @@ rim stained and the cells along them shaded in its colour. The buttons at the bo
 choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
-the board's lines cross. The client needs a Bingle whose API is 1.6 or newer.
+the board's lines cross, each player's in a wooden bowl beside the board. The client needs a
+Bingle whose API is 1.6 or newer.
+
+Where the table stands is yours to choose, and nobody else's business: the server knows nothing
+of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,
+chooses between the plain *Table* and the *Garden*: a platform of tatami among raked gravel,
+rocks on moss, a pond and a maple in autumn, with a cushion for each seat of the game. The
+choice is kept (`environment` in `config.toml`); `--environment garden` chooses for one run.
+
+```sh
+cargo run -- --environment garden --play-bot go-9x9
+cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garden.png
+```
+
+`--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
+your side), degrees above it, and metres from its middle.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

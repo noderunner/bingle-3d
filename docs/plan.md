@@ -2,7 +2,8 @@
 
 Status: stage 9 under way, with a main screen and an escape menu: a game can be played against the server's bots or a person, found,
 set up and started from its lobby; the player can sign in to an account, has friends and can talk
-to them; Hex has a look of its own, made by the asset pipeline (2026-11-20).
+to them; Hex has a look of its own, made by the asset pipeline, and the table can stand in a
+garden (2026-11-20).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat, and VR only after that (decision 6).
 
@@ -514,6 +515,55 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the username filled in. *Sign in* on the main screen goes to the login screen too; its old
   form on the list panel is gone.
 
+### Environments: where the table stands
+
+A place to play in, in place of the plain table: the player's own choice, which the server knows
+nothing of (decision 9). First draft, for the maintainer's eye.
+
+- An environment is a file (`assets/environments/<id>.toml`, `environment.rs`): its model, its
+  sun, its sky's light and what is seen behind everything, its mist, the camera's exposure and
+  reach, cushions, and the materials its model's parts are named for. The plain table
+  (`room.toml`) is one too: what `scene.rs` had as constants is now its data. `scene.rs` builds
+  whichever is chosen and takes the last one down. The table top stays at y = 0 with its middle
+  at the origin, so boards, pieces and the camera know nothing of where they are.
+- *Place* (stopgap buttons, with the woods) chooses; `environment` in `config.toml` keeps the
+  choice, `--environment` chooses for a run, and `--view` puts the camera somewhere for a
+  picture.
+- **The garden**: a low walnut table on four and a half tatami mats, on a platform of hinoki over
+  raked gravel; rocks on islands of moss with the furrows going round them; a maple in autumn
+  between the table and a low sun, so its shade falls across the board; a stone lantern; a pond
+  with lily pads and carp, and a stone basin fed by a bamboo spout; bamboo, clipped shrubs, a
+  bamboo fence, and trees and hills beyond it. Late on a misty afternoon.
+- A cushion lies on the floor for each seat of the game (two when there is none), the first on
+  the player's side and the others evenly round the table.
+- Games of stones keep them in bowls (`bowls.rs`): an appearance file's `[bowls]` puts a turned
+  wooden bowl at each seat's right hand, by the board's corner, heaped with stones in that seat's
+  material. Go, Gomoku, Pente and Meridians have them, on the plain table too. Only to look at.
+- How it is made (`assets-src/README.md`). The garden is modelled by a script (`garden.py`) and
+  exported as one glTF file with no materials; a part's material is a name, which the
+  environment's file gives a look, read by the client and by Cycles alike. Everything is made in
+  code but the rocks (a scanned CC0 set, made lighter): the maple is a branching trunk with
+  sprays of leaves on cards, the gravel's furrows are in its texture and the mesh's mapping bends
+  them round the islands, and what stands beyond the fence is two rings of pictures.
+- Its light is made from the garden itself: Cycles renders all round from just above the table,
+  under the same sun and sky as the client's, and that panorama is filtered into the cubemaps as
+  the room's photograph is. So the board is lit by the maple's red and the moss's green as well
+  as the sky, and a stone reflects the garden. What polished things reflect is dimmed to under
+  half (a polarising filter): under an open, misty sky a lacquered board was veiled in white.
+  The sky is a photograph with its sun clipped out, since the client's sun is a light of its own.
+- Daylight needed an exposure of its own (EV 11.8, against a room's 9.7), four shadow cascades
+  reaching 30 m where the room has two reaching 4 m, and a smaller aperture, so the garden is
+  seen and not only the board. The camera goes back 2.2 m at most there, under the maple's
+  boughs.
+- Cost, on the maintainer's GPU: about 117,000 triangles in 77 meshes, 8 MB of textures, and the
+  same GPU load as the plain table within what could be measured (the post-processing is most of
+  both). The client grew by 17 MB.
+- Not built: sound (water, wind, a bird); anything that moves but the water's ripples (leaves
+  falling, the carp, a deer-scarer); a tea house to close the south side, where there is only
+  the fence and a gap for a gate; settings for the hardware (shadow distance, the effects), which
+  wait for more environments to measure; a light in the lantern after dark.
+- **Next**: the maintainer's eye on it; then what it says.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
@@ -583,3 +633,8 @@ Settled 2026-11-20, with the maintainer:
    made by the scripts. What they make is committed in `assets/` and compiled into the binary
    (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
    board of the player's choosing, each side's goal edges coloured to match its stones.
+9. **Where the table stands is the client's, and each player's.** An environment is chosen on
+   this client and kept in its config; the server is not told and the game does not depend on
+   it, so two players at one table may be in different places. An environment is data and a
+   model made by the pipeline (decision 8), never code, and whatever it is the table top is at
+   y = 0 with its middle at the origin. The first is a Japanese garden.

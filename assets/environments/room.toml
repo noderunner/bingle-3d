@@ -1,0 +1,49 @@
+# A place to play in: a felt-covered table in a dim room, with nothing else to look at. The
+# plainest of them, and where the client starts.
+#
+# An environment is this client's own choice, as a board's wood is: the server knows nothing of
+# it, and each player may sit somewhere else. Data only.
+
+name = "Table"
+
+# The dim room beyond the table, behind everything.
+background = [0.035, 0.045, 0.045]
+
+# The table: a plain top with no edge to see, in this material.
+[ground]
+material = "felt"
+size = 12.0
+
+# The key light, which casts the shadows: from the far right, and low enough (40° up) that stones
+# cast shadows a player sees. From beyond the board rather than behind the player, so what faces
+# the player (the board's near rim, the stones' fronts) reflects the dim room, not the window:
+# dark polish stays dark, and highlights stand out on it. It is the sun through the room's
+# window, so most of the light is its.
+[sun]
+from = [0.7, 0.8, -0.6]
+illuminance = 9000.0
+shadows_to = 4.0
+
+# The room's light: an HDR photograph of a room, filtered by the asset pipeline
+# (`assets-src/blender/environment.py`). `intensity` is cd/m² for a value of 1 in it: the fill
+# light, low, so that the key light's highlights and shadows stand apart. `window` is where most
+# of its light comes from, as the pipeline reports it; the room is turned about the vertical so
+# that this is on the sun's side, and what a polished stone reflects agrees with its shadow.
+[sky]
+diffuse = "environment/room_diffuse.ktx2"
+specular = "environment/room_specular.ktx2"
+intensity = 220.0
+window = [0.242, 0.851, -0.467]
+
+# The dim room beyond the table, which the felt fades into with distance rather than ending.
+[fog]
+colour = [0.035, 0.045, 0.045]
+start = 1.2
+end = 4.0
+
+# Felt takes the light and gives back little, so the board stands out on it. A deep green-blue,
+# darker than the scan, so the board is the brightest thing on it.
+[materials.felt]
+wood = "felt"
+tint = [0.35, 0.42, 0.40]
+reflectance = 0.3

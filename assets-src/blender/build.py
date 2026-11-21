@@ -18,7 +18,7 @@ import common  # noqa: E402
 # than quietly committing them.
 BLENDER = (5, 3)
 
-STEPS = ["environment", "woods", "stones", "engraving", "cards"]
+STEPS = ["environment", "woods", "stones", "engraving", "cards", "surfaces", "tableware", "garden", "garden_light"]
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
             f"{BLENDER[0]}.{BLENDER[1]}"
         )
     steps = args or STEPS
-    unknown = [s for s in steps if s not in STEPS + ["previews", "fetch"]]
+    unknown = [s for s in steps if s not in STEPS + ["previews", "garden_previews", "fetch"]]
     if unknown:
         raise SystemExit(f"unknown steps: {unknown}; the steps are {STEPS + ['previews']}")
     common.fetch()
@@ -37,6 +37,9 @@ def main():
         if step == "fetch":
             continue
         print(f"== {step}")
+        if step == "garden_previews":
+            __import__("garden_light").run_previews()
+            continue
         module = __import__(step)
         module.run()
 

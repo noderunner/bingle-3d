@@ -98,7 +98,9 @@ not be on `PATH`, so `source ~/.cargo/env` first) and **run the binary on the ho
 no NVIDIA libraries and renders in software (llvmpipe), which is fine for a smoke run and nothing
 else. An agent's shell may have no display variables. A window on the maintainer's desktop needs
 `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` set; say so before opening one, and prefer `--frames` so it
-closes by itself. Headless, run it as CI does: in the toolbox,
+closes by itself. With no window at all and still on the GPU, on the host:
+`gamescope --backend headless -W 1280 -H 720 -- ./target/debug/bingle-3d --no-audio-devices --frames 200 --screenshot out.png`
+(add `--view YAW,PITCH,RADIUS` to look from somewhere). Headless, run it as CI does: in the toolbox,
 `WAYLAND_DISPLAY= xvfb-run -a -s '-screen 0 1280x720x24' ./target/debug/bingle-3d --frames 120 --screenshot out.png`.
 
 **Against a real server**: build Bingle from `origin/main` into a scratch directory (`git archive
@@ -196,19 +198,32 @@ A game's own rules and its players' words keep their terms.
   left (counted down between the server's reports) and how it reads.
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
   ASCII only.
-- `src/scene.rs`: the table and its lights: a key light for shadows and a real room's light
-  (`EnvironmentMapLight`), and on every 3D camera SSAO, TAA (both need `Msaa::Off`), bloom on
-  highlights only, depth of field focused by the orbit camera, and fog into the dim room. The
-  key light (and the room's window, turned to it) is beyond the board: what faces the player
-  reflects the dim room, so dark polish stays dark. **One unit is one metre, and the table top is at
-  y = 0**, so boards are their real size (this is what makes VR work later).
+- `src/environment.rs`: where the table stands, as data (`assets/environments/<id>.toml`): the
+  plain table in a dim room (`room`), and places modelled by the pipeline (`garden`). Its sun,
+  its sky's light, mist, exposure, the camera's reach, cushions, and the materials its model's
+  parts are named for. The player's choice (`Chosen`; stopgap buttons in
+  `src/environment_choice.rs`, kept as `environment` in `config.toml`), which the server knows
+  nothing of. No Bevy systems in it.
+- `src/scene.rs`: builds the environment chosen and takes the last one down: a sun for shadows
+  and the sky's light (`EnvironmentMapLight`), and on every 3D camera SSAO, TAA (both need
+  `Msaa::Off`), bloom on highlights only, depth of field focused by the orbit camera, and fog.
+  A model is drawn node by node from a glTF file with no materials: **a part's material is a
+  name the environment's file gives a look**, so textures go through `textures.rs`. A cushion is
+  laid for each seat of the game. In the room the key light (and the room's window, turned to
+  it) is beyond the board: what faces the player reflects the dim room, so dark polish stays
+  dark. **One unit is one metre, and the table top is at y = 0 with its middle at the origin,
+  whatever the environment**, so boards are their real size (this is what makes VR work later)
+  and nothing on the table knows where it stands.
+- `src/bowls.rs`: a bowl of each seat's stones beside the board, for games whose appearance has
+  `[bowls]`; `places` has no Bevy in it.
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
   `embedded://<path>`; a test checks the list against the folder. `src/textures.rs`: mipmaps for
   our JPEG textures when they load (Bevy 0.20 makes none), and the materials using them built
   again. The files are made by the asset pipeline: **Blender 5.3 headless, run from scripts in
   `assets-src/`** (its README), on the host, never by hand; CC0 sources only, listed with their
   hashes. Look at its Cycles previews (`bash scripts/assets.sh previews`) and at the client's
-  screenshot before calling an asset done.
+  screenshot before calling an asset done. A face is seen from one side in the client and
+  from both in Cycles: only the client's screenshot shows a card or a fence wound the wrong way.
 - `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): a
   piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels,
   the picture on its card in the main screen.
@@ -237,7 +252,8 @@ A game's own rules and its players' words keep their terms.
 - `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
   lighting the legal moves (L, `board::ShowLegalMoves`, off by default).
 - `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
-  the mouse directly, and nothing assumes there is exactly one camera.
+  the mouse directly, and nothing assumes there is exactly one camera. How far back it goes is
+  the environment's (`Reach`); `--view` puts it somewhere for a picture (`StartView`).
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the
   pointer.
