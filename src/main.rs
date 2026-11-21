@@ -40,7 +40,10 @@ mod textures;
 mod toggles;
 mod voice;
 mod voice_chat;
+// Used only by the headset so far.
 mod vr;
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod vr_menu;
 mod wood_choice;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};

@@ -2,7 +2,8 @@
 //!
 //! First steps (docs/plan.md, VR): the environment chosen, at its real size, drawn for each
 //! eye, with the player sat at the table, and a controller in each hand that points and
-//! clicks. The window stays as it is, with the interface and the flat camera.
+//! clicks, and a menu that opens in front of them (`vr_menu.rs`). The window stays as it is,
+//! with the interface and the flat camera.
 //!
 //! **Where the player sits.** The headset's poses are in the room's own space, under the
 //! tracking root. The root is placed so that the head, wherever it is in the room, is at the
@@ -12,7 +13,7 @@
 //!
 //! **Controllers.** Each is a `RayPointer` (`ray_pointer.rs`) along its aim: the trigger is a
 //! click on what it points at. One button plays the move being built and another goes back,
-//! as Enter and Backspace do. What the client asks OpenXR for is four actions (`Input`); which
+//! as Enter and Backspace do. What the client asks OpenXR for is a few actions (`Input`); which
 //! button of which controller each is, is suggested per kind of controller (`BINDINGS`) and
 //! is the runtime's to decide: SteamVR maps a controller it knows onto one of these, and lets
 //! the player change it.
@@ -98,13 +99,13 @@ struct Sticks {
 
 #[cfg(any(feature = "vr", test))]
 impl Sticks {
-    /// The left stick slides the player sideways and lifts them; the right one turns them
-    /// and walks them ahead or back.
+    /// The left stick walks the player ahead or back and slides them sideways; the right one
+    /// turns them and lifts or lowers them.
     fn new(left: Vec2, right: Vec2) -> Self {
         Self {
             slide: push(left.x),
-            lift: push(left.y),
-            walk: push(right.y),
+            walk: push(left.y),
+            lift: push(right.y),
             turn: push(right.x),
         }
     }
@@ -145,18 +146,21 @@ enum Input {
     Confirm,
     /// Go back a selection, as Backspace does.
     Back,
-    /// A stick that slides the player sideways and lifts them.
+    /// A stick that walks the player ahead or back and slides them sideways.
     Shift,
-    /// A stick that turns the player and walks them ahead or back.
+    /// A stick that turns the player and lifts or lowers them.
     Turn,
     /// Sit at the table again, as Home does.
     Sit,
+    /// Open the menu, and close it.
+    Menu,
 }
 
 /// What is suggested for each kind of controller OpenXR's core knows that has a trigger: the
-/// lower face button confirms and the upper goes back, on either hand; where there are sticks,
-/// the left one slides and lifts the player, the right one turns and walks them, and pressing
-/// the right one sits them at the table again. A path that the kind of
+/// lower face button confirms and the upper goes back; the left hand's menu button, or pressing
+/// its stick, opens the menu. Where there are sticks, the left one walks the player and slides
+/// them sideways, the right one turns them and lifts or lowers them, and pressing the right one
+/// sits them at the table again. A path that the kind of
 /// controller does not have would have the runtime refuse all that is suggested for it.
 #[cfg(any(feature = "vr", test))]
 const BINDINGS: &[(&str, &[(Input, &str)])] = &[
@@ -174,6 +178,8 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Shift, "/user/hand/left/input/thumbstick"),
             (Input::Turn, "/user/hand/right/input/thumbstick"),
             (Input::Sit, "/user/hand/right/input/thumbstick/click"),
+            (Input::Menu, "/user/hand/left/input/menu/click"),
+            (Input::Menu, "/user/hand/left/input/thumbstick/click"),
         ],
     ),
     (
@@ -190,6 +196,7 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Shift, "/user/hand/left/input/thumbstick"),
             (Input::Turn, "/user/hand/right/input/thumbstick"),
             (Input::Sit, "/user/hand/right/input/thumbstick/click"),
+            (Input::Menu, "/user/hand/left/input/thumbstick/click"),
         ],
     ),
     (
@@ -201,8 +208,8 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Select, "/user/hand/right/input/trigger/value"),
             (Input::Confirm, "/user/hand/left/input/trackpad/click"),
             (Input::Confirm, "/user/hand/right/input/trackpad/click"),
-            (Input::Back, "/user/hand/left/input/menu/click"),
             (Input::Back, "/user/hand/right/input/menu/click"),
+            (Input::Menu, "/user/hand/left/input/menu/click"),
         ],
     ),
     (
@@ -212,8 +219,8 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Aim, "/user/hand/right/input/aim/pose"),
             (Input::Select, "/user/hand/left/input/select/click"),
             (Input::Select, "/user/hand/right/input/select/click"),
-            (Input::Back, "/user/hand/left/input/menu/click"),
             (Input::Back, "/user/hand/right/input/menu/click"),
+            (Input::Menu, "/user/hand/left/input/menu/click"),
         ],
     ),
 ];
@@ -234,6 +241,7 @@ mod headset {
     use crate::play;
     use crate::ray_pointer::{self, RayPointer, RayPointerPlugin};
     use crate::scene::Headset;
+    use crate::vr_menu::{MenuPanel, SitAgain, VrMenu, VrMenuPlugin, place_in_front};
     use bevy::app::PluginGroupBuilder;
     use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
     use bevy::window::{PresentMode, PrimaryWindow};
@@ -285,8 +293,7 @@ mod headset {
                 focused_mode: UpdateMode::Continuous,
                 unfocused_mode: UpdateMode::Continuous,
             })
-            .add_plugins(RayPointerPlugin)
-            .init_resource::<SitAgain>()
+            .add_plugins((RayPointerPlugin, VrMenuPlugin))
             .add_observer(mark_eye)
             .add_systems(
                 Startup,
@@ -299,7 +306,7 @@ mod headset {
                 PreUpdate,
                 (
                     ask_for_actions.before(OxrActionSetSyncSet),
-                    (read_hands, move_about).after(OxrActionSetSyncSet),
+                    (read_hands, move_about, open_menu).after(OxrActionSetSyncSet),
                 )
                     .run_if(openxr_session_running),
             )
@@ -318,6 +325,7 @@ mod headset {
         shift: openxr::Action<openxr::Vector2f>,
         turn: openxr::Action<openxr::Vector2f>,
         sit: openxr::Action<bool>,
+        menu: openxr::Action<bool>,
         hands: [openxr::Path; 2],
     }
 
@@ -333,8 +341,9 @@ mod headset {
                 select: set.create_action("select", "Click what is pointed at", &hands)?,
                 confirm: set.create_action("confirm", "Play the move", &[])?,
                 back: set.create_action("back", "Go back", &[])?,
-                shift: set.create_action("shift", "Slide sideways, and up and down", &[])?,
-                turn: set.create_action("turn", "Turn, and walk ahead and back", &[])?,
+                shift: set.create_action("shift", "Walk ahead and back, and sideways", &[])?,
+                turn: set.create_action("turn", "Turn, and up and down", &[])?,
+                menu: set.create_action("menu", "Open the menu", &[])?,
                 sit: set.create_action("sit", "Sit at the table again", &[])?,
                 set,
                 hands,
@@ -350,6 +359,7 @@ mod headset {
                 Input::Shift => self.shift.as_raw(),
                 Input::Turn => self.turn.as_raw(),
                 Input::Sit => self.sit.as_raw(),
+                Input::Menu => self.menu.as_raw(),
             }
         }
     }
@@ -494,10 +504,6 @@ mod headset {
         }
     }
 
-    /// Asked for from a controller: sit at the table again.
-    #[derive(Resource, Default)]
-    struct SitAgain(bool);
-
     /// Where the head is in the room's space: between the eyes, turned as they are.
     fn head_in_room<'a>(eyes: impl Iterator<Item = &'a Transform>) -> Option<Transform> {
         let eyes: Vec<&Transform> = eyes.collect();
@@ -518,11 +524,7 @@ mod headset {
         let Some(actions) = actions else {
             return;
         };
-        if actions
-            .sit
-            .state(&session, openxr::Path::NULL)
-            .is_ok_and(|s| s.is_active && s.current_state && s.changed_since_last_sync)
-        {
+        if pressed(&actions.sit, &session) {
             sit.0 = true;
         }
         let stick = |action: &openxr::Action<openxr::Vector2f>| {
@@ -543,6 +545,44 @@ mod headset {
         };
         for mut root in &mut roots {
             *root = moved_root(*root, head, sticks, time.delta_secs());
+        }
+    }
+
+    /// Whether a button has just been pressed.
+    fn pressed(action: &openxr::Action<bool>, session: &OxrSession) -> bool {
+        action
+            .state(session, openxr::Path::NULL)
+            .is_ok_and(|s| s.is_active && s.current_state && s.changed_since_last_sync)
+    }
+
+    type Panels<'w, 's> = Query<
+        'w,
+        's,
+        &'static mut Transform,
+        (With<MenuPanel>, Without<XrCamera>, Without<XrTrackingRoot>),
+    >;
+
+    /// The menu button opens the menu in front of the player, wherever they are, and closes it.
+    fn open_menu(
+        actions: Option<Res<Actions>>,
+        session: Res<OxrSession>,
+        eyes: Query<&Transform, With<XrCamera>>,
+        roots: Query<&Transform, (With<XrTrackingRoot>, Without<XrCamera>)>,
+        mut menu: ResMut<VrMenu>,
+        mut panels: Panels,
+    ) {
+        if !actions.is_some_and(|a| pressed(&a.menu, &session)) {
+            return;
+        }
+        menu.open = !menu.open;
+        info!("headset: the menu button");
+        if menu.open
+            && let (Some(head), Ok(root)) = (head_in_room(eyes.iter()), roots.single())
+        {
+            let head = root.mul_transform(head);
+            for mut panel in &mut panels {
+                *panel = place_in_front(head);
+            }
         }
     }
 
@@ -623,10 +663,11 @@ mod tests {
         assert!((push(1.0) - 1.0).abs() < 1e-6);
         assert!((push(-0.6) + 0.5).abs() < 1e-6);
         assert!(Sticks::new(Vec2::splat(0.1), Vec2::splat(-0.1)).at_rest());
-        let sticks = Sticks::new(Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0));
+        // The left stick walks and slides; the right one turns, lifts and lowers.
+        let sticks = Sticks::new(Vec2::new(1.0, -1.0), Vec2::new(0.0, 1.0));
         assert_eq!(
-            (sticks.slide, sticks.lift, sticks.walk, sticks.turn),
-            (1.0, 0.0, -1.0, 0.0)
+            (sticks.slide, sticks.walk, sticks.lift, sticks.turn),
+            (1.0, -1.0, 1.0, 0.0)
         );
     }
 
@@ -637,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn the_left_stick_slides_the_player_sideways_and_lifts_them() {
+    fn the_player_slides_sideways_and_is_lifted() {
         let (root, head) = sat();
         let eye = eye_point(None);
         let slide = Sticks {
@@ -663,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn the_right_stick_turns_the_player_where_they_are_and_walks_them() {
+    fn the_player_turns_where_they_are_and_walks_where_they_face() {
         let (root, head) = sat();
         let eye = eye_point(None);
         let turn = Sticks {
@@ -692,6 +733,16 @@ mod tests {
                 .dot(Vec3::new(ahead.x, 0.0, ahead.z).normalize())
                 > 0.999
         );
+    }
+
+    #[test]
+    fn every_kind_of_controller_opens_the_menu() {
+        for (profile, bindings) in BINDINGS {
+            assert!(
+                bindings.iter().any(|(input, _)| *input == Input::Menu),
+                "{profile}"
+            );
+        }
     }
 
     #[test]

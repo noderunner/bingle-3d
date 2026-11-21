@@ -5,9 +5,13 @@
 //! cast against what is `Pickable`, and its trigger is the pointer's primary button, so a pull
 //! and a release on a cell is the same click the mouse makes, and nothing that listens for
 //! clicks knows the difference (`play.rs`). **A new input device becomes gestures here.**
+//!
+//! It also points at a `Panel`: a flat interface hung in the world, drawn by a UI camera into
+//! an image (`vr_menu.rs`). Over one, the pointer is told it is at that pixel of the image, and
+//! Bevy's UI picking does the rest: buttons there are pressed as the mouse presses them.
 
 use bevy::asset::uuid::Uuid;
-use bevy::camera::NormalizedRenderTarget;
+use bevy::camera::{ImageRenderTarget, NormalizedRenderTarget};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::picking::PickingSystems;
 use bevy::picking::backend::{HitData, PointerHits};
@@ -46,6 +50,44 @@ pub struct RayPointer {
     told: bool,
     /// How far along the ray the nearest thing it could pick is.
     pub hit: Option<f32>,
+    /// Where on a panel's image it points, if a panel is the nearest thing.
+    on_panel: Option<Location>,
+}
+
+/// A flat interface in the world: an image of `pixels`, shown `size` metres wide and high,
+/// centred on its origin and facing its +z. It is pointed at only while it is shown.
+#[derive(Component, Clone, Debug)]
+pub struct Panel {
+    pub size: Vec2,
+    pub pixels: UVec2,
+    pub image: Handle<Image>,
+}
+
+/// Where a ray meets a panel from its front: how far along the ray, and which pixel of its
+/// image, from the top left.
+pub fn panel_hit(
+    ray: Ray3d,
+    place: &GlobalTransform,
+    size: Vec2,
+    pixels: UVec2,
+) -> Option<(f32, Vec2)> {
+    let inverse = place.affine().inverse();
+    let origin = inverse.transform_point3(ray.origin);
+    let direction = inverse.transform_vector3(*ray.direction);
+    // From behind, or along it.
+    if direction.z >= -1e-6 || origin.z <= 0.0 {
+        return None;
+    }
+    let at = origin + direction * (-origin.z / direction.z);
+    if at.x.abs() > size.x / 2.0 || at.y.abs() > size.y / 2.0 {
+        return None;
+    }
+    let distance = place.transform_point(at).distance(ray.origin);
+    let pixel = Vec2::new(
+        (at.x / size.x + 0.5) * pixels.x as f32,
+        (0.5 - at.y / size.y) * pixels.y as f32,
+    );
+    Some((distance, pixel))
 }
 
 impl RayPointer {
@@ -90,10 +132,11 @@ fn feed(
     mut inputs: MessageWriter<PointerInput>,
 ) {
     for (id, mut pointer) in &mut pointers {
+        let location = pointer.on_panel.clone().unwrap_or_else(nowhere);
         if pointer.tracked {
             inputs.write(PointerInput::new(
                 *id,
-                nowhere(),
+                location.clone(),
                 PointerAction::Move { delta: Vec2::ZERO },
             ));
         }
@@ -107,17 +150,18 @@ fn feed(
             } else {
                 PointerAction::Release(PointerButton::Primary)
             };
-            inputs.write(PointerInput::new(*id, nowhere(), action));
+            inputs.write(PointerInput::new(*id, location, action));
             pointer.told = down;
         }
     }
 }
 
-/// What each pointer points at: everything pickable along its ray, nearest first, up to the
-/// first thing that hides what is behind it.
+/// What each pointer points at: a panel, if one is nearest; else everything pickable along
+/// its ray, nearest first, up to the first thing that hides what is behind it.
 fn cast(
     settings: Option<Res<MeshPickingSettings>>,
     mut pointers: Query<(Entity, &PointerId, &GlobalTransform, &mut RayPointer)>,
+    panels: Query<(&Panel, &GlobalTransform, &InheritedVisibility)>,
     pickables: Query<&Pickable>,
     mut ray_cast: MeshRayCast,
     mut hits: MessageWriter<PointerHits>,
@@ -125,12 +169,29 @@ fn cast(
     let visibility = settings.map_or(RayCastVisibility::VisibleInView, |s| s.ray_cast_visibility);
     for (entity, id, place, mut pointer) in &mut pointers {
         if !pointer.tracked {
-            if pointer.hit.is_some() {
+            if pointer.hit.is_some() || pointer.on_panel.is_some() {
                 pointer.hit = None;
+                pointer.on_panel = None;
             }
             continue;
         }
         let ray = Ray3d::new(place.translation(), place.forward());
+        let panel = panels
+            .iter()
+            .filter(|(_, _, shown)| shown.get())
+            .filter_map(|(panel, at, _)| {
+                panel_hit(ray, at, panel.size, panel.pixels).map(|(distance, pixel)| {
+                    let location = Location {
+                        target: NormalizedRenderTarget::Image(ImageRenderTarget {
+                            handle: panel.image.clone(),
+                            scale_factor: 1.0,
+                        }),
+                        position: pixel,
+                    };
+                    (distance, location)
+                })
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
         let settings = MeshRayCastSettings {
             visibility,
             filter: &|e| pickables.get(e).is_ok_and(|p| p.is_hoverable),
@@ -147,10 +208,20 @@ fn cast(
             })
             .collect();
         let nearest = picks.iter().map(|(_, hit)| hit.depth).reduce(f32::min);
+        // A panel in front hides what is behind it.
+        let (nearest, on_panel) = match panel {
+            Some((distance, location)) if nearest.is_none_or(|n| distance < n) => {
+                (Some(distance), Some(location))
+            }
+            _ => (nearest, None),
+        };
         if pointer.hit != nearest {
             pointer.hit = nearest;
         }
-        if !picks.is_empty() {
+        if pointer.on_panel != on_panel {
+            pointer.on_panel = on_panel;
+        }
+        if pointer.on_panel.is_none() && !picks.is_empty() {
             hits.write(PointerHits::new(*id, picks, 0.0));
         }
     }
@@ -340,6 +411,59 @@ mod tests {
         assert!(!pointer(&mut app, hand).told);
         // Found again with the trigger still down: no click from that.
         assert!(app.world().resource::<Seen>().clicks.is_empty());
+    }
+
+    #[test]
+    fn a_ray_meets_a_panel_at_a_pixel_of_its_image() {
+        let size = Vec2::new(0.4, 0.5);
+        let pixels = UVec2::new(800, 1000);
+        // A panel a metre ahead, facing the origin.
+        let place = GlobalTransform::from_xyz(0.0, 0.0, -1.0);
+        let straight = Ray3d::new(Vec3::ZERO, Dir3::NEG_Z);
+        let (distance, pixel) = panel_hit(straight, &place, size, pixels).unwrap();
+        assert!((distance - 1.0).abs() < 1e-5);
+        assert!(pixel.distance(Vec2::new(400.0, 500.0)) < 1e-3, "its middle");
+        // Towards its top left corner: the image's (0, 0).
+        let corner = Ray3d::new(Vec3::new(-0.19, 0.24, 0.0), Dir3::NEG_Z);
+        let (_, pixel) = panel_hit(corner, &place, size, pixels).unwrap();
+        assert!(pixel.distance(Vec2::new(20.0, 20.0)) < 1e-2);
+        // Beside it, and from behind it.
+        let beside = Ray3d::new(Vec3::new(0.3, 0.0, 0.0), Dir3::NEG_Z);
+        assert!(panel_hit(beside, &place, size, pixels).is_none());
+        let behind = Ray3d::new(Vec3::new(0.0, 0.0, -2.0), Dir3::Z);
+        assert!(panel_hit(behind, &place, size, pixels).is_none());
+    }
+
+    #[test]
+    fn a_panel_in_front_hides_the_board_and_is_pointed_at() {
+        let (mut app, square, hand) = app();
+        let panel = app
+            .world_mut()
+            .spawn((
+                Panel {
+                    size: Vec2::splat(0.3),
+                    pixels: UVec2::splat(300),
+                    image: Handle::default(),
+                },
+                Transform::from_xyz(0.0, 0.0, -0.7),
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        // Its place in the world is worked out at the end of a frame.
+        app.update();
+        pointer(&mut app, hand).tracked = true;
+        settle(&mut app);
+        assert!(app.world().resource::<Seen>().over.is_empty());
+        let p = pointer(&mut app, hand);
+        assert!((p.hit.unwrap() - 0.7).abs() < 1e-4);
+        assert_eq!(p.on_panel.as_ref().unwrap().position, Vec2::splat(150.0));
+        // Hidden, it is not there: the square is pointed at again.
+        app.world_mut()
+            .entity_mut(panel)
+            .insert(InheritedVisibility::HIDDEN);
+        settle(&mut app);
+        assert_eq!(app.world().resource::<Seen>().over, vec![square]);
+        assert!(pointer(&mut app, hand).on_panel.is_none());
     }
 
     #[test]

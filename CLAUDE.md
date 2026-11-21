@@ -288,7 +288,9 @@ A game's own rules and its players' words keep their terms.
   and what is suggested for each kind of controller (`BINDINGS`) are data.
   `src/ray_pointer.rs`: a pointer that is a ray in the world, as one of Bevy's pointers: its
   own ray cast against what is `Pickable`, its trigger the primary button, so clicks reach
-  `play.rs` as the mouse's do (compiled and tested without the feature). **Run `cargo clippy --all-targets --features vr -- -D warnings` too when touching
+  `play.rs` as the mouse's do, and points at a `Panel`, a UI drawn into an image and hung in
+  the world (compiled and tested without the feature). `src/vr_menu.rs`: the headset's
+  menu, one such panel, opened by `vr.rs` in front of the player. **Run `cargo clippy --all-targets --features vr -- -D warnings` too when touching
   it**: CI does not build the feature. An agent cannot see into the headset: starting `--vr`
   with SteamVR running draws in the headset the maintainer may be wearing, so say so first; with
   `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
