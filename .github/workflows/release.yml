@@ -1,0 +1,143 @@
+name: Release
+
+# A release is cut by pushing a tag `vX.Y.Z` on main whose version is Cargo.toml's: the builds
+# below run, and a GitHub release with their archives is published. Merges cut nothing.
+# A pull request that changes how releases are built runs the builds without publishing.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release-build.sh
+      - scripts/openxr-loader.sh
+      - scripts/frame-sysroot.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the binary needs no newer glibc than it has.
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+          - platform: windows-x86_64
+            os: windows-latest
+          - platform: steam-frame
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tag and version agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME, but Cargo.toml says $v" >&2
+            exit 1
+          fi
+
+      - name: Linux packages
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libx11-dev cmake
+
+      - name: Frame tools
+        if: matrix.platform == 'steam-frame'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake pkg-config
+
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Frame target
+        if: matrix.platform == 'steam-frame'
+        run: rustup target add aarch64-unknown-linux-gnu
+
+      # Valve's sysroot is about 750 MB: fetched once per version, then cached.
+      - name: Frame sysroot cache
+        if: matrix.platform == 'steam-frame'
+        uses: actions/cache@v6
+        with:
+          path: target/frame-sysroot/*.tar.gz
+          key: frame-sysroot-${{ hashFiles('scripts/frame-sysroot.sh') }}
+
+      - name: Frame sysroot
+        if: matrix.platform == 'steam-frame'
+        run: bash scripts/frame-sysroot.sh
+
+      - name: Build
+        run: bash scripts/release-build.sh ${{ matrix.platform }}
+
+      - name: Archive
+        run: |
+          cd target/dist
+          name=bingle-3d-${{ matrix.platform }}
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bingle-3d-${{ matrix.platform }}
+          path: |
+            target/dist/*.zip
+            target/dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Built from this tag; no compiling needed. Each archive unpacks to a folder: run the
+          program inside it.
+
+          - **Windows** (`bingle-3d-windows-x86_64.zip`): run `bingle-3d.exe`. Windows may warn
+            that the program is unsigned (More info, Run anyway).
+          - **Linux** (`bingle-3d-linux-x86_64.tar.gz`): run `./bingle-3d`. Needs glibc 2.35 or
+            newer (Ubuntu 22.04, Fedora 36), ALSA and udev, which desktops have.
+          - **Steam Frame** (`bingle-3d-steam-frame.tar.gz`): upload the unpacked folder with the
+            SteamOS Devkit Client (runtime: steamrt4 arm64, start command `bingle-3d`), as the
+            README says.
+
+          The Windows and Linux builds start in the headset when SteamVR is running, and in a
+          window otherwise.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --title "bingle-3d $GITHUB_REF_NAME" \
+            --notes-file notes.md --generate-notes

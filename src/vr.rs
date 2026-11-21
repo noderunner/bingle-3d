@@ -388,7 +388,12 @@ mod headset {
         add_xr_plugins(plugins.disable::<PipelinedRenderingPlugin>()).set(OxrInitPlugin {
             app_info: AppInfo {
                 name: "Bingle".into(),
-                version: Version(0, 1, 0),
+                // The package's version, as the runtime's own lists show it.
+                version: Version(
+                    env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap_or(0),
+                    env!("CARGO_PKG_VERSION_MINOR").parse().unwrap_or(0),
+                    env!("CARGO_PKG_VERSION_PATCH").parse().unwrap_or(0),
+                ),
             },
             exts,
             ..default()
