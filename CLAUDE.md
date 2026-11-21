@@ -293,7 +293,7 @@ A game's own rules and its players' words keep their terms.
   camera drawing UI into an image, and the quad showing it. `src/vr_panels.rs`: the headset's
   menu, opened by `vr.rs` in front of the player; the game's panel, given to a panel beside
   the table while a session runs (`InHeadset`); and every other UI root of the window's,
-  given to a screen across the table then. **A new window UI root goes to that screen in a
+  given to a screen across the table then; the escape menu has a panel of its own. **A new window UI root goes to that screen in a
   headset by itself**; one with a `UiTargetCamera` of its own does not. `src/vr_keyboard.rs`:
   a keyboard in the world while a field that takes typing has the focus, sending
   `KeyboardInput` as the real one does. **Run `cargo clippy --all-targets
