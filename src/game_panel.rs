@@ -78,8 +78,13 @@ fn tick_clocks(
     }
 }
 
+/// The panel, which a headset hangs in the world (`vr_panels.rs`).
 #[derive(Component)]
-struct GamePanel;
+pub struct GamePanel;
+
+/// How wide the panel is, and how far from the window's top left corner.
+pub const WIDTH: f32 = 320.0;
+pub const MARGIN: f32 = 16.0;
 
 fn watch_on_start(
     mut pending: ResMut<WatchOnStart>,
@@ -100,9 +105,9 @@ fn spawn_panel(mut commands: Commands) {
         Node {
             display: Display::None,
             position_type: PositionType::Absolute,
-            left: px(16),
-            top: px(16),
-            width: px(320),
+            left: px(MARGIN),
+            top: px(MARGIN),
+            width: px(WIDTH),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(px(14)),
             row_gap: px(8),

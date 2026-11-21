@@ -161,6 +161,46 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 `--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
 your side), degrees above it, and metres from its middle.
 
+**In a headset**: the place and the table at their real size, controllers that point and click,
+the login and main screens on a screen across the table, the game's panel beside it, a menu,
+and a keyboard. Build with the `vr` feature. A build with it starts in the headset by itself when
+SteamVR (or Monado, or WiVRn) is already running, and in the window otherwise; `--vr` starts in
+the headset whatever is running (which starts SteamVR), and `--desktop` stays in the window.
+
+```sh
+cargo run --features vr -- --environment garden --play-bot go-9x9
+```
+
+What it needs besides the usual build:
+
+- **On Windows, CMake**, since the OpenXR loader is built from source there:
+  `winget install Kitware.CMake`, then a new terminal.
+- **On Linux, the OpenXR loader** (`libopenxr_loader.so.1`; Fedora's `openxr-libs`), at run time.
+- **SteamVR set as the OpenXR runtime** (in SteamVR's settings, under OpenXR).
+
+You are sat at the table when the headset is
+first tracked; press Home in the window to be sat again from where your head is. The window
+keeps the interface. Without a runtime the client says so and runs in its window alone.
+
+Each controller casts a thin beam. Pull the trigger on a cell or a piece to click it, as the
+mouse does. The lower face button (A, or X on the left) plays the move being built, as Enter
+does, and the upper one (B or Y) goes back. The left stick walks you ahead or back and slides you
+sideways, and pressing it sits you at the table again; the right stick turns you and lifts or
+lowers you, and pressing it opens the escape menu (main menu, logout, quit) in front of you.
+The left controller's menu button (the Steam Frame's *View* button) opens a menu in front of
+you: play the move, go back, sit again, show the legal moves or the coordinates,
+change the place, quit. The login screen and the main screen stand across the
+table as a screen the size of the window; in a game, its panel (the players, whose move it is,
+the clock, its buttons) stands at your front left instead. With the right hand's beam on one of
+them, the right stick scrolls it. While a field that takes typing has the focus, a keyboard
+stands before you; *Hide* puts it away. All of it is back in the window when you leave the
+headset. SteamVR's controller bindings can change all of these.
+
+On the Steam Frame, the client asks SteamVR for the Frame's own controllers (Valve's
+`XR_VALVE_frame_controller_interaction`), so the right *Menu* button opens the escape menu and
+the left *View* button the menu; A and B play the move and go back, as the D-pad's bottom and
+top do.
+
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
 the client does not need Blender: what the scripts make is committed.

@@ -30,11 +30,19 @@ toml = "1.2.1"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 ureq = { version = "~3.5.2", default-features = false, features = ["json"] }
 webpki-roots = "1.0.12"
+# A headset through OpenXR (SteamVR), only with the `vr` feature. From the pull request that
+# moves it to Bevy 0.20 (awtterpip/bevy_oxr#212), by revision, until a release has it.
+bevy_mod_openxr = { git = "https://github.com/MaximilianHausen/bevy_oxr.git", rev = "ce6799dbca9d80f2a658d39ad6ac4dc58c2fdc0d", optional = true }
+bevy_mod_xr = { git = "https://github.com/MaximilianHausen/bevy_oxr.git", rev = "ce6799dbca9d80f2a658d39ad6ac4dc58c2fdc0d", optional = true }
+# OpenXR itself, as the plugin above has it: the controllers' actions are made with its types.
+openxr = { version = "0.22.0", optional = true }
 
 [features]
 # Faster incremental builds while developing on Linux: `cargo run --features dev`.
 # Not for release builds, and unreliable on Windows.
 dev = ["bevy/dynamic_linking"]
+# The table in a headset: `cargo run --features vr -- --vr` (docs/plan.md, VR).
+vr = ["dep:bevy_mod_openxr", "dep:bevy_mod_xr", "dep:openxr"]
 
 # Our code lightly optimised and the dependencies fully, so a debug build runs at a usable frame rate.
 [profile.dev]
@@ -42,6 +50,9 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+# No debug info for the dependencies: with it, the program's debug file on Windows passes the
+# linker's size limit (LNK1318) once the `vr` feature is in. Backtraces still name functions.
+debug = false
 
 # CI builds everything cold on small runners and only renders a few frames, so: no debug info (huge
 # on Windows) and no optimisation, which roughly halves the first build. Overrides dev's

@@ -262,9 +262,10 @@ pub struct PasswordField;
 #[derive(Component)]
 struct Dots;
 
-/// A field of the form, outlined while it has the keyboard.
+/// A field of the form, outlined while it has the keyboard. A headset's keyboard stands
+/// before the player while one has it (`vr_keyboard.rs`).
 #[derive(Component)]
-struct Field;
+pub(crate) struct Field;
 
 /// The form's fields, on the login screen: the handle and the password (tab stops `first` and
 /// the next), or the code once the password was right. Enter in any of them sends the form.

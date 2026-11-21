@@ -3,9 +3,10 @@
 Status: stage 9 under way, with a main screen and an escape menu: a game can be played against the server's bots or a person, found,
 set up and started from its lobby; the player can sign in to an account, has friends and can talk
 to them; Hex has a look of its own, made by the asset pipeline, and the table can stand in a
-garden (2026-11-20).
+garden (2026-11-20). In a build with the `vr` feature the whole client works in a SteamVR
+headset, with its controllers (decision 10; 2026-11-21).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
-browser, accounts, friends and voice chat, and VR only after that (decision 6).
+browser, accounts, friends and voice chat.
 
 ## Goal
 
@@ -575,11 +576,13 @@ nothing of (decision 9). First draft, for the maintainer's eye.
 - Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
   tutorials and puzzles.
 
-### Much later: VR
+### VR: usable (2026-11-21)
 
-Not before the desktop client above works (decision 6). The aim is the same table in SteamVR,
-through OpenXR, with hand tracking: pinching a piece is the same gesture as clicking it. Nothing is
-built for it, but the desktop client keeps these so that it fits later at little cost:
+The aim is the same table in SteamVR, through OpenXR: first with the headset's controllers, a
+ray and a trigger being the same gesture as a click, and later with hand tracking, pinching a
+piece. It was to wait for the desktop client (decision 6); decision 10 starts it beside it.
+
+What the desktop client has kept for it:
 
 - **Real-world scale**: one unit is a metre, the table top is at y = 0 and a board is the size of
   a real one.
@@ -587,7 +590,49 @@ built for it, but the desktop client keeps these so that it fits later at little
 - **The camera is replaceable**: nothing depends on there being exactly one camera or on where it
   is.
 
-A note for when it starts: [Frametop](https://github.com/Frametop/frametop) tracks hands on the
+Steps:
+
+1. **A spike** (built; it runs in the maintainer's headset through SteamVR on Windows):
+   `--vr`, in a build with the `vr` feature, starts an OpenXR session, and the environment
+   chosen is drawn for each eye with the player sat at the table (`src/vr.rs`). An eye has the
+   environment's light and MSAA, and none of the flat camera's effects. The window keeps the
+   interface and the flat camera. With no runtime it says so and runs in the window alone.
+2. **A ray from each controller** (built; it works in the maintainer's headset): each is one of Bevy's
+   pointers (`src/ray_pointer.rs`), so its trigger on a cell or a piece is the click the mouse
+   makes, through `play.rs` unchanged. A face button plays the move and another goes back.
+   The sticks move the player about: ahead and back and sideways, a turn, up and down.
+3. **A menu in the headset** (built; it works in the maintainer's headset): the left hand's
+   menu button opens a panel in front of the player (`src/vr_panels.rs`), Bevy UI drawn into
+   an image by a camera of its own and pressed with the same beam (`src/world_panel.rs`,
+   `ray_pointer::Panel`): the move, sitting again, what is shown, the place, quit.
+4. **The game's panel in the world** (built; it works in the maintainer's headset): the window's own panel, given to a
+   panel beside the table while a headset's session runs, and back to the window after. And
+   **starting in the headset by itself** when a VR runtime is already running (its server
+   process is looked for: SteamVR's `vrserver`, Monado's, WiVRn's), as games do; `--vr` and
+   `--desktop` decide instead, and a run that `--frames` or `--screenshot` limits does not
+   look.
+   Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
+   headset's own onto them.
+5. **The rest of the interface in the world** (built; it works in the maintainer's headset): every UI root of the
+   window's but the game's panel is given to a screen across the table while a session runs
+   (the login screen, the main screen, friends), shown while no game is watched; the right
+   stick scrolls a panel the beam is on; and a keyboard of our own (`src/vr_keyboard.rs`)
+   stands before the player while a field that takes typing has the focus, sending what the
+   real keyboard would. SteamVR's own keyboard belongs to OpenVR, not OpenXR: using it would
+   mean loading Valve's `openvr_api` library beside OpenXR, so it is set aside. **The escape
+   menu** has a panel of its own, opened in front of the player by pressing the right stick
+   (or Esc), or the Steam Frame's right *Menu* button. SteamVR shows the Frame's controllers to
+   an OpenXR game as Touch controllers, with no right Menu button, unless the game asks for
+   Valve's `XR_VALVE_frame_controller_interaction`; the client asks for it (a runtime without
+   it goes on without), and suggests bindings for the Frame's own profile where it is taken.
+6. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
+7. Hand tracking, and picking a piece up.
+
+Open: the headset sets the room's floor aside (the head is put at a sitter's eye point, so any
+chair does); whether the floor should count where the player really kneels. CI does not build
+the `vr` feature yet.
+
+A note on hands: [Frametop](https://github.com/Frametop/frametop) tracks hands on the
 Steam Frame itself and publishes them to files rather than through OpenXR, so using it would mean
 running the client on the headset. It is young and changing; look at it again then.
 
@@ -638,3 +683,10 @@ Settled 2026-11-20, with the maintainer:
    it, so two players at one table may be in different places. An environment is data and a
    model made by the pipeline (decision 8), never code, and whatever it is the table top is at
    y = 0 with its middle at the origin. The first is a Japanese garden.
+10. **VR starts now, beside the desktop client, behind a feature.** Decision 6 kept it until the
+    desktop client worked; with environments built, the interface, the cameras' effects and
+    gestures are better shaped knowing what a headset needs. It is OpenXR through
+    `bevy_mod_openxr`, the only maintained way from Bevy to SteamVR, an optional dependency of
+    the `vr` feature so that the usual build and CI are as before. Until it is released for
+    Bevy 0.20 it is taken by revision from the pull request that ports it
+    (awtterpip/bevy_oxr#212); move to the release when there is one.

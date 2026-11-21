@@ -28,6 +28,9 @@ mod look;
 mod net;
 mod new_game;
 mod play;
+// Used only by the headset so far.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod ray_pointer;
 mod run_limit;
 mod scene;
 mod sign_in;
@@ -37,7 +40,15 @@ mod textures;
 mod toggles;
 mod voice;
 mod voice_chat;
+mod vr;
+// These are used only by the headset so far.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod vr_keyboard;
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod vr_panels;
 mod wood_choice;
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod world_panel;
 
 use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
@@ -65,88 +76,118 @@ fn main() -> AppExit {
         };
     }
 
+    if opts.vr && !cfg!(feature = "vr") {
+        eprintln!("bingle-3d: this build has no VR in it: build it with `--features vr`");
+        return AppExit::from_code(2);
+    }
+
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+    let plugins = DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Bingle".into(),
             resolution: WindowResolution::new(1280, 720),
             ..default()
         }),
         ..default()
-    }))
-    // Only what is marked `Pickable` (the board's cells and pieces) is picked, from cameras marked
-    // for it, so the table and the lights' meshes never get in the way of a click.
-    .add_plugins(MeshPickingPlugin)
-    .insert_resource(MeshPickingSettings {
-        require_markers: true,
-        ..default()
-    })
-    // The files the scene is drawn with, and how each game looks.
-    .add_plugins((
-        assets::AssetsPlugin,
-        textures::TexturesPlugin,
-        appearance::AppearancePlugin,
-        wood_choice::WoodChoicePlugin,
-        coordinates::CoordinatesPlugin,
-        toggles::TogglesPlugin,
-        // The screen before the main one.
-        login::LoginPlugin,
-    ))
-    // The network first: it reads the config, which remembers where the table stands.
-    .add_plugins(net::NetPlugin {
-        server: opts.server.clone(),
-        start: opts.start(),
-    })
-    .insert_resource(camera::StartView(
-        opts.view
-            .as_deref()
-            .and_then(|v| camera::StartView::parse(v).ok()),
-    ))
-    // Where the table stands.
-    .add_plugins((
-        environment::EnvironmentPlugin {
-            chosen: opts.environment.clone(),
-        },
-        environment_choice::EnvironmentChoicePlugin,
-    ))
-    .add_plugins((
-        fonts::FontsPlugin,
-        scene::ScenePlugin,
-        camera::OrbitCameraPlugin,
-        hud::HudPlugin,
-        browser::BrowserPlugin {
-            new_game: opts.new_game.clone(),
-        },
-        sign_in::SignInPlugin,
-        friends::FriendsPlugin {
-            open: opts.friends || opts.talk.is_some() || opts.call.is_some(),
-            talk: opts.talk.clone(),
-        },
-        call::CallPlugin {
-            no_devices: opts.no_audio_devices,
-            call: opts.call.clone(),
-            relay_only: opts.relay_only,
-        },
-        voice_chat::VoiceChatPlugin {
-            no_devices: opts.no_audio_devices,
-            join: opts.voice,
-            relay_only: opts.relay_only,
-        },
-        // Tab moves between the fields of a form.
-        bevy::input_focus::tab_navigation::TabNavigationPlugin,
-        board::BoardPlugin,
-        escape_menu::EscapeMenuPlugin,
-        play::PlayPlugin,
-        game_panel::GamePanelPlugin {
-            on_start: opts.watch.clone().map(|w| match w {
-                cli::Watch::Room(code) => net::Target::Room(code),
-                cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
-                cli::Watch::PlayBots(game_def_id) => net::Target::AgainstBots { game_def_id },
-                cli::Watch::Host(game_def_id) => net::Target::Host { game_def_id },
-                cli::Watch::Join(code) => net::Target::Join(code),
-            }),
-        },
-    ));
+    });
+    // In a headset: when asked, or when one is waiting (its runtime already running).
+    #[cfg(feature = "vr")]
+    let in_headset = opts.vr
+        || (opts.looks_for_headset()
+            && vr::runtime_running().is_some_and(|runtime| {
+                eprintln!(
+                    "bingle-3d: {runtime} is running: starting in the headset \
+                     (--desktop stays in the window)"
+                );
+                true
+            }));
+    #[cfg(feature = "vr")]
+    let plugins = if in_headset {
+        vr::with_headset(plugins)
+    } else {
+        plugins
+    };
+    app.add_plugins(plugins);
+    // After the headset's own plugins: one of them makes a schedule anew, and what was put in
+    // it before would be lost.
+    #[cfg(feature = "vr")]
+    if in_headset {
+        app.add_plugins(vr::VrPlugin);
+    }
+    app
+        // Only what is marked `Pickable` (the board's cells and pieces) is picked, from cameras marked
+        // for it, so the table and the lights' meshes never get in the way of a click.
+        .add_plugins(MeshPickingPlugin)
+        .insert_resource(MeshPickingSettings {
+            require_markers: true,
+            ..default()
+        })
+        // The files the scene is drawn with, and how each game looks.
+        .add_plugins((
+            assets::AssetsPlugin,
+            textures::TexturesPlugin,
+            appearance::AppearancePlugin,
+            wood_choice::WoodChoicePlugin,
+            coordinates::CoordinatesPlugin,
+            toggles::TogglesPlugin,
+            // The screen before the main one.
+            login::LoginPlugin,
+        ))
+        // The network first: it reads the config, which remembers where the table stands.
+        .add_plugins(net::NetPlugin {
+            server: opts.server.clone(),
+            start: opts.start(),
+        })
+        .insert_resource(camera::StartView(
+            opts.view
+                .as_deref()
+                .and_then(|v| camera::StartView::parse(v).ok()),
+        ))
+        // Where the table stands.
+        .add_plugins((
+            environment::EnvironmentPlugin {
+                chosen: opts.environment.clone(),
+            },
+            environment_choice::EnvironmentChoicePlugin,
+        ))
+        .add_plugins((
+            fonts::FontsPlugin,
+            scene::ScenePlugin,
+            camera::OrbitCameraPlugin,
+            hud::HudPlugin,
+            browser::BrowserPlugin {
+                new_game: opts.new_game.clone(),
+            },
+            sign_in::SignInPlugin,
+            friends::FriendsPlugin {
+                open: opts.friends || opts.talk.is_some() || opts.call.is_some(),
+                talk: opts.talk.clone(),
+            },
+            call::CallPlugin {
+                no_devices: opts.no_audio_devices,
+                call: opts.call.clone(),
+                relay_only: opts.relay_only,
+            },
+            voice_chat::VoiceChatPlugin {
+                no_devices: opts.no_audio_devices,
+                join: opts.voice,
+                relay_only: opts.relay_only,
+            },
+            // Tab moves between the fields of a form.
+            bevy::input_focus::tab_navigation::TabNavigationPlugin,
+            board::BoardPlugin,
+            escape_menu::EscapeMenuPlugin,
+            play::PlayPlugin,
+            game_panel::GamePanelPlugin {
+                on_start: opts.watch.clone().map(|w| match w {
+                    cli::Watch::Room(code) => net::Target::Room(code),
+                    cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
+                    cli::Watch::PlayBots(game_def_id) => net::Target::AgainstBots { game_def_id },
+                    cli::Watch::Host(game_def_id) => net::Target::Host { game_def_id },
+                    cli::Watch::Join(code) => net::Target::Join(code),
+                }),
+            },
+        ));
     if let Some(limit) = run_limit::RunLimit::from_options(&opts) {
         app.add_plugins(run_limit::RunLimitPlugin(limit));
     }

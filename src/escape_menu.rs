@@ -80,8 +80,13 @@ fn items(in_game: bool) -> [(&'static str, Option<MenuAction>); 7] {
 #[derive(Component)]
 struct MenuItems;
 
+/// What covers the window while the menu is open, with the menu in its middle. A headset hangs
+/// it in the world (`vr_panels.rs`).
 #[derive(Component)]
-struct MenuOverlay;
+pub struct MenuOverlay;
+
+/// How the window is dimmed behind the menu.
+pub const DIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
 
 /// An item that can be chosen (the others are greyed).
 #[derive(Component)]
@@ -104,7 +109,7 @@ fn spawn_menu(mut commands: Commands, fonts: Res<UiFonts>) {
                 ..default()
             },
             // The table dimmed behind it; the overlay takes every click outside the menu.
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            BackgroundColor(DIM),
             GlobalZIndex(100),
         ))
         .with_children(|overlay| {

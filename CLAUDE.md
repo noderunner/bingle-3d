@@ -280,6 +280,30 @@ A game's own rules and its players' words keep their terms.
   tests; `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
   open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
   host's sound): run clients with `--no-audio-devices`.
+- `src/vr.rs`: the table in a headset (`--vr`, only in a build with the `vr` feature: OpenXR
+  through `bevy_mod_openxr`). The plugin makes a camera for each eye under its tracking root;
+  `seat_root` (no Bevy systems, tested without the feature) puts the root so the head is at a
+  sitter's eye point. An eye is marked `scene::Headset`: lit, with none of the flat camera's
+  effects. A controller is a `RayPointer` at its aim; the four things asked of one (`Input`)
+  and what is suggested for each kind of controller (`BINDINGS`) are data.
+  `src/ray_pointer.rs`: a pointer that is a ray in the world, as one of Bevy's pointers: its
+  own ray cast against what is `Pickable`, its trigger the primary button, so clicks reach
+  `play.rs` as the mouse's do, and points at a `Panel`, a UI drawn into an image and hung in
+  the world (compiled and tested without the feature). `src/world_panel.rs` hangs one: a
+  camera drawing UI into an image, and the quad showing it. `src/vr_panels.rs`: the headset's
+  menu, opened by `vr.rs` in front of the player; the game's panel, given to a panel beside
+  the table while a session runs (`InHeadset`); and every other UI root of the window's,
+  given to a screen across the table then; the escape menu has a panel of its own. **A new window UI root goes to that screen in a
+  headset by itself**; one with a `UiTargetCamera` of its own does not. `src/vr_keyboard.rs`:
+  a keyboard in the world while a field that takes typing has the focus, sending
+  `KeyboardInput` as the real one does. **Run `cargo clippy --all-targets
+  --features vr -- -D warnings` too when touching it**: CI does not build the feature. **A
+  build with it starts in the headset by itself when a VR runtime is running**
+  (`vr::runtime_running`), except in a run `--frames` or `--screenshot` limits: pass
+  `--desktop` to any other run. An agent cannot see into the headset: starting `--vr` with
+  SteamVR running draws in the headset the maintainer may be wearing, so say so first; with
+  `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
+  fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
 
 ## Dependencies and Bevy
@@ -290,7 +314,9 @@ A game's own rules and its players' words keep their terms.
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
   `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
   `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds),
-  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation).
+  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation); and, only
+  with the `vr` feature, `bevy_mod_openxr` and `bevy_mod_xr` (by git revision until released for
+  this Bevy: plan, decision 10) and `openxr`, which they already build.
   Bevy's `jpeg` feature reads the scanned textures.
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
