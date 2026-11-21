@@ -31,6 +31,10 @@ pub struct Config {
     pub server: Option<String>,
     /// The name the player is shown by at a table.
     pub name: Option<String>,
+    /// Skip the login screen at start: connect to `server` with the session or guest key kept
+    /// in `keys.toml`. Never a password: none is kept.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub auto_login: bool,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
@@ -128,6 +132,20 @@ impl Store {
 
     pub fn server(&self) -> &str {
         self.config.server.as_deref().unwrap_or(DEFAULT_SERVER)
+    }
+
+    /// Remembers the server to connect to, and whether to skip the login screen next time.
+    /// `server` `None` leaves the one remembered.
+    pub fn remember(&mut self, server: Option<&str>, auto_login: bool) -> io::Result<()> {
+        let server = server
+            .map(str::to_string)
+            .or_else(|| self.config.server.clone());
+        if self.config.server == server && self.config.auto_login == auto_login {
+            return Ok(());
+        }
+        self.config.server = server;
+        self.config.auto_login = auto_login;
+        self.save_config()
     }
 
     /// The name to sit down under: the configured one, if it has anything but spaces in it.
@@ -326,6 +344,32 @@ mod tests {
         assert_eq!(
             Store::load(Some(dir)).guest_key("http://127.0.0.1:8080"),
             None
+        );
+    }
+
+    #[test]
+    fn the_server_and_auto_login_are_remembered_and_no_password() {
+        let tmp = TempDir::new("remember");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        assert!(
+            !store.config.auto_login,
+            "off unless the player turns it on"
+        );
+        store
+            .remember(Some("https://games.example.com"), true)
+            .unwrap();
+        let mut again = Store::load(Some(tmp.0.clone()));
+        assert_eq!(again.server(), "https://games.example.com");
+        assert!(again.config.auto_login);
+        // Logging out turns it off and keeps the server.
+        again.remember(None, false).unwrap();
+        let again = Store::load(Some(tmp.0.clone()));
+        assert_eq!(again.server(), "https://games.example.com");
+        assert!(!again.config.auto_login);
+        let config = fs::read_to_string(tmp.0.join("config.toml")).unwrap();
+        assert!(
+            !config.contains("auto_login"),
+            "off is the default: {config}"
         );
     }
 

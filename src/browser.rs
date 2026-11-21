@@ -32,15 +32,10 @@ use crate::sign_in::{self, Signing};
 pub struct BrowserPlugin {
     /// A game to open the new game form for, once connected (`--new-game`).
     pub new_game: Option<String>,
-    /// Open the sign-in form at start (`--sign-in`).
-    pub sign_in: bool,
 }
 
 impl Plugin for BrowserPlugin {
     fn build(&self, app: &mut App) {
-        if self.sign_in {
-            app.add_systems(Startup, |mut signing: ResMut<Signing>| signing.open());
-        }
         app.insert_resource(NewGameOnStart(self.new_game.clone()))
             .init_resource::<ChosenMembers>()
             .init_resource::<MainScreen>()
@@ -80,6 +75,7 @@ pub(crate) mod colours {
     pub const MUTED: Color = Color::srgb(0.63, 0.65, 0.68);
     pub const GOOD: Color = Color::srgb(0.55, 0.82, 0.58);
     pub const WARN: Color = Color::srgb(0.96, 0.74, 0.38);
+    pub const BAD: Color = Color::srgb(0.90, 0.38, 0.33);
     pub const BUTTON: Color = Color::srgb(0.22, 0.32, 0.48);
     pub const BUTTON_HOVER: Color = Color::srgb(0.28, 0.40, 0.60);
     /// A choice that is made, among others that could be.
@@ -254,12 +250,12 @@ pub(crate) enum Action {
     AskAgain,
     /// Stop watching and go back to the list.
     Back,
-    /// Open the sign-in form.
+    /// Go to the login screen, to log in to an account (`login.rs` acts on it).
     OpenSignIn,
     /// Send the sign-in form's step.
     SubmitSignIn,
-    /// Close the sign-in form.
-    CancelSignIn,
+    /// On the login screen (`login.rs` acts on it).
+    Login(crate::login::LoginAction),
     /// On the sign-in form: ask for a recovery code (or the app's code again).
     UseRecoveryCode(bool),
     /// End the account's session.
@@ -273,6 +269,7 @@ pub(crate) enum Action {
 fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
     commands.spawn((
         BrowserPanel,
+        crate::login::MainOnly,
         Node {
             position_type: PositionType::Absolute,
             left: px(16),
@@ -380,7 +377,6 @@ fn rebuild_list(
     list: Res<GameList>,
     new_game: Res<NewGame>,
     screen: (Res<MainScreen>, Res<ChosenMembers>, Res<CardPictures>),
-    signing: Res<Signing>,
     friends: Res<Friends>,
     fonts: Res<UiFonts>,
     appearances: Res<Appearances>,
@@ -388,11 +384,6 @@ fn rebuild_list(
     list_area: Single<(Entity, &mut ScrollPosition), With<ListArea>>,
 ) {
     let (screen, chosen, pictures) = screen;
-    // The sign-in form is not drawn again for a list read again: that would take the keyboard
-    // from the field being typed in.
-    if signing.form.is_some() && !signing.is_changed() && !status.is_changed() {
-        return;
-    }
     let (area_id, mut scroll) = list_area.into_inner();
     // A list read again keeps its place; a new connection starts at the top.
     if !matches!(status.connection, Connection::Ready(_)) {
@@ -400,9 +391,7 @@ fn rebuild_list(
     }
     let f = &*fonts;
     // The tabs, over the lists only: a form stands alone.
-    let tabs = matches!(status.connection, Connection::Ready(_))
-        && signing.form.is_none()
-        && new_game.form.is_none();
+    let tabs = matches!(status.connection, Connection::Ready(_)) && new_game.form.is_none();
     commands
         .entity(*head_area)
         .despawn_related::<Children>()
@@ -416,9 +405,6 @@ fn rebuild_list(
         .entity(area_id)
         .despawn_related::<Children>()
         .with_children(|area| match &status.connection {
-            _ if signing.form.is_some() => {
-                sign_in::draw(area, f, signing.form.as_ref().unwrap());
-            }
             Connection::Ready(snap) => match &new_game.form {
                 Some(form) => {
                     // A seat can be kept for a friend only by an account that has them.
@@ -1119,13 +1105,8 @@ fn on_activate(
         Action::Submit => play::submit(&net, &mut watching),
         Action::Undo => play::back(&mut watching),
         Action::AskAgain => play::ask_again(&net, &mut watching),
-        Action::OpenSignIn => {
-            new_game.form = None;
-            signing.open();
-            to_top();
-        }
+        Action::OpenSignIn => new_game.form = None,
         Action::SubmitSignIn => sign_in::submit(&net, &mut signing),
-        Action::CancelSignIn => signing.form = None,
         Action::UseRecoveryCode(recovery) => {
             if let Some(form) = signing.form.as_mut() {
                 form.recovery = *recovery;
@@ -1134,7 +1115,7 @@ fn on_activate(
             }
         }
         Action::SignOut => net.send(Request::SignOut),
-        Action::Friends(_) | Action::Voice(_) | Action::Menu(_) => {}
+        Action::Friends(_) | Action::Voice(_) | Action::Menu(_) | Action::Login(_) => {}
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.

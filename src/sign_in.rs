@@ -1,8 +1,8 @@
 //! Signing in to an account on the server, and out again.
 //!
 //! [`Form`] is the sign-in with no Bevy in it: the handle and the password, then a code when the
-//! account has a second factor. [`draw`] puts it on the list panel in place of the lists while it
-//! is open, and [`status`] says under the server's status who the client is.
+//! account has a second factor. [`fields`] draws its fields on the login screen (`login.rs`),
+//! and [`status`] says under the main screen's server status who the client is.
 //!
 //! The handle and the code are Bevy's own text inputs. Bevy cannot hide what is typed in one yet,
 //! so the password has a field of its own ([`PasswordField`]): it shows a dot for each character,
@@ -12,7 +12,7 @@
 use bevy::clipboard::{Clipboard, ClipboardRead};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
-use bevy::input_focus::tab_navigation::{TabGroup, TabIndex};
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::{AutoFocus, FocusCause, FocusedInput, InputFocus};
 use bevy::picking::Pickable;
 use bevy::picking::events::PointerPress;
@@ -142,9 +142,12 @@ impl Form {
 }
 
 impl Signing {
-    /// Opens the form, empty.
-    pub fn open(&mut self) {
-        self.form = Some(Form::default());
+    /// Opens the form, empty but for the handle last used.
+    pub fn open(&mut self, handle: &str) {
+        self.form = Some(Form {
+            handle: handle.to_string(),
+            ..Form::default()
+        });
         self.out_problem = None;
     }
 
@@ -263,84 +266,72 @@ struct Dots;
 #[derive(Component)]
 struct Field;
 
-/// The form, in place of the lists.
-pub fn draw(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
-    area.spawn((
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        TabGroup::new(0),
-    ))
+/// The form's fields, on the login screen: the handle and the password (tab stops `first` and
+/// the next), or the code once the password was right. Enter in any of them sends the form.
+pub fn fields(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, first: i32) {
+    area.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: px(6),
+        flex_shrink: 0.0,
+        ..default()
+    })
     .observe(on_form_key)
-    .with_children(|area| {
-        area.spawn(line(f.semibold(17.0), colours::TEXT, "Sign in"));
-        match &form.step {
-            Step::Password => {
-                area.spawn(line(f.regular(14.0), colours::TEXT, "Handle"));
-                let mut handle =
-                    area.spawn((HandleField, text_field(f, &form.handle), TabIndex(0)));
-                if form.handle.is_empty() {
-                    handle.insert(AutoFocus);
-                }
-                area.spawn(line(f.regular(14.0), colours::TEXT, "Password"));
-                let mut password = area.spawn((
-                    PasswordField,
-                    Field,
-                    field_node(),
-                    BackgroundColor(colours::FIELD),
-                    BorderColor::all(colours::FIELD_EDGE),
-                    TabIndex(1),
-                    children![(
-                        Dots,
-                        Text::new(dots(form.password_len())),
-                        f.regular(15.0),
-                        TextColor(colours::TEXT),
-                        Pickable::IGNORE,
-                    )],
-                ));
-                password.observe(on_password_key).observe(focus_on_press);
-                if !form.handle.is_empty() {
-                    password.insert(AutoFocus);
-                }
+    .with_children(|area| match &form.step {
+        Step::Password => {
+            area.spawn(line(f.regular(14.0), colours::TEXT, "Username"));
+            let mut handle =
+                area.spawn((HandleField, text_field(f, &form.handle), TabIndex(first)));
+            if form.handle.is_empty() {
+                handle.insert(AutoFocus);
             }
-            Step::Code { .. } => {
-                let ask = if form.recovery {
-                    "One of your recovery codes"
-                } else {
-                    "The code from your authenticator app"
-                };
-                area.spawn(line(f.regular(14.0), colours::TEXT, ask));
-                area.spawn((CodeField, text_field(f, &form.code), TabIndex(0), AutoFocus));
+            area.spawn(line(f.regular(14.0), colours::TEXT, "Password"));
+            let mut password = area.spawn((
+                PasswordField,
+                Field,
+                field_node(),
+                BackgroundColor(colours::FIELD),
+                BorderColor::all(colours::FIELD_EDGE),
+                TabIndex(first + 1),
+                children![(
+                    Dots,
+                    Text::new(dots(form.password_len())),
+                    f.regular(15.0),
+                    TextColor(colours::TEXT),
+                    Pickable::IGNORE,
+                )],
+            ));
+            password.observe(on_password_key).observe(focus_on_press);
+            if !form.handle.is_empty() {
+                password.insert(AutoFocus);
             }
         }
-        if let Some(problem) = &form.problem {
-            area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        Step::Code { .. } => {
+            let ask = if form.recovery {
+                "One of your recovery codes"
+            } else {
+                "The code from your authenticator app"
+            };
+            area.spawn(line(f.regular(14.0), colours::TEXT, ask));
+            area.spawn((
+                CodeField,
+                text_field(f, &form.code),
+                TabIndex(first),
+                AutoFocus,
+            ));
         }
-        if form.busy {
-            area.spawn(line(f.regular(13.0), colours::MUTED, "Signing in…"));
-        }
-        area.spawn(buttons()).with_children(|row| {
-            row.spawn(button(f, "Sign in", Action::SubmitSignIn));
-            if matches!(form.step, Step::Code { .. }) {
-                let (label, recovery) = if form.recovery {
-                    ("Use the app's code", false)
-                } else {
-                    ("Use a recovery code", true)
-                };
-                row.spawn(button(f, label, Action::UseRecoveryCode(recovery)));
-            }
-            row.spawn(button(f, "Cancel", Action::CancelSignIn));
-        });
-        area.spawn(line(
-            f.regular(13.0),
-            colours::MUTED,
-            "Your games as a guest on this server become the account's. To make an account, use \
-             the server's web page.",
-        ));
     });
+}
+
+/// The button that switches between the app's code and a recovery code, at the code's step.
+pub fn code_choice(row: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form) {
+    if matches!(form.step, Step::Code { .. }) {
+        let (label, recovery) = if form.recovery {
+            ("Use the app's code", false)
+        } else {
+            ("Use a recovery code", true)
+        };
+        row.spawn(button(f, label, Action::UseRecoveryCode(recovery)));
+    }
 }
 
 fn field_node() -> Node {
@@ -372,7 +363,7 @@ fn dots(n: usize) -> String {
     "•".repeat(n)
 }
 
-/// Enter sends the form, from any of its fields; Escape closes it.
+/// Enter sends the form, from any of its fields.
 fn on_form_key(
     mut key: On<FocusedInput<KeyboardInput>>,
     net: Res<Net>,
@@ -381,16 +372,9 @@ fn on_form_key(
     if key.input.state != ButtonState::Pressed {
         return;
     }
-    match key.input.logical_key {
-        Key::Enter => {
-            key.propagate(false);
-            submit(&net, &mut signing);
-        }
-        Key::Escape => {
-            key.propagate(false);
-            signing.form = None;
-        }
-        _ => {}
+    if key.input.logical_key == Key::Enter {
+        key.propagate(false);
+        submit(&net, &mut signing);
     }
 }
 
@@ -657,7 +641,7 @@ mod tests {
     #[test]
     fn a_second_factor_asks_for_a_code_and_a_refusal_says_why() {
         let mut signing = Signing::default();
-        signing.open();
+        signing.open("");
         let form = signing.form.as_mut().unwrap();
         form.handle = "ana".into();
         form.type_password("pw");

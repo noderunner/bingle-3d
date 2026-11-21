@@ -20,6 +20,7 @@ mod friends;
 mod game_panel;
 mod hud;
 mod lobby;
+mod login;
 mod look;
 mod net;
 mod new_game;
@@ -85,6 +86,8 @@ fn main() -> AppExit {
         wood_choice::WoodChoicePlugin,
         coordinates::CoordinatesPlugin,
         toggles::TogglesPlugin,
+        // The screen before the main one.
+        login::LoginPlugin,
     ))
     .add_plugins((
         fonts::FontsPlugin,
@@ -93,10 +96,10 @@ fn main() -> AppExit {
         hud::HudPlugin,
         net::NetPlugin {
             server: opts.server.clone(),
+            start: opts.start(),
         },
         browser::BrowserPlugin {
             new_game: opts.new_game.clone(),
-            sign_in: opts.sign_in,
         },
         sign_in::SignInPlugin,
         friends::FriendsPlugin {

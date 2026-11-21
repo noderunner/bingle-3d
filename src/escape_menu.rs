@@ -1,6 +1,8 @@
-//! The menu Esc opens over a game: *Resume*, *Main Menu* (back to the main screen; the game goes
-//! on at the server, as the game panel's *Back* leaves it), *Settings*, *Game Options* and
-//! *Profile* (not built yet, shown greyed), and *Quit* (to the desktop).
+//! The menu Esc opens over a game or the main screen: *Resume*, *Main Menu* (back to the main
+//! screen from a game; the game goes on at the server, as the game panel's *Back* leaves it),
+//! *Settings*, *Game Options* and *Profile* (not built yet, shown greyed), *Logout* (back to the
+//! login screen, the account's session ended, auto-login off) and *Quit* (to the desktop). On
+//! the main screen *Main Menu* and *Game Options* are greyed too. Not on the login screen.
 //!
 //! While it is open it covers the window: a click reaches neither the board nor the panels, and
 //! the move keys and the camera's keys stand aside. Esc closes it again; a text field that has
@@ -14,7 +16,9 @@ use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::browser::{Action, colours};
 use crate::fonts::UiFonts;
-use crate::net::{Net, ServerStatus, WatchStatus, reconnect, stop_watching};
+use crate::login::{self, LoginScreen, Screen};
+use crate::net::{Connection, Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
+use crate::sign_in::Signing;
 
 pub struct EscapeMenuPlugin;
 
@@ -26,8 +30,10 @@ impl Plugin for EscapeMenuPlugin {
                 Update,
                 (
                     toggle_on_escape,
-                    close_when_not_watching.run_if(resource_changed::<WatchStatus>),
-                    show.run_if(resource_changed::<EscapeMenu>),
+                    close_off_the_main_screen.run_if(resource_changed::<Screen>),
+                    show.run_if(
+                        resource_changed::<EscapeMenu>.or_eager(resource_changed::<WatchStatus>),
+                    ),
                     colour_items,
                 )
                     .chain(),
@@ -52,18 +58,27 @@ pub fn closed(menu: Option<&EscapeMenu>) -> bool {
 pub enum MenuAction {
     Resume,
     MainMenu,
+    Logout,
     Quit,
 }
 
-/// The menu's items, in order: a name, and what it does (`None`: not built yet, greyed).
-const ITEMS: [(&str, Option<MenuAction>); 6] = [
-    ("Resume", Some(MenuAction::Resume)),
-    ("Main Menu", Some(MenuAction::MainMenu)),
-    ("Settings", None),
-    ("Game Options", None),
-    ("Profile", None),
-    ("Quit", Some(MenuAction::Quit)),
-];
+/// The menu's items, in order: a name, and what it does (`None`: greyed). In a game, or on the
+/// main screen.
+fn items(in_game: bool) -> [(&'static str, Option<MenuAction>); 7] {
+    [
+        ("Resume", Some(MenuAction::Resume)),
+        ("Main Menu", in_game.then_some(MenuAction::MainMenu)),
+        ("Settings", None),
+        ("Game Options", None),
+        ("Profile", None),
+        ("Logout", Some(MenuAction::Logout)),
+        ("Quit", Some(MenuAction::Quit)),
+    ]
+}
+
+/// What the menu's items hang from, built again as it opens.
+#[derive(Component)]
+struct MenuItems;
 
 #[derive(Component)]
 struct MenuOverlay;
@@ -119,16 +134,14 @@ fn spawn_menu(mut commands: Commands, fonts: Res<UiFonts>) {
                             ..default()
                         },
                     ));
-                    for (label, action) in ITEMS {
-                        match action {
-                            Some(action) => {
-                                menu.spawn(item(f, label, action));
-                            }
-                            None => {
-                                menu.spawn(greyed(f, label));
-                            }
-                        }
-                    }
+                    menu.spawn((
+                        MenuItems,
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(10),
+                            ..default()
+                        },
+                    ));
                 });
         });
 }
@@ -174,6 +187,10 @@ fn greyed(f: &UiFonts, label: &str) -> impl Bundle {
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy observer takes what it touches as parameters"
+)]
 fn on_item(
     activate: On<Activate>,
     actions: Query<&Action>,
@@ -182,6 +199,7 @@ fn on_item(
     mut status: ResMut<ServerStatus>,
     mut watching: ResMut<WatchStatus>,
     mut exit: MessageWriter<AppExit>,
+    (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
@@ -194,21 +212,36 @@ fn on_item(
             stop_watching(&net, &mut watching);
             reconnect(&net, &mut status);
         }
+        MenuAction::Logout => {
+            if watching.is_watching() {
+                stop_watching(&net, &mut watching);
+            }
+            if matches!(&status.connection, Connection::Ready(snap) if snap.account.is_some()) {
+                net.send(Request::SignOut);
+            }
+            // Logged out, the next start asks again.
+            net.send(Request::Remember {
+                server: false,
+                auto_login: false,
+            });
+            login.auto_login = false;
+            login::go_to_login(&net, &mut screen, &mut login, &mut status, &mut signing);
+        }
         MenuAction::Quit => {
             exit.write(AppExit::Success);
         }
     }
 }
 
-/// Esc opens the menu over a game and closes it again. A text field that has the keyboard is
-/// let go of first.
+/// Esc opens the menu, over a game or the main screen, and closes it again. A text field that
+/// has the keyboard is let go of first. Not on the login screen.
 fn toggle_on_escape(
     keys: Res<ButtonInput<KeyCode>>,
-    watching: Res<WatchStatus>,
+    screen: Option<Res<Screen>>,
     focus: Option<ResMut<InputFocus>>,
     mut menu: ResMut<EscapeMenu>,
 ) {
-    if !keys.just_pressed(KeyCode::Escape) {
+    if !keys.just_pressed(KeyCode::Escape) || screen.as_deref() == Some(&Screen::Login) {
         return;
     }
     if let Some(mut focus) = focus
@@ -217,23 +250,48 @@ fn toggle_on_escape(
         focus.clear();
         return;
     }
-    if menu.open || watching.is_watching() {
-        menu.open = !menu.open;
-    }
+    menu.open = !menu.open;
 }
 
-fn close_when_not_watching(watching: Res<WatchStatus>, mut menu: ResMut<EscapeMenu>) {
-    if !watching.is_watching() && menu.open {
+fn close_off_the_main_screen(screen: Res<Screen>, mut menu: ResMut<EscapeMenu>) {
+    if *screen == Screen::Login && menu.open {
         menu.open = false;
     }
 }
 
-fn show(menu: Res<EscapeMenu>, mut overlay: Single<&mut Node, With<MenuOverlay>>) {
+/// Shows the menu, with its items for where it opens.
+fn show(
+    mut commands: Commands,
+    menu: Res<EscapeMenu>,
+    watching: Res<WatchStatus>,
+    fonts: Res<UiFonts>,
+    mut overlay: Single<&mut Node, With<MenuOverlay>>,
+    list: Single<Entity, With<MenuItems>>,
+) {
     overlay.display = if menu.open {
         Display::Flex
     } else {
         Display::None
     };
+    if !menu.open {
+        return;
+    }
+    let f = &*fonts;
+    commands
+        .entity(*list)
+        .despawn_related::<Children>()
+        .with_children(|list| {
+            for (label, action) in items(watching.is_watching()) {
+                match action {
+                    Some(action) => {
+                        list.spawn(item(f, label, action));
+                    }
+                    None => {
+                        list.spawn(greyed(f, label));
+                    }
+                }
+            }
+        });
 }
 
 type HoverChanged = (With<MenuItem>, Changed<Hovered>);
@@ -251,7 +309,6 @@ fn colour_items(mut items: Query<(&Hovered, &mut BackgroundColor), HoverChanged>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::Request;
 
     fn app() -> (App, std::sync::mpsc::Receiver<Request>) {
         let (net, requests) = Net::for_test();
@@ -261,9 +318,12 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<WatchStatus>()
             .init_resource::<EscapeMenu>()
+            .init_resource::<Signing>()
+            .insert_resource(Screen::Main)
+            .insert_resource(LoginScreen::new("127.0.0.1:8080", true))
             .insert_resource(ServerStatus {
                 server: "http://127.0.0.1:8080".into(),
-                connection: crate::net::Connection::Connecting,
+                connection: Connection::Connecting,
                 notices: vec![],
                 retry_in: None,
             })
@@ -272,7 +332,7 @@ mod tests {
                 Update,
                 (
                     toggle_on_escape,
-                    close_when_not_watching.run_if(resource_changed::<WatchStatus>),
+                    close_off_the_main_screen.run_if(resource_changed::<Screen>),
                 )
                     .chain(),
             );
@@ -314,10 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn escape_opens_the_menu_over_a_game_and_closes_it() {
+    fn escape_opens_the_menu_over_a_game_or_the_main_screen_and_closes_it() {
         let (mut app, _requests) = app();
         press_escape(&mut app);
-        assert!(!open(&app), "nothing to open it over on the main screen");
+        assert!(open(&app), "on the main screen");
+        press_escape(&mut app);
+        assert!(!open(&app));
         watch_a_room(&mut app);
         press_escape(&mut app);
         assert!(open(&app));
@@ -325,6 +387,14 @@ mod tests {
         press_escape(&mut app);
         assert!(!open(&app));
         assert!(closed(None), "an app with no menu is never held up by one");
+    }
+
+    #[test]
+    fn not_on_the_login_screen() {
+        let (mut app, _requests) = app();
+        *app.world_mut().resource_mut::<Screen>() = Screen::Login;
+        press_escape(&mut app);
+        assert!(!open(&app));
     }
 
     #[test]
@@ -372,34 +442,67 @@ mod tests {
     }
 
     #[test]
+    fn logout_ends_the_account_and_goes_to_the_login_screen() {
+        let (mut app, requests) = app();
+        watch_a_room(&mut app);
+        app.world_mut().resource_mut::<ServerStatus>().connection =
+            Connection::Ready(crate::net::session::Snapshot {
+                server: "http://127.0.0.1:8080".into(),
+                version: "1".into(),
+                api_version: "1.7.0".into(),
+                defs: vec![],
+                games: vec![],
+                account: Some(crate::net::session::Account {
+                    handle: "ana".into(),
+                    display_name: String::new(),
+                    must_change_password: false,
+                }),
+                session_ended: false,
+            });
+        requests.try_iter().count();
+        choose(&mut app, MenuAction::Logout);
+        assert_eq!(*app.world().resource::<Screen>(), Screen::Login);
+        assert!(!app.world().resource::<WatchStatus>().is_watching());
+        let asked: Vec<Request> = requests.try_iter().collect();
+        let sign_out = asked.iter().position(|r| *r == Request::SignOut);
+        let probe = asked
+            .iter()
+            .position(|r| matches!(r, Request::Probe { .. }));
+        assert!(
+            sign_out.is_some() && sign_out < probe,
+            "signed out before the server is checked again: {asked:?}"
+        );
+        assert!(asked.contains(&Request::Remember {
+            server: false,
+            auto_login: false
+        }));
+        assert!(!app.world().resource::<LoginScreen>().auto_login);
+        let form = app.world().resource::<Signing>().form.clone().unwrap();
+        assert_eq!(form.handle, "ana", "the username is filled in again");
+    }
+
+    #[test]
     fn quit_ends_the_app() {
         let (mut app, _requests) = app();
-        watch_a_room(&mut app);
         choose(&mut app, MenuAction::Quit);
         app.update();
         assert_eq!(app.should_exit(), Some(AppExit::Success));
     }
 
     #[test]
-    fn the_menu_closes_when_the_game_is_left_another_way() {
-        let (mut app, _requests) = app();
-        watch_a_room(&mut app);
-        app.world_mut().resource_mut::<EscapeMenu>().open = true;
-        app.update();
-        app.world_mut().resource_scope(|world, net: Mut<Net>| {
-            stop_watching(&net, &mut world.resource_mut::<WatchStatus>());
-        });
-        app.update();
-        assert!(!open(&app));
-    }
-
-    #[test]
-    fn three_items_are_not_built_yet() {
-        let greyed: Vec<&str> = ITEMS
-            .iter()
-            .filter(|(_, a)| a.is_none())
-            .map(|(n, _)| *n)
-            .collect();
-        assert_eq!(greyed, ["Settings", "Game Options", "Profile"]);
+    fn what_is_greyed_in_a_game_and_on_the_main_screen() {
+        let greyed = |in_game| -> Vec<&str> {
+            items(in_game)
+                .iter()
+                .filter(|(_, a)| a.is_none())
+                .map(|(n, _)| *n)
+                .collect()
+        };
+        assert_eq!(greyed(true), ["Settings", "Game Options", "Profile"]);
+        assert_eq!(
+            greyed(false),
+            ["Main Menu", "Settings", "Game Options", "Profile"]
+        );
+        assert!(items(false).iter().any(|(n, _)| *n == "Logout"));
     }
 }
