@@ -3,7 +3,8 @@
 Status: stage 9 under way, with a main screen and an escape menu: a game can be played against the server's bots or a person, found,
 set up and started from its lobby; the player can sign in to an account, has friends and can talk
 to them; Hex has a look of its own, made by the asset pipeline, and the table can stand in a
-garden (2026-11-20). VR has begun beside it, as a spike (decision 10).
+garden (2026-11-20). In a build with the `vr` feature the whole client works in a SteamVR
+headset, with its controllers (decision 10; 2026-11-21).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat.
 
@@ -575,7 +576,7 @@ nothing of (decision 9). First draft, for the maintainer's eye.
 - Release builds attached to GitHub releases; maybe macOS, gamepad and Steam Deck controls;
   tutorials and puzzles.
 
-### VR: begun (2026-11-20)
+### VR: usable (2026-11-21)
 
 The aim is the same table in SteamVR, through OpenXR: first with the headset's controllers, a
 ray and a trigger being the same gesture as a click, and later with hand tracking, pinching a
@@ -604,7 +605,7 @@ Steps:
    menu button opens a panel in front of the player (`src/vr_panels.rs`), Bevy UI drawn into
    an image by a camera of its own and pressed with the same beam (`src/world_panel.rs`,
    `ray_pointer::Panel`): the move, sitting again, what is shown, the place, quit.
-4. **The game's panel in the world** (built, to be tried): the window's own panel, given to a
+4. **The game's panel in the world** (built; it works in the maintainer's headset): the window's own panel, given to a
    panel beside the table while a headset's session runs, and back to the window after. And
    **starting in the headset by itself** when a VR runtime is already running (its server
    process is looked for: SteamVR's `vrserver`, Monado's, WiVRn's), as games do; `--vr` and
@@ -612,7 +613,7 @@ Steps:
    look.
    Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
    headset's own onto them.
-5. **The rest of the interface in the world** (built, to be tried): every UI root of the
+5. **The rest of the interface in the world** (built; it works in the maintainer's headset): every UI root of the
    window's but the game's panel is given to a screen across the table while a session runs
    (the login screen, the main screen, friends), shown while no game is watched; the right
    stick scrolls a panel the beam is on; and a keyboard of our own (`src/vr_keyboard.rs`)
