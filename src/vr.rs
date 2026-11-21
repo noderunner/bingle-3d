@@ -245,6 +245,27 @@ enum Input {
 /// controller does not have would have the runtime refuse all that is suggested for it.
 #[cfg(any(feature = "vr", test))]
 const BINDINGS: &[(&str, &[(Input, &str)])] = &[
+    // The Steam Frame's own, with its extension (`FRAME_EXTENSION`): its right Menu button and
+    // left View button reach the client as themselves.
+    (
+        FRAME_PROFILE,
+        &[
+            (Input::Aim, "/user/hand/left/input/aim/pose"),
+            (Input::Aim, "/user/hand/right/input/aim/pose"),
+            (Input::Select, "/user/hand/left/input/trigger/value"),
+            (Input::Select, "/user/hand/right/input/trigger/value"),
+            (Input::Confirm, "/user/hand/left/input/dpad_down/click"),
+            (Input::Confirm, "/user/hand/right/input/a/click"),
+            (Input::Back, "/user/hand/left/input/dpad_up/click"),
+            (Input::Back, "/user/hand/right/input/b/click"),
+            (Input::Shift, "/user/hand/left/input/thumbstick"),
+            (Input::Turn, "/user/hand/right/input/thumbstick"),
+            (Input::Sit, "/user/hand/left/input/thumbstick/click"),
+            (Input::Escape, "/user/hand/right/input/thumbstick/click"),
+            (Input::Escape, "/user/hand/right/input/menu/click"),
+            (Input::Menu, "/user/hand/left/input/view/click"),
+        ],
+    ),
     (
         "/interaction_profiles/oculus/touch_controller",
         &[
@@ -307,6 +328,14 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
     ),
 ];
 
+/// Valve's extension that lets a game see the Steam Frame's controllers as they are, and their
+/// profile (Steamworks: Steam Frame, Input). Without it SteamVR shows them as Touch
+/// controllers, with no right Menu button. The name is as OpenXR lists it, ending in a nul.
+#[cfg(any(feature = "vr", test))]
+const FRAME_EXTENSION: &[u8] = b"XR_VALVE_frame_controller_interaction\0";
+#[cfg(any(feature = "vr", test))]
+const FRAME_PROFILE: &str = "/interaction_profiles/valve/frame_controller_valve";
+
 /// The two hands, as OpenXR names them.
 #[cfg(any(feature = "vr", test))]
 const HANDS: [&str; 2] = ["/user/hand/left", "/user/hand/right"];
@@ -336,6 +365,7 @@ mod headset {
     };
     use bevy_mod_openxr::action_set_attaching::OxrAttachActionSet;
     use bevy_mod_openxr::action_set_syncing::{OxrActionSetSyncSet, OxrSyncActionSet};
+    use bevy_mod_openxr::exts::OxrEnabledExtensions;
     use bevy_mod_openxr::init::OxrInitPlugin;
     use bevy_mod_openxr::resources::OxrInstance;
     use bevy_mod_openxr::session::OxrSession;
@@ -352,11 +382,15 @@ mod headset {
     /// the log and the client runs in its window alone.
     pub fn with_headset(plugins: PluginGroupBuilder) -> PluginGroupBuilder {
         // Rendering in step with the simulation: the eyes' poses are a frame fresher.
+        let mut exts = OxrInitPlugin::default().exts;
+        // Asked for, not needed: a runtime without it says so in the log and goes on.
+        exts.raw_mut().other.push(FRAME_EXTENSION.to_vec());
         add_xr_plugins(plugins.disable::<PipelinedRenderingPlugin>()).set(OxrInitPlugin {
             app_info: AppInfo {
                 name: "Bingle".into(),
                 version: Version(0, 1, 0),
             },
+            exts,
             ..default()
         })
     }
@@ -462,16 +496,29 @@ mod headset {
 
     fn suggest_bindings(
         actions: Option<Res<Actions>>,
+        enabled: Option<Res<OxrEnabledExtensions>>,
         mut suggest: MessageWriter<OxrSuggestActionBinding>,
     ) {
         let Some(actions) = actions else {
             return;
         };
+        // The Frame's own profile only where the runtime took its extension: elsewhere the
+        // runtime would refuse it.
+        let frame = enabled.is_some_and(|e| e.0.raw().other.iter().any(|x| x == FRAME_EXTENSION));
+        let kinds: Vec<_> = BINDINGS
+            .iter()
+            .filter(|(profile, _)| frame || *profile != FRAME_PROFILE)
+            .collect();
         info!(
-            "headset: suggesting what the controllers' buttons do, for {} kinds of controller",
-            BINDINGS.len()
+            "headset: suggesting what the controllers' buttons do, for {} kinds of controller{}",
+            kinds.len(),
+            if frame {
+                ", the Steam Frame's among them"
+            } else {
+                ""
+            }
         );
-        for (profile, bindings) in BINDINGS {
+        for (profile, bindings) in kinds {
             for (input, path) in *bindings {
                 suggest.write(OxrSuggestActionBinding {
                     action: actions.raw(*input),
@@ -913,6 +960,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_steam_frame_s_menu_button_opens_the_escape_menu_and_its_view_button_the_menu() {
+        let (_, frame) = BINDINGS.iter().find(|(p, _)| *p == FRAME_PROFILE).unwrap();
+        assert!(frame.contains(&(Input::Escape, "/user/hand/right/input/menu/click")));
+        assert!(frame.contains(&(Input::Menu, "/user/hand/left/input/view/click")));
+        assert_eq!(FRAME_EXTENSION.last(), Some(&0));
     }
 
     #[test]

@@ -196,9 +196,10 @@ them, the right stick scrolls it. While a field that takes typing has the focus,
 stands before you; *Hide* puts it away. All of it is back in the window when you leave the
 headset. SteamVR's controller bindings can change all of these.
 
-SteamVR passes the Steam Frame's right *Menu* button to no OpenXR game unless it is bound: to
-open the escape menu with it, bind *Open the escape menu* to it in SteamVR's controller
-bindings for Bingle.
+On the Steam Frame, the client asks SteamVR for the Frame's own controllers (Valve's
+`XR_VALVE_frame_controller_interaction`), so the right *Menu* button opens the escape menu and
+the left *View* button the menu; A and B play the move and go back, as the D-pad's bottom and
+top do.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

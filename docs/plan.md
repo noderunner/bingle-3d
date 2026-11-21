@@ -620,9 +620,10 @@ Steps:
    real keyboard would. SteamVR's own keyboard belongs to OpenVR, not OpenXR: using it would
    mean loading Valve's `openvr_api` library beside OpenXR, so it is set aside. **The escape
    menu** has a panel of its own, opened in front of the player by pressing the right stick
-   (or Esc). SteamVR translates the Steam Frame's controllers into Touch, Index or generic
-   ones for an OpenXR game, and none of those has the Frame's right *Menu* button: it is bound
-   in SteamVR's bindings screen, to the action *Open the escape menu*.
+   (or Esc), or the Steam Frame's right *Menu* button. SteamVR shows the Frame's controllers to
+   an OpenXR game as Touch controllers, with no right Menu button, unless the game asks for
+   Valve's `XR_VALVE_frame_controller_interaction`; the client asks for it (a runtime without
+   it goes on without), and suggests bindings for the Frame's own profile where it is taken.
 6. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
 7. Hand tracking, and picking a piece up.
 
