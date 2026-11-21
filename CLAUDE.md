@@ -291,8 +291,12 @@ A game's own rules and its players' words keep their terms.
   `play.rs` as the mouse's do, and points at a `Panel`, a UI drawn into an image and hung in
   the world (compiled and tested without the feature). `src/world_panel.rs` hangs one: a
   camera drawing UI into an image, and the quad showing it. `src/vr_panels.rs`: the headset's
-  menu, opened by `vr.rs` in front of the player, and the game's panel, given to a panel
-  beside the table while a session runs (`InHeadset`). **Run `cargo clippy --all-targets
+  menu, opened by `vr.rs` in front of the player; the game's panel, given to a panel beside
+  the table while a session runs (`InHeadset`); and every other UI root of the window's,
+  given to a screen across the table then. **A new window UI root goes to that screen in a
+  headset by itself**; one with a `UiTargetCamera` of its own does not. `src/vr_keyboard.rs`:
+  a keyboard in the world while a field that takes typing has the focus, sending
+  `KeyboardInput` as the real one does. **Run `cargo clippy --all-targets
   --features vr -- -D warnings` too when touching it**: CI does not build the feature. **A
   build with it starts in the headset by itself when a VR runtime is running**
   (`vr::runtime_running`), except in a run `--frames` or `--screenshot` limits: pass

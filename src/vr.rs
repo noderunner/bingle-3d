@@ -74,6 +74,10 @@ const LIFT_SPEED: f32 = 0.35;
 const TURN_SPEED: f32 = 1.0;
 #[cfg(any(feature = "vr", test))]
 const DEAD_ZONE: f32 = 0.2;
+/// How fast a stick pushed all the way scrolls a panel, in lines (a mouse wheel's notches) a
+/// second.
+#[cfg(feature = "vr")]
+const SCROLL_SPEED: f32 = 12.0;
 
 /// A stick's push along one axis, with nothing near its middle and all of it at its edge.
 #[cfg(any(feature = "vr", test))]
@@ -229,8 +233,8 @@ enum Input {
 /// What is suggested for each kind of controller OpenXR's core knows that has a trigger: the
 /// lower face button confirms and the upper goes back; the left hand's menu button, or pressing
 /// its stick, opens the menu. Where there are sticks, the left one walks the player and slides
-/// them sideways, the right one turns them and lifts or lowers them, and pressing the right one
-/// sits them at the table again. A path that the kind of
+/// them sideways, the right one turns them and lifts or lowers them (or, with its beam on a
+/// panel, scrolls the panel), and pressing the right one sits them at the table again. A path that the kind of
 /// controller does not have would have the runtime refuse all that is suggested for it.
 #[cfg(any(feature = "vr", test))]
 const BINDINGS: &[(&str, &[(Input, &str)])] = &[
@@ -311,6 +315,7 @@ mod headset {
     use crate::play;
     use crate::ray_pointer::{self, RayPointer, RayPointerPlugin};
     use crate::scene::Headset;
+    use crate::vr_keyboard::VrKeyboardPlugin;
     use crate::vr_panels::{
         InHeadset, MenuPanel, SitAgain, VrMenu, VrPanelsPlugin, place_in_front,
     };
@@ -365,7 +370,7 @@ mod headset {
                 focused_mode: UpdateMode::Continuous,
                 unfocused_mode: UpdateMode::Continuous,
             })
-            .add_plugins((RayPointerPlugin, VrPanelsPlugin))
+            .add_plugins((RayPointerPlugin, VrPanelsPlugin, VrKeyboardPlugin))
             .add_observer(mark_eye)
             .add_systems(
                 Startup,
@@ -601,7 +606,7 @@ mod headset {
         time: Res<Time>,
         eyes: Query<&Transform, With<XrCamera>>,
         mut roots: Query<&mut Transform, (With<XrTrackingRoot>, Without<XrCamera>)>,
-        mut sit: ResMut<SitAgain>,
+        (mut sit, mut pointers): (ResMut<SitAgain>, Query<(&Hand, &mut RayPointer)>),
     ) {
         let Some(actions) = actions else {
             return;
@@ -618,7 +623,17 @@ mod headset {
                     Vec2::new(s.current_state.x, s.current_state.y)
                 })
         };
-        let sticks = Sticks::new(stick(&actions.shift), stick(&actions.turn));
+        let mut sticks = Sticks::new(stick(&actions.shift), stick(&actions.turn));
+        // With the right hand's beam on a panel, up and down scroll it instead.
+        if let Some((_, mut pointer)) = pointers
+            .iter_mut()
+            .find(|(hand, pointer)| hand.0 == 1 && pointer.on_panel())
+        {
+            if sticks.lift != 0.0 {
+                pointer.scroll(sticks.lift * SCROLL_SPEED * time.delta_secs());
+            }
+            sticks.lift = 0.0;
+        }
         if sticks.at_rest() {
             return;
         }

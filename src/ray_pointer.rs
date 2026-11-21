@@ -12,6 +12,8 @@
 
 use bevy::asset::uuid::Uuid;
 use bevy::camera::{ImageRenderTarget, NormalizedRenderTarget};
+use bevy::input::mouse::MouseScrollUnit;
+use bevy::input::touch::TouchPhase;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::picking::PickingSystems;
 use bevy::picking::backend::{HitData, PointerHits};
@@ -52,6 +54,8 @@ pub struct RayPointer {
     pub hit: Option<f32>,
     /// Where on a panel's image it points, if a panel is the nearest thing.
     on_panel: Option<Location>,
+    /// Lines to scroll what it points at by, not yet told.
+    scrolling: f32,
 }
 
 /// A flat interface in the world (`world_panel.rs`): an image of `pixels` (the UI's logical
@@ -104,6 +108,17 @@ impl RayPointer {
         )
     }
 
+    /// Whether it points at a panel.
+    pub fn on_panel(&self) -> bool {
+        self.on_panel.is_some()
+    }
+
+    /// Scrolls what it points at on a panel by this many lines (up is more than 0), as a
+    /// mouse's wheel does.
+    pub fn scroll(&mut self, lines: f32) {
+        self.scrolling += lines;
+    }
+
     /// The trigger is this far in, from 0 to 1.
     pub fn squeeze(&mut self, value: f32) {
         if value >= PRESS_AT {
@@ -152,8 +167,21 @@ fn feed(
             } else {
                 PointerAction::Release(PointerButton::Primary)
             };
-            inputs.write(PointerInput::new(*id, location, action));
+            inputs.write(PointerInput::new(*id, location.clone(), action));
             pointer.told = down;
+        }
+        let lines = std::mem::take(&mut pointer.scrolling);
+        if lines != 0.0 && pointer.on_panel.is_some() {
+            inputs.write(PointerInput::new(
+                *id,
+                location,
+                PointerAction::Scroll {
+                    unit: MouseScrollUnit::Line,
+                    x: 0.0,
+                    y: lines,
+                    phase: TouchPhase::Moved,
+                },
+            ));
         }
     }
 }
@@ -277,6 +305,7 @@ fn draw_beams(
 mod tests {
     use super::*;
     use bevy::camera::primitives::Aabb;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
     use bevy::picking::{InteractionPlugin, PickingPlugin};
 
@@ -467,6 +496,38 @@ mod tests {
         settle(&mut app);
         assert_eq!(app.world().resource::<Seen>().over, vec![square]);
         assert!(pointer(&mut app, hand).on_panel.is_none());
+    }
+
+    #[test]
+    fn a_pointer_scrolls_only_what_it_points_at_on_a_panel() {
+        let (mut app, _square, hand) = app();
+        pointer(&mut app, hand).tracked = true;
+        settle(&mut app);
+        // At the board: no scrolling, and none kept for later.
+        pointer(&mut app, hand).scroll(2.0);
+        app.update();
+        assert_eq!(pointer(&mut app, hand).scrolling, 0.0);
+        let scrolls = app
+            .world()
+            .resource::<Messages<PointerInput>>()
+            .iter_current_update_messages()
+            .filter(|m| matches!(m.action, PointerAction::Scroll { .. }))
+            .count();
+        assert_eq!(scrolls, 0);
+        // On a panel, it is the pointer's scrolling.
+        pointer(&mut app, hand).on_panel = Some(nowhere());
+        pointer(&mut app, hand).scroll(1.5);
+        app.world_mut().run_system_once(feed).unwrap();
+        let ys: Vec<f32> = app
+            .world()
+            .resource::<Messages<PointerInput>>()
+            .iter_current_update_messages()
+            .filter_map(|m| match m.action {
+                PointerAction::Scroll { y, .. } => Some(y),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ys, vec![1.5]);
     }
 
     #[test]

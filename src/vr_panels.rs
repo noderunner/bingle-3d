@@ -8,6 +8,9 @@
 //! - **The game's panel** (`game_panel.rs`) stands beside the table, at the player's front
 //!   left, while a headset's session runs (`InHeadset`): the same panel as the window's,
 //!   drawn into the world instead of the window, and back in the window when the session ends.
+//! - **The screen**: everything else the window shows (the login screen, the main screen, the
+//!   friends panel) is drawn on a screen as big as the window across the table, shown while no
+//!   game is being watched. Each of the window's UI roots is given to it while a session runs.
 
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
@@ -20,7 +23,7 @@ use crate::coordinates::ShowCoordinates;
 use crate::environment::{Chosen, Environments};
 use crate::fonts::UiFonts;
 use crate::game_panel::{self, GamePanel};
-use crate::net::{Net, Request, WatchStatus};
+use crate::net::{Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
 use crate::play;
 use crate::world_panel::{self, Hung, Look};
 
@@ -31,7 +34,7 @@ impl Plugin for VrPanelsPlugin {
         app.init_resource::<VrMenu>()
             .init_resource::<SitAgain>()
             .init_resource::<InHeadset>()
-            .add_systems(Startup, (spawn_menu, hang_game_panel))
+            .add_systems(Startup, (spawn_menu, hang_game_panel, hang_screen))
             .add_systems(
                 Update,
                 (
@@ -39,6 +42,7 @@ impl Plugin for VrPanelsPlugin {
                     colour_items,
                     move_game_panel.run_if(resource_changed::<InHeadset>),
                     show_game_panel,
+                    (move_to_screen, show_screen).chain(),
                 ),
             );
     }
@@ -92,6 +96,29 @@ fn beside_table() -> Transform {
     Transform::from_translation(at).looking_to(away, Vec3::Y)
 }
 
+/// The screen: the window's size, the window's pixels drawn twice as fine, a millimetre to
+/// each, so 1.28 by 0.72 metres; nothing where the window's UI draws nothing.
+const SCREEN: Look = Look {
+    size: UVec2::new(1280, 720),
+    scale: 2.0,
+    metres: 0.001,
+    background: Color::NONE,
+};
+
+/// Where the screen stands: across the table from a player sat at it, a little above their
+/// eyes, facing them.
+fn across_table() -> Transform {
+    Transform::from_xyz(0.0, 0.55, -0.5)
+}
+
+/// The screen hung in the world.
+#[derive(Resource)]
+struct ScreenInWorld(Hung);
+
+/// A UI root of the window's, given to the screen.
+#[derive(Component)]
+struct OnScreen;
+
 /// The game's panel hung in the world.
 #[derive(Resource)]
 struct GamePanelInWorld(Hung);
@@ -121,6 +148,8 @@ pub fn place_in_front(head: Transform) -> Transform {
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 enum Item {
     Resume,
+    /// Back to the main screen, as the escape menu's *Main Menu*.
+    MainMenu,
     Play,
     Back,
     Sit,
@@ -172,6 +201,7 @@ fn spawn_menu(
             menu.spawn(heading(f, "Bingle", 34.0));
             menu.spawn(row()).with_children(|row| {
                 row.spawn(item(f, "Resume", Item::Resume));
+                row.spawn(item(f, "Main Menu", Item::MainMenu));
             });
             menu.spawn(row()).with_children(|row| {
                 row.spawn(item(f, "Play the move", Item::Play));
@@ -285,18 +315,17 @@ impl Settings<'_> {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a Bevy observer takes what it touches as parameters"
-)]
 fn on_item(
     activate: On<Activate>,
     items: Query<&Item>,
     net: Option<Res<Net>>,
     mut watch: ResMut<WatchStatus>,
     mut settings: Settings,
-    mut menu: ResMut<VrMenu>,
-    mut sit: ResMut<SitAgain>,
+    (mut menu, mut sit, status): (
+        ResMut<VrMenu>,
+        ResMut<SitAgain>,
+        Option<ResMut<ServerStatus>>,
+    ),
     mut exit: MessageWriter<AppExit>,
 ) {
     let Ok(what) = items.get(activate.entity) else {
@@ -304,6 +333,15 @@ fn on_item(
     };
     match what {
         Item::Resume => {}
+        Item::MainMenu => {
+            if let (Some(net), Some(mut status)) = (&net, status)
+                && watch.is_watching()
+            {
+                // As the escape menu's: stop watching, and read the server's lists again.
+                stop_watching(net, &mut watch);
+                reconnect(net, &mut status);
+            }
+        }
         Item::Play => {
             if let Some(net) = &net {
                 play::submit(net, &mut watch);
@@ -328,6 +366,66 @@ fn on_item(
     if what.closes() {
         menu.open = false;
     }
+}
+
+fn hang_screen(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let hung = world_panel::hang(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        SCREEN,
+    );
+    commands.entity(hung.quad).insert(across_table());
+    commands.insert_resource(ScreenInWorld(hung));
+}
+
+/// The window's UI roots that are not given anywhere yet: all but the game's panel and what
+/// is already in the world.
+type WindowRoots = (
+    With<Node>,
+    Without<ChildOf>,
+    Without<UiTargetCamera>,
+    Without<GamePanel>,
+);
+
+/// Gives the window's UI to the screen while a headset's session runs (a root made later
+/// too), and back to the window when it ends.
+fn move_to_screen(
+    mut commands: Commands,
+    in_headset: Res<InHeadset>,
+    hung: Res<ScreenInWorld>,
+    window_roots: Query<Entity, WindowRoots>,
+    on_screen: Query<Entity, With<OnScreen>>,
+) {
+    if in_headset.0 {
+        for root in &window_roots {
+            commands
+                .entity(root)
+                .insert((UiTargetCamera(hung.0.camera), OnScreen));
+        }
+    } else if in_headset.is_changed() {
+        for root in &on_screen {
+            commands.entity(root).remove::<(UiTargetCamera, OnScreen)>();
+        }
+    }
+}
+
+/// Shows the screen in the world while it has the window's UI and no game is watched.
+fn show_screen(
+    in_headset: Res<InHeadset>,
+    watching: Res<WatchStatus>,
+    hung: Res<ScreenInWorld>,
+    mut cameras: Query<&mut Camera>,
+    mut visibilities: Query<&mut Visibility>,
+) {
+    let shown = in_headset.0 && !watching.is_watching();
+    world_panel::show(hung.0, shown, &mut cameras, &mut visibilities);
 }
 
 /// Shows the menu while it is open.
@@ -405,6 +503,45 @@ mod tests {
         let face = at.rotation * Vec3::Z;
         let to_eyes = (Vec3::new(0.0, 0.45, 0.75) - at.translation) * Vec3::new(1.0, 0.0, 1.0);
         assert!(face.dot(to_eyes.normalize()) > 0.999);
+    }
+
+    #[test]
+    fn the_window_s_ui_goes_to_the_screen_in_a_headset_and_comes_back() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<InHeadset>()
+            .add_systems(Update, move_to_screen);
+        let camera = app.world_mut().spawn_empty().id();
+        let quad = app.world_mut().spawn_empty().id();
+        app.insert_resource(ScreenInWorld(Hung { camera, quad }));
+        let world = app.world_mut();
+        let login = world.spawn(Node::default()).id();
+        let inner = world.spawn((Node::default(), ChildOf(login))).id();
+        let game = world.spawn((Node::default(), GamePanel)).id();
+        let elsewhere = world.spawn_empty().id();
+        let menu = world
+            .spawn((Node::default(), UiTargetCamera(elsewhere)))
+            .id();
+        app.update();
+        let target = |app: &App, e| app.world().get::<UiTargetCamera>(e).map(|t| t.0);
+        assert_eq!(target(&app, login), None, "not in a headset");
+
+        app.world_mut().resource_mut::<InHeadset>().0 = true;
+        app.update();
+        assert_eq!(target(&app, login), Some(camera));
+        assert_eq!(target(&app, inner), None, "only roots");
+        assert_eq!(target(&app, game), None, "the game's panel has its own");
+        assert_eq!(target(&app, menu), Some(elsewhere));
+        // A root made later goes there too.
+        let later = app.world_mut().spawn(Node::default()).id();
+        app.update();
+        assert_eq!(target(&app, later), Some(camera));
+
+        app.world_mut().resource_mut::<InHeadset>().0 = false;
+        app.update();
+        assert_eq!(target(&app, login), None);
+        assert_eq!(target(&app, later), None);
+        assert_eq!(target(&app, menu), Some(elsewhere));
     }
 
     #[test]

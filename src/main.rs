@@ -40,12 +40,13 @@ mod textures;
 mod toggles;
 mod voice;
 mod voice_chat;
-// Used only by the headset so far.
 mod vr;
+// These are used only by the headset so far.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod vr_keyboard;
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 mod vr_panels;
 mod wood_choice;
-// Used only by the headset so far.
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 mod world_panel;
 

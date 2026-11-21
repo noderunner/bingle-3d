@@ -161,9 +161,9 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 `--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
 your side), degrees above it, and metres from its middle.
 
-**In a headset** (first steps: the place and the table at their real size, controllers that
-point and click, the game's panel beside the table and a menu; the main screen is still only in
-the window). Build with the `vr` feature. A build with it starts in the headset by itself when
+**In a headset**: the place and the table at their real size, controllers that point and click,
+the login and main screens on a screen across the table, the game's panel beside it, a menu,
+and a keyboard. Build with the `vr` feature. A build with it starts in the headset by itself when
 SteamVR (or Monado, or WiVRn) is already running, and in the window otherwise; `--vr` starts in
 the headset whatever is running (which starts SteamVR), and `--desktop` stays in the window.
 
@@ -188,9 +188,12 @@ does, and the upper one (B or Y) goes back. The left stick walks you ahead or ba
 sideways; the right stick turns you and lifts or lowers you, and pressing it sits you at the
 table again. The left controller's menu button, or pressing the left stick, opens a menu in
 front of you: play the move, go back, sit again, show the legal moves or the coordinates,
-change the place, quit. The game's panel (the players, whose move it is, the clock, its buttons)
-stands at your front left while you are in the headset, and is back in the window when you
-leave it. SteamVR's controller bindings can change all of these.
+change the place, quit. The login screen and the main screen stand across the
+table as a screen the size of the window; in a game, its panel (the players, whose move it is,
+the clock, its buttons) stands at your front left instead. With the right hand's beam on one of
+them, the right stick scrolls it. While a field that takes typing has the focus, a keyboard
+stands before you; *Hide* puts it away. All of it is back in the window when you leave the
+headset. SteamVR's controller bindings can change all of these.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

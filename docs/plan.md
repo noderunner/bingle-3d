@@ -612,7 +612,13 @@ Steps:
    look.
    Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
    headset's own onto them.
-5. The rest of the interface in the world (the main screen: finding and starting a game).
+5. **The rest of the interface in the world** (built, to be tried): every UI root of the
+   window's but the game's panel is given to a screen across the table while a session runs
+   (the login screen, the main screen, friends), shown while no game is watched; the right
+   stick scrolls a panel the beam is on; and a keyboard of our own (`src/vr_keyboard.rs`)
+   stands before the player while a field that takes typing has the focus, sending what the
+   real keyboard would. SteamVR's own keyboard belongs to OpenVR, not OpenXR: using it would
+   mean loading Valve's `openvr_api` library beside OpenXR, so it is set aside.
 6. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
 7. Hand tracking, and picking a piece up.
 
