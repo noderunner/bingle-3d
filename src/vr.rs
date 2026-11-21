@@ -62,6 +62,77 @@ fn seat_root(head: Transform, eye: Vec3) -> Transform {
     }
 }
 
+/// How fast a stick pushed all the way moves the player, in metres a second along the ground
+/// and up or down, and turns them, in radians a second; and how far a stick must be pushed
+/// (of 1) to count, since one at rest is seldom quite at its middle.
+#[cfg(any(feature = "vr", test))]
+const WALK_SPEED: f32 = 0.5;
+#[cfg(any(feature = "vr", test))]
+const LIFT_SPEED: f32 = 0.35;
+#[cfg(any(feature = "vr", test))]
+const TURN_SPEED: f32 = 1.0;
+#[cfg(any(feature = "vr", test))]
+const DEAD_ZONE: f32 = 0.2;
+
+/// A stick's push along one axis, with nothing near its middle and all of it at its edge.
+#[cfg(any(feature = "vr", test))]
+fn push(value: f32) -> f32 {
+    let size = value.abs();
+    if size <= DEAD_ZONE {
+        0.0
+    } else {
+        value.signum() * ((size - DEAD_ZONE) / (1.0 - DEAD_ZONE)).min(1.0)
+    }
+}
+
+/// What the sticks ask for: `slide` to the player's right, `lift` up, `walk` ahead and
+/// `turn` to the right, each from −1 to 1.
+#[cfg(any(feature = "vr", test))]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Sticks {
+    slide: f32,
+    lift: f32,
+    walk: f32,
+    turn: f32,
+}
+
+#[cfg(any(feature = "vr", test))]
+impl Sticks {
+    /// The left stick slides the player sideways and lifts them; the right one turns them
+    /// and walks them ahead or back.
+    fn new(left: Vec2, right: Vec2) -> Self {
+        Self {
+            slide: push(left.x),
+            lift: push(left.y),
+            walk: push(right.y),
+            turn: push(right.x),
+        }
+    }
+
+    fn at_rest(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The tracking root after the sticks have moved the player for `seconds`. `head` is the
+/// head in the room's space, as for `seat_root`. Sideways and ahead are the head's own, along
+/// the ground; a turn is about the head, so that what is under the player stays under them.
+#[cfg(any(feature = "vr", test))]
+fn moved_root(root: Transform, head: Transform, sticks: Sticks, seconds: f32) -> Transform {
+    let head_at = root.transform_point(head.translation);
+    let facing = heading(root.rotation * head.rotation * Vec3::NEG_Z).unwrap_or(0.0);
+    let along = Quat::from_rotation_y(facing);
+    let step = along * Vec3::new(sticks.slide, 0.0, -sticks.walk) * WALK_SPEED
+        + Vec3::Y * sticks.lift * LIFT_SPEED;
+    // To the right is clockwise from above: a negative angle about +y.
+    let turn = Quat::from_rotation_y(-sticks.turn * TURN_SPEED * seconds);
+    Transform {
+        translation: head_at + turn * (root.translation - head_at) + step * seconds,
+        rotation: turn * root.rotation,
+        scale: root.scale,
+    }
+}
+
 /// What the client asks of a controller.
 #[cfg(any(feature = "vr", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,10 +145,18 @@ enum Input {
     Confirm,
     /// Go back a selection, as Backspace does.
     Back,
+    /// A stick that slides the player sideways and lifts them.
+    Shift,
+    /// A stick that turns the player and walks them ahead or back.
+    Turn,
+    /// Sit at the table again, as Home does.
+    Sit,
 }
 
 /// What is suggested for each kind of controller OpenXR's core knows that has a trigger: the
-/// lower face button confirms and the upper goes back, on either hand. A path that the kind of
+/// lower face button confirms and the upper goes back, on either hand; where there are sticks,
+/// the left one slides and lifts the player, the right one turns and walks them, and pressing
+/// the right one sits them at the table again. A path that the kind of
 /// controller does not have would have the runtime refuse all that is suggested for it.
 #[cfg(any(feature = "vr", test))]
 const BINDINGS: &[(&str, &[(Input, &str)])] = &[
@@ -92,6 +171,9 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Confirm, "/user/hand/right/input/a/click"),
             (Input::Back, "/user/hand/left/input/y/click"),
             (Input::Back, "/user/hand/right/input/b/click"),
+            (Input::Shift, "/user/hand/left/input/thumbstick"),
+            (Input::Turn, "/user/hand/right/input/thumbstick"),
+            (Input::Sit, "/user/hand/right/input/thumbstick/click"),
         ],
     ),
     (
@@ -105,6 +187,9 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Confirm, "/user/hand/right/input/a/click"),
             (Input::Back, "/user/hand/left/input/b/click"),
             (Input::Back, "/user/hand/right/input/b/click"),
+            (Input::Shift, "/user/hand/left/input/thumbstick"),
+            (Input::Turn, "/user/hand/right/input/thumbstick"),
+            (Input::Sit, "/user/hand/right/input/thumbstick/click"),
         ],
     ),
     (
@@ -201,6 +286,7 @@ mod headset {
                 unfocused_mode: UpdateMode::Continuous,
             })
             .add_plugins(RayPointerPlugin)
+            .init_resource::<SitAgain>()
             .add_observer(mark_eye)
             .add_systems(
                 Startup,
@@ -213,7 +299,7 @@ mod headset {
                 PreUpdate,
                 (
                     ask_for_actions.before(OxrActionSetSyncSet),
-                    read_hands.after(OxrActionSetSyncSet),
+                    (read_hands, move_about).after(OxrActionSetSyncSet),
                 )
                     .run_if(openxr_session_running),
             )
@@ -229,6 +315,9 @@ mod headset {
         select: openxr::Action<f32>,
         confirm: openxr::Action<bool>,
         back: openxr::Action<bool>,
+        shift: openxr::Action<openxr::Vector2f>,
+        turn: openxr::Action<openxr::Vector2f>,
+        sit: openxr::Action<bool>,
         hands: [openxr::Path; 2],
     }
 
@@ -244,6 +333,9 @@ mod headset {
                 select: set.create_action("select", "Click what is pointed at", &hands)?,
                 confirm: set.create_action("confirm", "Play the move", &[])?,
                 back: set.create_action("back", "Go back", &[])?,
+                shift: set.create_action("shift", "Slide sideways, and up and down", &[])?,
+                turn: set.create_action("turn", "Turn, and walk ahead and back", &[])?,
+                sit: set.create_action("sit", "Sit at the table again", &[])?,
                 set,
                 hands,
             })
@@ -255,6 +347,9 @@ mod headset {
                 Input::Select => self.select.as_raw(),
                 Input::Confirm => self.confirm.as_raw(),
                 Input::Back => self.back.as_raw(),
+                Input::Shift => self.shift.as_raw(),
+                Input::Turn => self.turn.as_raw(),
+                Input::Sit => self.sit.as_raw(),
             }
         }
     }
@@ -399,10 +494,63 @@ mod headset {
         }
     }
 
+    /// Asked for from a controller: sit at the table again.
+    #[derive(Resource, Default)]
+    struct SitAgain(bool);
+
+    /// Where the head is in the room's space: between the eyes, turned as they are.
+    fn head_in_room<'a>(eyes: impl Iterator<Item = &'a Transform>) -> Option<Transform> {
+        let eyes: Vec<&Transform> = eyes.collect();
+        let first = eyes.first()?;
+        let middle = eyes.iter().map(|eye| eye.translation).sum::<Vec3>() / eyes.len() as f32;
+        Some(Transform::from_translation(middle).with_rotation(first.rotation))
+    }
+
+    /// The sticks move the player about the place, by moving the room they are tracked in.
+    fn move_about(
+        actions: Option<Res<Actions>>,
+        session: Res<OxrSession>,
+        time: Res<Time>,
+        eyes: Query<&Transform, With<XrCamera>>,
+        mut roots: Query<&mut Transform, (With<XrTrackingRoot>, Without<XrCamera>)>,
+        mut sit: ResMut<SitAgain>,
+    ) {
+        let Some(actions) = actions else {
+            return;
+        };
+        if actions
+            .sit
+            .state(&session, openxr::Path::NULL)
+            .is_ok_and(|s| s.is_active && s.current_state && s.changed_since_last_sync)
+        {
+            sit.0 = true;
+        }
+        let stick = |action: &openxr::Action<openxr::Vector2f>| {
+            action
+                .state(&session, openxr::Path::NULL)
+                .ok()
+                .filter(|s| s.is_active)
+                .map_or(Vec2::ZERO, |s| {
+                    Vec2::new(s.current_state.x, s.current_state.y)
+                })
+        };
+        let sticks = Sticks::new(stick(&actions.shift), stick(&actions.turn));
+        if sticks.at_rest() {
+            return;
+        }
+        let Some(head) = head_in_room(eyes.iter()) else {
+            return;
+        };
+        for mut root in &mut roots {
+            *root = moved_root(*root, head, sticks, time.delta_secs());
+        }
+    }
+
     /// Sits the player at the table: when the headset is first tracked, when another
-    /// environment is chosen, and when Home is pressed.
+    /// environment is chosen, and when Home or the controller's button for it is pressed.
     fn take_seat(
         keys: Res<ButtonInput<KeyCode>>,
+        mut again: ResMut<SitAgain>,
         chosen: Res<Chosen>,
         all: Res<Environments>,
         eyes: Query<&Transform, With<XrCamera>>,
@@ -415,15 +563,13 @@ mod headset {
             *seated = false;
             return;
         }
-        if *seated && !chosen.is_changed() && !keys.just_pressed(KeyCode::Home) {
+        let asked = std::mem::take(&mut again.0) || keys.just_pressed(KeyCode::Home);
+        if *seated && !chosen.is_changed() && !asked {
             return;
         }
-        let Some(first) = eyes.iter().next() else {
+        let Some(head) = head_in_room(eyes.iter()) else {
             return;
         };
-        let count = eyes.iter().count() as f32;
-        let middle = eyes.iter().map(|eye| eye.translation).sum::<Vec3>() / count;
-        let head = Transform::from_translation(middle).with_rotation(first.rotation);
         let seat_distance = all
             .chosen(&chosen)
             .and_then(|env| env.seating.as_ref())
@@ -432,7 +578,7 @@ mod headset {
             *root = seat_root(head, eye_point(seat_distance));
         }
         *seated = true;
-        info!("headset: sat at the table (Home sits you again)");
+        info!("headset: sat at the table (Home, or pressing the right stick, sits you again)");
     }
 }
 
@@ -468,6 +614,84 @@ mod tests {
         // A step to the head's right in the room is a step to the right at the table.
         let step = root.transform_point(head.translation + head.rotation * Vec3::X);
         assert!(step.x > eye.x + 0.9);
+    }
+
+    #[test]
+    fn a_stick_near_its_middle_asks_for_nothing() {
+        assert_eq!(push(0.15), 0.0);
+        assert_eq!(push(-0.2), 0.0);
+        assert!((push(1.0) - 1.0).abs() < 1e-6);
+        assert!((push(-0.6) + 0.5).abs() < 1e-6);
+        assert!(Sticks::new(Vec2::splat(0.1), Vec2::splat(-0.1)).at_rest());
+        let sticks = Sticks::new(Vec2::new(1.0, 0.0), Vec2::new(0.0, -1.0));
+        assert_eq!(
+            (sticks.slide, sticks.lift, sticks.walk, sticks.turn),
+            (1.0, 0.0, -1.0, 0.0)
+        );
+    }
+
+    /// Sat at the table, with the head somewhere in the room.
+    fn sat() -> (Transform, Transform) {
+        let head = Transform::from_xyz(0.4, 1.1, 0.2).with_rotation(Quat::from_rotation_y(0.7));
+        (seat_root(head, eye_point(None)), head)
+    }
+
+    #[test]
+    fn the_left_stick_slides_the_player_sideways_and_lifts_them() {
+        let (root, head) = sat();
+        let eye = eye_point(None);
+        let slide = Sticks {
+            slide: 1.0,
+            ..default()
+        };
+        let after = moved_root(root, head, slide, 1.0);
+        // Facing the table (−z), the player's right is +x.
+        assert!(close(
+            after.transform_point(head.translation),
+            eye + Vec3::X * WALK_SPEED
+        ));
+        assert!(after.rotation.angle_between(root.rotation) < 1e-5);
+        let lift = Sticks {
+            lift: -1.0,
+            ..default()
+        };
+        let after = moved_root(root, head, lift, 2.0);
+        assert!(close(
+            after.transform_point(head.translation),
+            eye - Vec3::Y * LIFT_SPEED * 2.0
+        ));
+    }
+
+    #[test]
+    fn the_right_stick_turns_the_player_where_they_are_and_walks_them() {
+        let (root, head) = sat();
+        let eye = eye_point(None);
+        let turn = Sticks {
+            turn: 1.0,
+            ..default()
+        };
+        let after = moved_root(root, head, turn, 0.5);
+        assert!(
+            close(after.transform_point(head.translation), eye),
+            "turned about the head"
+        );
+        // To the right: what was ahead (−z) is now towards +x.
+        let ahead = after.rotation * head.rotation * Vec3::NEG_Z;
+        assert!(ahead.x > 0.4 && ahead.z < 0.0);
+        assert!(close(after.rotation * Vec3::Y, Vec3::Y));
+        // Ahead is then where the player faces, not where the table is.
+        let walk = Sticks {
+            walk: 1.0,
+            ..default()
+        };
+        let walked = moved_root(after, head, walk, 1.0);
+        let step = walked.transform_point(head.translation) - eye;
+        assert!((step.length() - WALK_SPEED).abs() < 1e-4 && step.y.abs() < 1e-5);
+        assert!(
+            step.normalize()
+                .dot(Vec3::new(ahead.x, 0.0, ahead.z).normalize())
+                > 0.999
+        );
     }
 
     #[test]

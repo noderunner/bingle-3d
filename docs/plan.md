@@ -599,6 +599,7 @@ Steps:
 2. **A ray from each controller** (built, to be tried in a headset): each is one of Bevy's
    pointers (`src/ray_pointer.rs`), so its trigger on a cell or a piece is the click the mouse
    makes, through `play.rs` unchanged. A face button plays the move and another goes back.
+   The sticks move the player about: sideways and up or down, a turn, ahead and back.
    Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
    headset's own onto them.
 3. The game's panel in the world, pressed with the same ray; then the rest of the interface.

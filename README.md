@@ -181,7 +181,9 @@ keeps the interface. Without a runtime the client says so and runs in its window
 
 Each controller casts a thin beam. Pull the trigger on a cell or a piece to click it, as the
 mouse does. The lower face button (A, or X on the left) plays the move being built, as Enter
-does, and the upper one (B or Y) goes back. SteamVR's controller bindings can change these.
+does, and the upper one (B or Y) goes back. The left stick slides you sideways and lifts or lowers
+you; the right stick turns you and walks you ahead or back, and pressing it sits you at the
+table again. SteamVR's controller bindings can change these.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
