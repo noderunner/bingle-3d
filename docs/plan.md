@@ -591,12 +591,16 @@ What the desktop client has kept for it:
 
 Steps:
 
-1. **A spike** (built, to be tried in a headset by the maintainer): `--vr`, in a build with the
-   `vr` feature, starts an OpenXR session, and the environment chosen is drawn for each eye with
-   the player sat at the table (`src/vr.rs`). An eye has the environment's light and MSAA, and
-   none of the flat camera's effects. The window keeps the interface and the flat camera. With
-   no runtime it says so and runs in the window alone.
-2. A ray from each controller, its trigger a click on a cell or a piece, through `play.rs`.
+1. **A spike** (built; it runs in the maintainer's headset through SteamVR on Windows):
+   `--vr`, in a build with the `vr` feature, starts an OpenXR session, and the environment
+   chosen is drawn for each eye with the player sat at the table (`src/vr.rs`). An eye has the
+   environment's light and MSAA, and none of the flat camera's effects. The window keeps the
+   interface and the flat camera. With no runtime it says so and runs in the window alone.
+2. **A ray from each controller** (built, to be tried in a headset): each is one of Bevy's
+   pointers (`src/ray_pointer.rs`), so its trigger on a cell or a piece is the click the mouse
+   makes, through `play.rs` unchanged. A face button plays the move and another goes back.
+   Bindings are suggested for the controllers OpenXR's core names, and SteamVR maps the
+   headset's own onto them.
 3. The game's panel in the world, pressed with the same ray; then the rest of the interface.
 4. Sitting at the seat played; comfort and settings; the window showing what the headset sees.
 5. Hand tracking, and picking a piece up.

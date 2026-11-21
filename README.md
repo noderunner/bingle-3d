@@ -161,8 +161,8 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 `--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
 your side), degrees above it, and metres from its middle.
 
-**In a headset** (a first step: the place and the table at their real size, nothing to point at
-yet). Build with the `vr` feature, start SteamVR, then:
+**In a headset** (first steps: the place and the table at their real size, and controllers that
+point and click; the interface is still only in the window). Build with the `vr` feature, start SteamVR, then:
 
 ```sh
 cargo run --features vr -- --vr --environment garden --play-bot go-9x9
@@ -178,6 +178,10 @@ What it needs besides the usual build:
 You are sat at the table when the headset is
 first tracked; press Home in the window to be sat again from where your head is. The window
 keeps the interface. Without a runtime the client says so and runs in its window alone.
+
+Each controller casts a thin beam. Pull the trigger on a cell or a piece to click it, as the
+mouse does. The lower face button (A, or X on the left) plays the move being built, as Enter
+does, and the upper one (B or Y) goes back. SteamVR's controller bindings can change these.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building

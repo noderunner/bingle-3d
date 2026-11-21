@@ -2136,6 +2136,7 @@ dependencies = [
  "bevy_mod_xr",
  "bytes",
  "cpal",
+ "openxr",
  "ring",
  "rtc",
  "rustls",

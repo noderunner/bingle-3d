@@ -28,6 +28,9 @@ mod look;
 mod net;
 mod new_game;
 mod play;
+// Used only by the headset so far.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+mod ray_pointer;
 mod run_limit;
 mod scene;
 mod sign_in;

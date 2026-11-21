@@ -1,14 +1,21 @@
 //! The table in a headset, through OpenXR (SteamVR): `--vr`, in a build with the `vr` feature.
 //!
-//! A first step (docs/plan.md, VR): the environment chosen, at its real size, drawn for each
-//! eye, with the player sat at the table. The window stays as it is, with the interface and
-//! the flat camera; nothing in the headset can be pointed at or picked up yet.
+//! First steps (docs/plan.md, VR): the environment chosen, at its real size, drawn for each
+//! eye, with the player sat at the table, and a controller in each hand that points and
+//! clicks. The window stays as it is, with the interface and the flat camera.
 //!
 //! **Where the player sits.** The headset's poses are in the room's own space, under the
 //! tracking root. The root is placed so that the head, wherever it is in the room, is at the
 //! eye point of someone sat at the table and turned to it (`seat_root`): once when the headset
 //! is first tracked, and again whenever Home is pressed. So a chair, a sofa or the floor all
 //! do, at the cost of the room's floor not being the environment's.
+//!
+//! **Controllers.** Each is a `RayPointer` (`ray_pointer.rs`) along its aim: the trigger is a
+//! click on what it points at. One button plays the move being built and another goes back,
+//! as Enter and Backspace do. What the client asks OpenXR for is four actions (`Input`); which
+//! button of which controller each is, is suggested per kind of controller (`BINDINGS`) and
+//! is the runtime's to decide: SteamVR maps a controller it knows onto one of these, and lets
+//! the player change it.
 
 #[cfg(any(feature = "vr", test))]
 use bevy::prelude::*;
@@ -55,6 +62,81 @@ fn seat_root(head: Transform, eye: Vec3) -> Transform {
     }
 }
 
+/// What the client asks of a controller.
+#[cfg(any(feature = "vr", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Input {
+    /// Where it points.
+    Aim,
+    /// The trigger: a click on what it points at.
+    Select,
+    /// Play the move being built, as Enter does.
+    Confirm,
+    /// Go back a selection, as Backspace does.
+    Back,
+}
+
+/// What is suggested for each kind of controller OpenXR's core knows that has a trigger: the
+/// lower face button confirms and the upper goes back, on either hand. A path that the kind of
+/// controller does not have would have the runtime refuse all that is suggested for it.
+#[cfg(any(feature = "vr", test))]
+const BINDINGS: &[(&str, &[(Input, &str)])] = &[
+    (
+        "/interaction_profiles/oculus/touch_controller",
+        &[
+            (Input::Aim, "/user/hand/left/input/aim/pose"),
+            (Input::Aim, "/user/hand/right/input/aim/pose"),
+            (Input::Select, "/user/hand/left/input/trigger/value"),
+            (Input::Select, "/user/hand/right/input/trigger/value"),
+            (Input::Confirm, "/user/hand/left/input/x/click"),
+            (Input::Confirm, "/user/hand/right/input/a/click"),
+            (Input::Back, "/user/hand/left/input/y/click"),
+            (Input::Back, "/user/hand/right/input/b/click"),
+        ],
+    ),
+    (
+        "/interaction_profiles/valve/index_controller",
+        &[
+            (Input::Aim, "/user/hand/left/input/aim/pose"),
+            (Input::Aim, "/user/hand/right/input/aim/pose"),
+            (Input::Select, "/user/hand/left/input/trigger/value"),
+            (Input::Select, "/user/hand/right/input/trigger/value"),
+            (Input::Confirm, "/user/hand/left/input/a/click"),
+            (Input::Confirm, "/user/hand/right/input/a/click"),
+            (Input::Back, "/user/hand/left/input/b/click"),
+            (Input::Back, "/user/hand/right/input/b/click"),
+        ],
+    ),
+    (
+        "/interaction_profiles/htc/vive_controller",
+        &[
+            (Input::Aim, "/user/hand/left/input/aim/pose"),
+            (Input::Aim, "/user/hand/right/input/aim/pose"),
+            (Input::Select, "/user/hand/left/input/trigger/value"),
+            (Input::Select, "/user/hand/right/input/trigger/value"),
+            (Input::Confirm, "/user/hand/left/input/trackpad/click"),
+            (Input::Confirm, "/user/hand/right/input/trackpad/click"),
+            (Input::Back, "/user/hand/left/input/menu/click"),
+            (Input::Back, "/user/hand/right/input/menu/click"),
+        ],
+    ),
+    (
+        "/interaction_profiles/khr/simple_controller",
+        &[
+            (Input::Aim, "/user/hand/left/input/aim/pose"),
+            (Input::Aim, "/user/hand/right/input/aim/pose"),
+            (Input::Select, "/user/hand/left/input/select/click"),
+            (Input::Select, "/user/hand/right/input/select/click"),
+            (Input::Back, "/user/hand/left/input/menu/click"),
+            (Input::Back, "/user/hand/right/input/menu/click"),
+        ],
+    ),
+];
+
+/// The two hands, as OpenXR names them.
+#[cfg(any(feature = "vr", test))]
+const HANDS: [&str; 2] = ["/user/hand/left", "/user/hand/right"];
+
 #[cfg(feature = "vr")]
 pub use headset::{VrPlugin, with_headset};
 
@@ -62,16 +144,28 @@ pub use headset::{VrPlugin, with_headset};
 mod headset {
     use super::*;
     use crate::environment::{Chosen, Environments};
+    use crate::escape_menu::{self, EscapeMenu};
+    use crate::net::{Net, WatchStatus};
+    use crate::play;
+    use crate::ray_pointer::{self, RayPointer, RayPointerPlugin};
     use crate::scene::Headset;
     use bevy::app::PluginGroupBuilder;
     use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
     use bevy::window::{PresentMode, PrimaryWindow};
     use bevy::winit::{UpdateMode, WinitSettings};
-    use bevy_mod_openxr::add_xr_plugins;
+    use bevy_mod_openxr::action_binding::{OxrSendActionBindings, OxrSuggestActionBinding};
+    use bevy_mod_openxr::action_set_attaching::OxrAttachActionSet;
+    use bevy_mod_openxr::action_set_syncing::{OxrActionSetSyncSet, OxrSyncActionSet};
     use bevy_mod_openxr::init::OxrInitPlugin;
+    use bevy_mod_openxr::resources::OxrInstance;
+    use bevy_mod_openxr::session::OxrSession;
     use bevy_mod_openxr::types::{AppInfo, Version};
+    use bevy_mod_openxr::{add_xr_plugins, openxr_session_running};
     use bevy_mod_xr::camera::XrCamera;
-    use bevy_mod_xr::session::{XrState, XrTrackingRoot};
+    use bevy_mod_xr::session::{
+        XrPreDestroySession, XrSessionCreated, XrState, XrTrackingRoot, session_available,
+    };
+    use bevy_mod_xr::spaces::XrSpaceLocationFlags;
 
     /// Bevy's plugins with the headset's in them: the renderer is started on the device the
     /// OpenXR runtime asks for. With no runtime (SteamVR not running) the plugin says so in
@@ -97,9 +191,169 @@ mod headset {
                 focused_mode: UpdateMode::Continuous,
                 unfocused_mode: UpdateMode::Continuous,
             })
+            .add_plugins(RayPointerPlugin)
             .add_observer(mark_eye)
-            .add_systems(Startup, unpace_window)
+            .add_systems(
+                Startup,
+                (unpace_window, make_actions.run_if(session_available)),
+            )
+            .add_systems(OxrSendActionBindings, suggest_bindings)
+            .add_systems(XrSessionCreated, give_hands)
+            .add_systems(XrPreDestroySession, take_hands)
+            .add_systems(
+                PreUpdate,
+                (
+                    ask_for_actions.before(OxrActionSetSyncSet),
+                    read_hands.after(OxrActionSetSyncSet),
+                )
+                    .run_if(openxr_session_running),
+            )
             .add_systems(Update, (report_state, take_seat));
+        }
+    }
+
+    /// The controllers' actions, made once with the OpenXR instance.
+    #[derive(Resource)]
+    struct Actions {
+        set: openxr::ActionSet,
+        aim: openxr::Action<openxr::Posef>,
+        select: openxr::Action<f32>,
+        confirm: openxr::Action<bool>,
+        back: openxr::Action<bool>,
+        hands: [openxr::Path; 2],
+    }
+
+    impl Actions {
+        fn make(instance: &openxr::Instance) -> openxr::Result<Self> {
+            let hands = [
+                instance.string_to_path(HANDS[0])?,
+                instance.string_to_path(HANDS[1])?,
+            ];
+            let set = instance.create_action_set("table", "At the table", 0)?;
+            Ok(Self {
+                aim: set.create_action("aim", "Point", &hands)?,
+                select: set.create_action("select", "Click what is pointed at", &hands)?,
+                confirm: set.create_action("confirm", "Play the move", &[])?,
+                back: set.create_action("back", "Go back", &[])?,
+                set,
+                hands,
+            })
+        }
+
+        fn raw(&self, input: Input) -> openxr::sys::Action {
+            match input {
+                Input::Aim => self.aim.as_raw(),
+                Input::Select => self.select.as_raw(),
+                Input::Confirm => self.confirm.as_raw(),
+                Input::Back => self.back.as_raw(),
+            }
+        }
+    }
+
+    fn make_actions(instance: Res<OxrInstance>, mut commands: Commands) {
+        match Actions::make(&instance) {
+            Ok(actions) => commands.insert_resource(actions),
+            Err(e) => warn!("headset: no controllers, their actions could not be made: {e}"),
+        }
+    }
+
+    fn suggest_bindings(
+        actions: Option<Res<Actions>>,
+        mut suggest: MessageWriter<OxrSuggestActionBinding>,
+    ) {
+        let Some(actions) = actions else {
+            return;
+        };
+        for (profile, bindings) in BINDINGS {
+            for (input, path) in *bindings {
+                suggest.write(OxrSuggestActionBinding {
+                    action: actions.raw(*input),
+                    interaction_profile: (*profile).into(),
+                    bindings: vec![(*path).into()],
+                });
+            }
+        }
+    }
+
+    /// A controller: 0 is the left hand's.
+    #[derive(Component)]
+    struct Hand(usize);
+
+    /// With a session: the actions are its own from here on, and each hand gets a pointer
+    /// where its controller aims.
+    fn give_hands(
+        actions: Option<Res<Actions>>,
+        session: Res<OxrSession>,
+        mut attach: MessageWriter<OxrAttachActionSet>,
+        mut commands: Commands,
+        mut meshes: ResMut<Assets<Mesh>>,
+        mut materials: ResMut<Assets<StandardMaterial>>,
+    ) {
+        let Some(actions) = actions else {
+            return;
+        };
+        attach.write(OxrAttachActionSet(actions.set.clone()));
+        for (number, hand) in actions.hands.iter().enumerate() {
+            match session.create_action_space(&actions.aim, *hand, Isometry3d::IDENTITY) {
+                Ok(space) => {
+                    commands
+                        .spawn((space, Hand(number), RayPointer::bundle(number as u8)))
+                        .with_child(ray_pointer::beam(&mut meshes, &mut materials));
+                }
+                Err(e) => warn!("headset: no pointer for {}: {e}", HANDS[number]),
+            }
+        }
+    }
+
+    fn take_hands(hands: Query<Entity, With<Hand>>, mut commands: Commands) {
+        for hand in &hands {
+            commands.entity(hand).despawn();
+        }
+    }
+
+    fn ask_for_actions(actions: Option<Res<Actions>>, mut sync: MessageWriter<OxrSyncActionSet>) {
+        if let Some(actions) = actions {
+            sync.write(OxrSyncActionSet(actions.set.clone()));
+        }
+    }
+
+    /// What the controllers say this frame: where each is and how far its trigger is in, for
+    /// its pointer; and the buttons that play the move and go back.
+    fn read_hands(
+        actions: Option<Res<Actions>>,
+        session: Res<OxrSession>,
+        mut hands: Query<(&Hand, &XrSpaceLocationFlags, &mut RayPointer)>,
+        menu: Option<Res<EscapeMenu>>,
+        net: Res<Net>,
+        mut watch: ResMut<WatchStatus>,
+    ) {
+        let Some(actions) = actions else {
+            return;
+        };
+        for (hand, located, mut pointer) in &mut hands {
+            let tracked = located.position_tracked && located.rotation_tracked;
+            if pointer.tracked != tracked {
+                pointer.tracked = tracked;
+            }
+            let trigger = actions
+                .select
+                .state(&session, actions.hands[hand.0])
+                .map_or(0.0, |s| if s.is_active { s.current_state } else { 0.0 });
+            pointer.squeeze(trigger);
+        }
+        let pressed = |action: &openxr::Action<bool>| {
+            action
+                .state(&session, openxr::Path::NULL)
+                .is_ok_and(|s| s.is_active && s.current_state && s.changed_since_last_sync)
+        };
+        if !escape_menu::closed(menu.as_deref()) {
+            return;
+        }
+        if pressed(&actions.confirm) {
+            play::submit(&net, &mut watch);
+        }
+        if pressed(&actions.back) {
+            play::back(&mut watch);
         }
     }
 
@@ -196,6 +450,28 @@ mod tests {
         // A step to the head's right in the room is a step to the right at the table.
         let step = root.transform_point(head.translation + head.rotation * Vec3::X);
         assert!(step.x > eye.x + 0.9);
+    }
+
+    #[test]
+    fn every_kind_of_controller_points_and_clicks_with_either_hand() {
+        for (profile, bindings) in BINDINGS {
+            assert!(profile.starts_with("/interaction_profiles/"));
+            for hand in HANDS {
+                for (input, ending) in [(Input::Aim, "/input/aim/pose"), (Input::Select, "")] {
+                    assert!(
+                        bindings.iter().any(|(i, path)| *i == input
+                            && path.starts_with(hand)
+                            && path.ends_with(ending)),
+                        "{profile}: {input:?} for {hand}"
+                    );
+                }
+            }
+            for (_, path) in *bindings {
+                assert!(HANDS.iter().any(|hand| path.starts_with(hand)), "{path}");
+                // One button, one thing to do.
+                assert_eq!(bindings.iter().filter(|(_, p)| p == path).count(), 1);
+            }
+        }
     }
 
     #[test]
