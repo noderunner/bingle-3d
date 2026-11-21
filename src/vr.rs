@@ -153,7 +153,9 @@ mod headset {
     use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
     use bevy::window::{PresentMode, PrimaryWindow};
     use bevy::winit::{UpdateMode, WinitSettings};
-    use bevy_mod_openxr::action_binding::{OxrSendActionBindings, OxrSuggestActionBinding};
+    use bevy_mod_openxr::action_binding::{
+        OxrActionBindingPlugin, OxrSendActionBindings, OxrSuggestActionBinding,
+    };
     use bevy_mod_openxr::action_set_attaching::OxrAttachActionSet;
     use bevy_mod_openxr::action_set_syncing::{OxrActionSetSyncSet, OxrSyncActionSet};
     use bevy_mod_openxr::init::OxrInitPlugin;
@@ -185,6 +187,13 @@ mod headset {
 
     impl Plugin for VrPlugin {
         fn build(&self, app: &mut App) {
+            // The plugin makes the schedule its bindings are suggested in anew when it is
+            // added: systems put there before it would be dropped without a word, and the
+            // controllers would do nothing.
+            assert!(
+                app.is_plugin_added::<OxrActionBindingPlugin>(),
+                "VrPlugin goes after the plugins `with_headset` gives"
+            );
             // The headset sets the pace: a window waiting for the monitor, or resting while
             // another has the keyboard, would hold every frame back.
             app.insert_resource(WinitSettings {
@@ -264,6 +273,10 @@ mod headset {
         let Some(actions) = actions else {
             return;
         };
+        info!(
+            "headset: suggesting what the controllers' buttons do, for {} kinds of controller",
+            BINDINGS.len()
+        );
         for (profile, bindings) in BINDINGS {
             for (input, path) in *bindings {
                 suggest.write(OxrSuggestActionBinding {
@@ -299,6 +312,7 @@ mod headset {
                     commands
                         .spawn((space, Hand(number), RayPointer::bundle(number as u8)))
                         .with_child(ray_pointer::beam(&mut meshes, &mut materials));
+                    info!("headset: a pointer for {}", HANDS[number]);
                 }
                 Err(e) => warn!("headset: no pointer for {}: {e}", HANDS[number]),
             }
@@ -334,6 +348,8 @@ mod headset {
             let tracked = located.position_tracked && located.rotation_tracked;
             if pointer.tracked != tracked {
                 pointer.tracked = tracked;
+                let what = if tracked { "tracked" } else { "lost" };
+                info!("headset: the controller of {} is {what}", HANDS[hand.0]);
             }
             let trigger = actions
                 .select
@@ -350,9 +366,11 @@ mod headset {
             return;
         }
         if pressed(&actions.confirm) {
+            info!("headset: the button that plays the move");
             play::submit(&net, &mut watch);
         }
         if pressed(&actions.back) {
+            info!("headset: the button that goes back");
             play::back(&mut watch);
         }
     }

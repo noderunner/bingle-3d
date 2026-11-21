@@ -85,12 +85,18 @@ fn main() -> AppExit {
     });
     #[cfg(feature = "vr")]
     let plugins = if opts.vr {
-        app.add_plugins(vr::VrPlugin);
         vr::with_headset(plugins)
     } else {
         plugins
     };
-    app.add_plugins(plugins)
+    app.add_plugins(plugins);
+    // After the headset's own plugins: one of them makes a schedule anew, and what was put in
+    // it before would be lost.
+    #[cfg(feature = "vr")]
+    if opts.vr {
+        app.add_plugins(vr::VrPlugin);
+    }
+    app
         // Only what is marked `Pickable` (the board's cells and pieces) is picked, from cameras marked
         // for it, so the table and the lights' meshes never get in the way of a click.
         .add_plugins(MeshPickingPlugin)
