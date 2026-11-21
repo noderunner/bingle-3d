@@ -185,9 +185,10 @@ keeps the interface. Without a runtime the client says so and runs in its window
 Each controller casts a thin beam. Pull the trigger on a cell or a piece to click it, as the
 mouse does. The lower face button (A, or X on the left) plays the move being built, as Enter
 does, and the upper one (B or Y) goes back. The left stick walks you ahead or back and slides you
-sideways; the right stick turns you and lifts or lowers you, and pressing it sits you at the
-table again. The left controller's menu button, or pressing the left stick, opens a menu in
-front of you: play the move, go back, sit again, show the legal moves or the coordinates,
+sideways, and pressing it sits you at the table again; the right stick turns you and lifts or
+lowers you, and pressing it opens the escape menu (main menu, logout, quit) in front of you.
+The left controller's menu button (the Steam Frame's *View* button) opens a menu in front of
+you: play the move, go back, sit again, show the legal moves or the coordinates,
 change the place, quit. The login screen and the main screen stand across the
 table as a screen the size of the window; in a game, its panel (the players, whose move it is,
 the clock, its buttons) stands at your front left instead. With the right hand's beam on one of

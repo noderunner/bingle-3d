@@ -228,13 +228,20 @@ enum Input {
     Sit,
     /// Open the menu, and close it.
     Menu,
+    /// Open the escape menu, and close it, as Esc does.
+    Escape,
 }
 
 /// What is suggested for each kind of controller OpenXR's core knows that has a trigger: the
-/// lower face button confirms and the upper goes back; the left hand's menu button, or pressing
-/// its stick, opens the menu. Where there are sticks, the left one walks the player and slides
-/// them sideways, the right one turns them and lifts or lowers them (or, with its beam on a
-/// panel, scrolls the panel), and pressing the right one sits them at the table again. A path that the kind of
+/// lower face button confirms and the upper goes back; the left hand's menu button opens the
+/// menu. Where there are sticks, the left one walks the player and slides them sideways, the
+/// right one turns them and lifts or lowers them (or, with its beam on a panel, scrolls the
+/// panel); pressing the left one sits them at the table again, and pressing the right one
+/// opens the escape menu.
+///
+/// The Steam Frame's controllers reach the client as one of these (SteamVR translates them):
+/// its left *View* button is the left menu button here. Its right *Menu* button is in none of
+/// them, so SteamVR's bindings screen is where it is given the escape menu. A path that the kind of
 /// controller does not have would have the runtime refuse all that is suggested for it.
 #[cfg(any(feature = "vr", test))]
 const BINDINGS: &[(&str, &[(Input, &str)])] = &[
@@ -251,9 +258,9 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Back, "/user/hand/right/input/b/click"),
             (Input::Shift, "/user/hand/left/input/thumbstick"),
             (Input::Turn, "/user/hand/right/input/thumbstick"),
-            (Input::Sit, "/user/hand/right/input/thumbstick/click"),
+            (Input::Sit, "/user/hand/left/input/thumbstick/click"),
+            (Input::Escape, "/user/hand/right/input/thumbstick/click"),
             (Input::Menu, "/user/hand/left/input/menu/click"),
-            (Input::Menu, "/user/hand/left/input/thumbstick/click"),
         ],
     ),
     (
@@ -269,7 +276,7 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Back, "/user/hand/right/input/b/click"),
             (Input::Shift, "/user/hand/left/input/thumbstick"),
             (Input::Turn, "/user/hand/right/input/thumbstick"),
-            (Input::Sit, "/user/hand/right/input/thumbstick/click"),
+            (Input::Escape, "/user/hand/right/input/thumbstick/click"),
             (Input::Menu, "/user/hand/left/input/thumbstick/click"),
         ],
     ),
@@ -282,7 +289,8 @@ const BINDINGS: &[(&str, &[(Input, &str)])] = &[
             (Input::Select, "/user/hand/right/input/trigger/value"),
             (Input::Confirm, "/user/hand/left/input/trackpad/click"),
             (Input::Confirm, "/user/hand/right/input/trackpad/click"),
-            (Input::Back, "/user/hand/right/input/menu/click"),
+            (Input::Back, "/user/hand/right/input/squeeze/click"),
+            (Input::Escape, "/user/hand/right/input/menu/click"),
             (Input::Menu, "/user/hand/left/input/menu/click"),
         ],
     ),
@@ -317,7 +325,7 @@ mod headset {
     use crate::scene::Headset;
     use crate::vr_keyboard::VrKeyboardPlugin;
     use crate::vr_panels::{
-        InHeadset, MenuPanel, SitAgain, VrMenu, VrPanelsPlugin, place_in_front,
+        EscapePanel, InHeadset, MenuPanel, SitAgain, VrMenu, VrPanelsPlugin, place_in_front,
     };
     use bevy::app::PluginGroupBuilder;
     use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
@@ -383,11 +391,12 @@ mod headset {
                 PreUpdate,
                 (
                     ask_for_actions.before(OxrActionSetSyncSet),
-                    (read_hands, move_about, open_menu).after(OxrActionSetSyncSet),
+                    (read_hands, move_about, open_menu, open_escape_menu)
+                        .after(OxrActionSetSyncSet),
                 )
                     .run_if(openxr_session_running),
             )
-            .add_systems(Update, (report_state, take_seat));
+            .add_systems(Update, (report_state, take_seat, place_escape_menu));
         }
     }
 
@@ -403,6 +412,7 @@ mod headset {
         turn: openxr::Action<openxr::Vector2f>,
         sit: openxr::Action<bool>,
         menu: openxr::Action<bool>,
+        escape: openxr::Action<bool>,
         hands: [openxr::Path; 2],
     }
 
@@ -421,6 +431,7 @@ mod headset {
                 shift: set.create_action("shift", "Walk ahead and back, and sideways", &[])?,
                 turn: set.create_action("turn", "Turn, and up and down", &[])?,
                 menu: set.create_action("menu", "Open the menu", &[])?,
+                escape: set.create_action("escape", "Open the escape menu", &[])?,
                 sit: set.create_action("sit", "Sit at the table again", &[])?,
                 set,
                 hands,
@@ -437,6 +448,7 @@ mod headset {
                 Input::Turn => self.turn.as_raw(),
                 Input::Sit => self.sit.as_raw(),
                 Input::Menu => self.menu.as_raw(),
+                Input::Escape => self.escape.as_raw(),
             }
         }
     }
@@ -665,7 +677,7 @@ mod headset {
         session: Res<OxrSession>,
         eyes: Query<&Transform, With<XrCamera>>,
         roots: Query<&Transform, (With<XrTrackingRoot>, Without<XrCamera>)>,
-        mut menu: ResMut<VrMenu>,
+        (mut menu, mut escape): (ResMut<VrMenu>, ResMut<EscapeMenu>),
         mut panels: Panels,
     ) {
         if !actions.is_some_and(|a| pressed(&a.menu, &session)) {
@@ -673,9 +685,58 @@ mod headset {
         }
         menu.open = !menu.open;
         info!("headset: the menu button");
+        if menu.open {
+            escape.open = false;
+        }
         if menu.open
             && let (Some(head), Ok(root)) = (head_in_room(eyes.iter()), roots.single())
         {
+            let head = root.mul_transform(head);
+            for mut panel in &mut panels {
+                *panel = place_in_front(head);
+            }
+        }
+    }
+
+    /// The escape menu's button opens it, and closes it, as Esc does; the menu closes.
+    fn open_escape_menu(
+        actions: Option<Res<Actions>>,
+        session: Res<OxrSession>,
+        mut escape: ResMut<EscapeMenu>,
+        mut menu: ResMut<VrMenu>,
+    ) {
+        if !actions.is_some_and(|a| pressed(&a.escape, &session)) {
+            return;
+        }
+        info!("headset: the escape menu's button");
+        escape.open = !escape.open;
+        if escape.open {
+            menu.open = false;
+        }
+    }
+
+    type EscapePanels<'w, 's> = Query<
+        'w,
+        's,
+        &'static mut Transform,
+        (
+            With<EscapePanel>,
+            Without<XrCamera>,
+            Without<XrTrackingRoot>,
+        ),
+    >;
+
+    /// The escape menu opens in front of the player, however it was opened (Esc too).
+    fn place_escape_menu(
+        escape: Res<EscapeMenu>,
+        eyes: Query<&Transform, With<XrCamera>>,
+        roots: Query<&Transform, (With<XrTrackingRoot>, Without<XrCamera>)>,
+        mut panels: EscapePanels,
+    ) {
+        if !escape.is_changed() || !escape.open {
+            return;
+        }
+        if let (Some(head), Ok(root)) = (head_in_room(eyes.iter()), roots.single()) {
             let head = root.mul_transform(head);
             for mut panel in &mut panels {
                 *panel = place_in_front(head);
@@ -840,6 +901,18 @@ mod tests {
         assert_eq!(runtime_named("monado-service"), Some("Monado"));
         assert_eq!(runtime_named("vrmonitor"), None);
         assert_eq!(runtime_named("\"steam.exe\""), None);
+    }
+
+    #[test]
+    fn a_controller_with_sticks_opens_the_escape_menu_with_the_right_one() {
+        for (profile, bindings) in BINDINGS {
+            if bindings.iter().any(|(_, path)| path.contains("thumbstick")) {
+                assert!(
+                    bindings.contains(&(Input::Escape, "/user/hand/right/input/thumbstick/click")),
+                    "{profile}"
+                );
+            }
+        }
     }
 
     #[test]

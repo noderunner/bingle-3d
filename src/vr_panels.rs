@@ -8,6 +8,8 @@
 //! - **The game's panel** (`game_panel.rs`) stands beside the table, at the player's front
 //!   left, while a headset's session runs (`InHeadset`): the same panel as the window's,
 //!   drawn into the world instead of the window, and back in the window when the session ends.
+//! - **The escape menu** (`escape_menu.rs`) opens in front of the player (`vr.rs` places it),
+//!   from a controller or Esc: the window's own, hung in the world, with nothing dimmed.
 //! - **The screen**: everything else the window shows (the login screen, the main screen, the
 //!   friends panel) is drawn on a screen as big as the window across the table, shown while no
 //!   game is being watched. Each of the window's UI roots is given to it while a session runs.
@@ -21,6 +23,7 @@ use crate::board::ShowLegalMoves;
 use crate::browser::colours;
 use crate::coordinates::ShowCoordinates;
 use crate::environment::{Chosen, Environments};
+use crate::escape_menu::{self, EscapeMenu, MenuOverlay};
 use crate::fonts::UiFonts;
 use crate::game_panel::{self, GamePanel};
 use crate::net::{Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
@@ -34,7 +37,10 @@ impl Plugin for VrPanelsPlugin {
         app.init_resource::<VrMenu>()
             .init_resource::<SitAgain>()
             .init_resource::<InHeadset>()
-            .add_systems(Startup, (spawn_menu, hang_game_panel, hang_screen))
+            .add_systems(
+                Startup,
+                (spawn_menu, hang_game_panel, hang_screen, hang_escape_menu),
+            )
             .add_systems(
                 Update,
                 (
@@ -43,6 +49,8 @@ impl Plugin for VrPanelsPlugin {
                     move_game_panel.run_if(resource_changed::<InHeadset>),
                     show_game_panel,
                     (move_to_screen, show_screen).chain(),
+                    move_escape_menu.run_if(resource_changed::<InHeadset>),
+                    show_escape_menu,
                 ),
             );
     }
@@ -110,6 +118,23 @@ const SCREEN: Look = Look {
 fn across_table() -> Transform {
     Transform::from_xyz(0.0, 0.55, -0.5)
 }
+
+/// The escape menu's panel: its menu (300 pixels wide) and a little room about it; nothing
+/// where the menu is not. 0.31 by 0.41 metres.
+const ESCAPE: Look = Look {
+    size: UVec2::new(340, 460),
+    scale: 2.0,
+    metres: 0.0009,
+    background: Color::NONE,
+};
+
+/// The panel the escape menu is shown on, for `vr.rs` to place in front of the player.
+#[derive(Component)]
+pub struct EscapePanel;
+
+/// The escape menu hung in the world.
+#[derive(Resource)]
+struct EscapeInWorld(Hung);
 
 /// The screen hung in the world.
 #[derive(Resource)]
@@ -385,13 +410,64 @@ fn hang_screen(
     commands.insert_resource(ScreenInWorld(hung));
 }
 
-/// The window's UI roots that are not given anywhere yet: all but the game's panel and what
-/// is already in the world.
+fn hang_escape_menu(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let hung = world_panel::hang(
+        &mut commands,
+        &mut images,
+        &mut meshes,
+        &mut materials,
+        ESCAPE,
+    );
+    commands.entity(hung.quad).insert(EscapePanel);
+    commands.insert_resource(EscapeInWorld(hung));
+}
+
+/// Gives the escape menu to its panel while a headset's session runs, with nothing dimmed
+/// about it, and back to the window when it ends.
+fn move_escape_menu(
+    mut commands: Commands,
+    in_headset: Res<InHeadset>,
+    hung: Res<EscapeInWorld>,
+    mut overlays: Query<(Entity, &mut BackgroundColor), With<MenuOverlay>>,
+) {
+    for (overlay, mut background) in &mut overlays {
+        if in_headset.0 {
+            commands
+                .entity(overlay)
+                .insert(UiTargetCamera(hung.0.camera));
+            background.0 = Color::NONE;
+        } else {
+            commands.entity(overlay).remove::<UiTargetCamera>();
+            background.0 = escape_menu::DIM;
+        }
+    }
+}
+
+/// Shows the escape menu in the world while it is open there.
+fn show_escape_menu(
+    in_headset: Res<InHeadset>,
+    escape: Res<EscapeMenu>,
+    hung: Res<EscapeInWorld>,
+    mut cameras: Query<&mut Camera>,
+    mut visibilities: Query<&mut Visibility>,
+) {
+    let shown = in_headset.0 && escape.open;
+    world_panel::show(hung.0, shown, &mut cameras, &mut visibilities);
+}
+
+/// The window's UI roots that are not given anywhere yet: all but the game's panel, the
+/// escape menu and what is already in the world.
 type WindowRoots = (
     With<Node>,
     Without<ChildOf>,
     Without<UiTargetCamera>,
     Without<GamePanel>,
+    Without<MenuOverlay>,
 );
 
 /// Gives the window's UI to the screen while a headset's session runs (a root made later
@@ -518,6 +594,7 @@ mod tests {
         let login = world.spawn(Node::default()).id();
         let inner = world.spawn((Node::default(), ChildOf(login))).id();
         let game = world.spawn((Node::default(), GamePanel)).id();
+        let escape = world.spawn((Node::default(), MenuOverlay)).id();
         let elsewhere = world.spawn_empty().id();
         let menu = world
             .spawn((Node::default(), UiTargetCamera(elsewhere)))
@@ -531,6 +608,7 @@ mod tests {
         assert_eq!(target(&app, login), Some(camera));
         assert_eq!(target(&app, inner), None, "only roots");
         assert_eq!(target(&app, game), None, "the game's panel has its own");
+        assert_eq!(target(&app, escape), None, "and so has the escape menu");
         assert_eq!(target(&app, menu), Some(elsewhere));
         // A root made later goes there too.
         let later = app.world_mut().spawn(Node::default()).id();
