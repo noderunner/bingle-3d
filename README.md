@@ -168,8 +168,14 @@ yet). Build with the `vr` feature, start SteamVR, then:
 cargo run --features vr -- --vr --environment garden --play-bot go-9x9
 ```
 
-It needs the OpenXR loader (`libopenxr_loader.so.1` on Linux; on Windows it is built in, which
-needs CMake) and SteamVR set as the OpenXR runtime. You are sat at the table when the headset is
+What it needs besides the usual build:
+
+- **On Windows, CMake**, since the OpenXR loader is built from source there:
+  `winget install Kitware.CMake`, then a new terminal.
+- **On Linux, the OpenXR loader** (`libopenxr_loader.so.1`; Fedora's `openxr-libs`), at run time.
+- **SteamVR set as the OpenXR runtime** (in SteamVR's settings, under OpenXR).
+
+You are sat at the table when the headset is
 first tracked; press Home in the window to be sat again from where your head is. The window
 keeps the interface. Without a runtime the client says so and runs in its window alone.
 
