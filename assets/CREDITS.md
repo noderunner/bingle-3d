@@ -11,4 +11,17 @@ required, and is given gladly:
 - **Scuba Suede** (the table's felt): colormass, Rico Cilliers
 - **Lythwood Room** (the room's light): Greg Zaal
 
-The stone's model and the stones' colours are made by the pipeline's own scripts.
+And the garden's:
+
+- **Tatami Mat**, **Hinoki Planks**, **Trident Maple Bark**: Charlotte Baglioni
+- **Gravel Floor 02** (the raked gravel): Jenelle van Heerden, Dimitrios Savva
+- **Sparse Grass** (the moss), **Bamboo Wall** (the fence): Amal Kumar
+- **Rough Linen** (the cushions): colormass, Rico Cilliers
+- **Mossy Rock** (the lantern, the basin, the stepping stones): Rob Tuytel
+- **Rock Moss Set 01** (the rocks, scanned): Kless Gyzen
+- **Kloofendal 28d Misty (Pure Sky)** (the sky): Greg Zaal, Jenelle van Heerden
+
+The stone's model and the stones' colours are made by the pipeline's own scripts, as are the
+bowls, and everything in the garden but its rocks: the table, the cushions, the platform, the
+maple, the bamboo, the shrubs, the lantern, the basin, the pond, the fence, the leaves, the trees
+beyond the fence and the hills.

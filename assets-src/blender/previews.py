@@ -24,7 +24,8 @@ WOODS = {
     "felt": (0.285, (1.0, 1.0, 1.0)),
 }
 BOARD_WOOD = "teak"
-# The board's own finish and the table, as in `src/look.rs`.
+# The board's own finish, as in `src/look.rs`, and the table's felt, as in
+# `assets/environments/room.toml`.
 BOARD = {"wood": "board", "clearcoat": 0.5, "clearcoat_roughness": 0.18}
 TABLE = {"wood": "felt", "tint": [0.35, 0.42, 0.40], "reflectance": 0.3}
 

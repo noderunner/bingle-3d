@@ -6,6 +6,7 @@
 mod appearance;
 mod assets;
 mod board;
+mod bowls;
 mod browser;
 mod call;
 mod camera;
@@ -13,6 +14,8 @@ mod cli;
 mod clock;
 mod config;
 mod coordinates;
+mod environment;
+mod environment_choice;
 mod escape_menu;
 mod families;
 mod fonts;
@@ -89,15 +92,28 @@ fn main() -> AppExit {
         // The screen before the main one.
         login::LoginPlugin,
     ))
+    // The network first: it reads the config, which remembers where the table stands.
+    .add_plugins(net::NetPlugin {
+        server: opts.server.clone(),
+        start: opts.start(),
+    })
+    .insert_resource(camera::StartView(
+        opts.view
+            .as_deref()
+            .and_then(|v| camera::StartView::parse(v).ok()),
+    ))
+    // Where the table stands.
+    .add_plugins((
+        environment::EnvironmentPlugin {
+            chosen: opts.environment.clone(),
+        },
+        environment_choice::EnvironmentChoicePlugin,
+    ))
     .add_plugins((
         fonts::FontsPlugin,
         scene::ScenePlugin,
         camera::OrbitCameraPlugin,
         hud::HudPlugin,
-        net::NetPlugin {
-            server: opts.server.clone(),
-            start: opts.start(),
-        },
         browser::BrowserPlugin {
             new_game: opts.new_game.clone(),
         },

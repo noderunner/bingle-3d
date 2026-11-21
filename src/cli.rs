@@ -28,6 +28,10 @@ Options:
                      keep your address from the others
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
+  --environment NAME where the table stands, for this run: room (a plain table) or
+                     garden
+  --view Y,P,R       where the camera starts: degrees round the table (0 is your
+                     side), degrees above it, metres from its middle (for pictures)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -65,6 +69,10 @@ pub struct Options {
     pub relay_only: bool,
     /// Try the microphone and the speaker, then quit.
     pub voice_check: bool,
+    /// Where the table stands, for this run: an environment's id.
+    pub environment: Option<String>,
+    /// Where the camera starts, as `YAW,PITCH,RADIUS`.
+    pub view: Option<String>,
     pub help: bool,
 }
 
@@ -129,6 +137,12 @@ impl Options {
                 "--relay-only" => opts.relay_only = true,
                 "--voice" => opts.voice = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
+                "--environment" => opts.environment = Some(value("an environment's name")?),
+                "--view" => {
+                    let v = value("YAW,PITCH,RADIUS")?;
+                    crate::camera::StartView::parse(&v).map_err(|e| format!("--view: {e}"))?;
+                    opts.view = Some(v);
+                }
                 "--frames" => {
                     let v = value("a number of frames")?;
                     let n: u32 = v
@@ -290,6 +304,15 @@ mod tests {
         assert!(parse(&["--no-audio-devices"]).unwrap().no_audio_devices);
         assert!(parse(&["--relay-only"]).unwrap().relay_only);
         assert!(parse(&["--voice"]).unwrap().voice);
+    }
+
+    #[test]
+    fn where_the_table_stands_and_where_the_camera_starts() {
+        let opts = parse(&["--environment", "garden", "--view=30,20,1.5"]).unwrap();
+        assert_eq!(opts.environment.as_deref(), Some("garden"));
+        assert_eq!(opts.view.as_deref(), Some("30,20,1.5"));
+        assert!(parse(&["--view", "sideways"]).is_err());
+        assert!(parse(&["--environment"]).is_err());
     }
 
     #[test]

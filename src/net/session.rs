@@ -288,6 +288,13 @@ impl Session {
         }
     }
 
+    /// Remembers where the table stands (an environment's id).
+    pub fn remember_environment(&mut self, id: &str) {
+        if let Err(e) = self.store.remember_environment(id) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
     /// The server's address as the player would write it, or as configured if it cannot be used.
     pub fn server(&self) -> String {
         match &self.url {

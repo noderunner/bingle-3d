@@ -12,6 +12,8 @@
 //!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
 //!   of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
 //!   game's board, as a Go board's star points are.
+//! - `bowls`: a bowl of its stones for each seat, beside the board: the bowl's model, the heap of
+//!   stones in it, and the material the bowl is made of;
 //! - `card.pictures.<game id>`: the picture on the game's card in the main screen's list (an
 //!   image under `pictures/`); a game without one has a blank space there.
 //!
@@ -41,6 +43,19 @@ pub struct Appearance {
     pub board: BoardLook,
     #[serde(default)]
     pub card: CardLook,
+    /// A bowl of its stones for each seat, beside the board.
+    pub bowls: Option<BowlLook>,
+}
+
+/// The bowls the seats keep their stones in (`bowls.rs`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BowlLook {
+    /// The bowl, and the heap of stones in it: glTF files, the first mesh of each.
+    pub model: String,
+    pub stones: String,
+    /// What the bowl is made of. The stones are their seat's.
+    pub material: String,
 }
 
 /// How a game shows on its card in the list of games to start.
@@ -133,6 +148,16 @@ impl Appearance {
             }
             if !self.games.contains(id) {
                 out.push(format!("card of {id}: not one of this file's games"));
+            }
+        }
+        if let Some(bowls) = &self.bowls {
+            for file in [&bowls.model, &bowls.stones] {
+                if !assets::exists(file) {
+                    out.push(format!("bowls: no model {file}"));
+                }
+            }
+            if !self.materials.contains_key(&bowls.material) {
+                out.push(format!("bowls: no material {}", bowls.material));
             }
         }
         if self.games.is_empty() {
@@ -279,6 +304,20 @@ mod tests {
         assert_eq!(all.card_picture("meridians"), None);
         assert_eq!(all.card_picture("hex-11"), None);
         assert_eq!(all.card_picture("no-such-game"), None);
+    }
+
+    #[test]
+    fn games_of_stones_keep_them_in_bowls() {
+        let all = Appearances::built_in();
+        for id in ["go-9x9", "meridians", "gomoku"] {
+            let bowls = all.for_game(id).unwrap().bowls.as_ref();
+            assert!(bowls.is_some_and(|b| assets::exists(&b.model)), "{id}");
+        }
+        let a = Appearance::parse(
+            "games = [\"g\"]\n[bowls]\nmodel = \"models/none.glb\"\nstones = \"models/stone.glb\"\nmaterial = \"missing\"",
+        )
+        .unwrap();
+        assert_eq!(a.problems().len(), 2, "{:?}", a.problems());
     }
 
     #[test]

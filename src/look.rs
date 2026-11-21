@@ -2,8 +2,8 @@
 //! things are, and this client decides how they look. A per-game appearance (`appearance.rs`)
 //! may improve on them; no game needs one.
 //!
-//! Every board is a slab of wood on a felt-covered table, and every piece a stone in its seat's
-//! colour.
+//! Every board is a slab of wood and every piece a stone in its seat's colour. Where the board
+//! stands (a felt-covered table, a garden) is an environment's (`environment.rs`).
 
 use bevy::math::Affine2;
 
@@ -74,6 +74,13 @@ pub fn wood(name: &str) -> Option<Wood> {
 pub struct MaterialSpec {
     /// A colour texture, by its path under `assets/`.
     pub albedo: Option<String>,
+    /// With a texture of its own: its relief, and its ambient occlusion, roughness and metalness
+    /// in red, green and blue, as a wood has them. All from the mesh's own texture coordinates.
+    pub normal: Option<String>,
+    pub arm: Option<String>,
+    /// The size in metres one copy of the textures covers, on a mesh whose texture coordinates
+    /// are in metres (a floor, a wall); without it they are used as the mesh has them.
+    pub metres: Option<f32>,
     /// One of `WOODS`, or `board` for the board's own: its colour, normals and roughness,
     /// mapped by position on the table, so a mesh using it needs texture coordinates in metres
     /// (`world_uvs`).
@@ -92,16 +99,30 @@ pub struct MaterialSpec {
     /// Light of its own, as a lit cell's: linear RGB added to what the camera sees (Bevy does not
     /// scale an emissive colour by the exposure), so 1 is about white.
     pub glow: Option<[f32; 3]>,
+    /// Cut out by its colour texture's alpha: what is below this is not there (a leaf's outline
+    /// on a card). Seen from both sides.
+    pub cutout: Option<f32>,
+    /// See-through all over, as water is: how much of it is seen (0 to 1).
+    pub opacity: Option<f32>,
+    /// What it reflects is tinted this (sRGB): a pond among trees gives back their dark green,
+    /// where the sky's light alone would make it a white sheet.
+    pub reflects: Option<[f32; 3]>,
 }
 
 impl MaterialSpec {
     /// What is wrong with it, if anything: a texture or wood the client does not have.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(file) = &self.albedo
-            && !assets::exists(file)
+        for file in [&self.albedo, &self.normal, &self.arm]
+            .into_iter()
+            .flatten()
         {
-            out.push(format!("no texture {file}"));
+            if !assets::exists(file) {
+                out.push(format!("no texture {file}"));
+            }
+        }
+        if self.wood.is_some() && (self.normal.is_some() || self.arm.is_some()) {
+            out.push("a wood has its own relief and roughness".into());
         }
         if let Some(name) = &self.wood
             && name != BOARD
@@ -147,6 +168,31 @@ impl MaterialSpec {
         };
         if let Some(file) = &self.albedo {
             m.base_color_texture = Some(textures::load(server, file));
+        }
+        if let Some(file) = &self.normal {
+            m.normal_map_texture = Some(textures::load(server, file));
+        }
+        if let Some(file) = &self.arm {
+            let arm = textures::load(server, file);
+            m.metallic_roughness_texture = Some(arm.clone());
+            m.occlusion_texture = Some(arm);
+            // The texture's roughness, scaled.
+            m.perceptual_roughness = self.roughness.unwrap_or(1.0);
+        }
+        if let Some(metres) = self.metres {
+            m.uv_transform = Affine2::from_scale(Vec2::splat(1.0 / metres));
+        }
+        if let Some(cutoff) = self.cutout {
+            m.alpha_mode = AlphaMode::Mask(cutoff);
+            m.double_sided = true;
+            m.cull_mode = None;
+        }
+        if let Some([r, g, b]) = self.reflects {
+            m.specular_tint = Color::srgb(r, g, b);
+        }
+        if let Some(opacity) = self.opacity {
+            m.alpha_mode = AlphaMode::Blend;
+            m.base_color.set_alpha(opacity);
         }
         let name = match self.wood.as_deref() {
             Some(BOARD) => Some(BOARD_WOODS[0]),
@@ -243,18 +289,6 @@ pub fn lit_cell() -> MaterialSpec {
     }
 }
 
-/// The table the board stands on: felt, which takes the light and gives back little, so the
-/// board stands out on it.
-pub fn table() -> MaterialSpec {
-    MaterialSpec {
-        wood: Some("felt".into()),
-        // A deep green-blue, darker than the scan, so the board is the brightest thing on it.
-        tint: Some([0.35, 0.42, 0.40]),
-        reflectance: Some(0.3),
-        ..default()
-    }
-}
-
 /// A goal's edge of the board (its rim and sides), stained in its seat's colour (or a plain dark
 /// stain for a goal every seat shares). Satin, not gloss: the sides face the room's window, and a
 /// gloss there shows the window rather than the wood.
@@ -334,7 +368,6 @@ mod tests {
             board(),
             groove(),
             lit_cell(),
-            table(),
             goal(None),
             piece(Color::BLACK),
         ];
@@ -390,11 +423,11 @@ mod tests {
         assert_eq!(on_cherry.wood.as_deref(), Some("cherry"));
         assert_eq!(on_cherry.tint, ebony.tint);
         assert!(!on_cherry.is_board_wood());
-        assert_eq!(
-            table().on_board("cherry"),
-            table(),
-            "another wood stays itself"
-        );
+        let felt = MaterialSpec {
+            wood: Some("felt".into()),
+            ..default()
+        };
+        assert_eq!(felt.on_board("cherry"), felt, "another wood stays itself");
     }
 
     #[test]
@@ -405,6 +438,36 @@ mod tests {
             ..default()
         };
         assert_eq!(spec.problems().len(), 3);
+        let spec = MaterialSpec {
+            normal: Some("textures/none_normal.jpg".into()),
+            wood: Some("teak".into()),
+            ..default()
+        };
+        assert_eq!(spec.problems().len(), 2, "{:?}", spec.problems());
+    }
+
+    #[test]
+    fn a_cutout_is_seen_from_both_sides_and_water_is_seen_through() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>();
+        let server = app.world().resource::<AssetServer>().clone();
+        let leaves = MaterialSpec {
+            cutout: Some(0.4),
+            ..default()
+        }
+        .build(&server);
+        assert_eq!(leaves.alpha_mode, AlphaMode::Mask(0.4));
+        assert!(leaves.double_sided && leaves.cull_mode.is_none());
+        let water = MaterialSpec {
+            opacity: Some(0.8),
+            metres: Some(2.0),
+            ..default()
+        }
+        .build(&server);
+        assert_eq!(water.alpha_mode, AlphaMode::Blend);
+        assert!((water.base_color.alpha() - 0.8).abs() < 1e-6);
+        assert_eq!(water.uv_transform, Affine2::from_scale(Vec2::splat(0.5)));
     }
 
     #[test]

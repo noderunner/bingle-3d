@@ -41,6 +41,12 @@ pente = "pictures/cards/points.jpg"
 [pieces.stone]
 model = "models/stone.glb"
 
+# Each seat keeps its stones in a wooden bowl at its right hand, beside the board.
+[bowls]
+model = "models/bowl.glb"
+stones = "models/bowl_stones.glb"
+material = "bowl"
+
 # Each seat, by its colour word: what its stones are made of, and its colour in the panels.
 [seats.black]
 pieces = "slate"
@@ -64,3 +70,10 @@ roughness = 0.25
 clearcoat = 0.6
 clearcoat_roughness = 0.08
 translucency = 0.2
+
+# The bowls: turned cherry, darker than the board, with a soft polish.
+[materials.bowl]
+wood = "cherry"
+tint = [0.50, 0.40, 0.36]
+clearcoat = 0.2
+clearcoat_roughness = 0.35

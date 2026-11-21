@@ -20,8 +20,57 @@ pub struct OrbitCameraPlugin;
 
 impl Plugin for OrbitCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (frame_board, orbit_input, apply_orbit).chain());
+        app.init_resource::<Reach>()
+            .init_resource::<StartView>()
+            .add_systems(Startup, spawn_camera)
+            .add_systems(
+                Update,
+                (frame_board, orbit_input, keep_within_reach, apply_orbit).chain(),
+            );
+    }
+}
+
+/// How far from what it looks at the camera may go, in metres: the environment's
+/// (`environment.rs`), since a place may have boughs or a roof above the table.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct Reach(pub f32);
+
+impl Default for Reach {
+    fn default() -> Self {
+        Reach(OrbitCamera::MAX_RADIUS)
+    }
+}
+
+/// Where the camera is put at start and for each new board, when the command line says
+/// (`--view`): for pictures taken by a script.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct StartView(pub Option<OrbitCamera>);
+
+impl StartView {
+    /// `YAW,PITCH,RADIUS`: degrees round the table (0 is the player's side), degrees above it,
+    /// and metres from its middle.
+    pub fn parse(text: &str) -> Result<OrbitCamera, String> {
+        let numbers: Vec<f32> = text
+            .split(',')
+            .map(|n| n.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| format!("{text:?} is not YAW,PITCH,RADIUS"))?;
+        let [yaw, pitch, radius] = numbers[..] else {
+            return Err(format!("{text:?} is not YAW,PITCH,RADIUS"));
+        };
+        let mut orbit = OrbitCamera {
+            focus: Vec3::ZERO,
+            radius,
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        orbit.orbit(
+            yaw.to_radians(),
+            pitch.to_radians(),
+            1.0,
+            OrbitCamera::MAX_RADIUS,
+        );
+        Ok(orbit)
     }
 }
 
@@ -63,11 +112,13 @@ impl OrbitCamera {
         self.focus = focus.clamp_length_max(Self::MAX_PAN);
     }
 
-    /// Turns by the given angles and moves in or out by a factor, keeping within limits.
-    pub fn orbit(&mut self, d_yaw: f32, d_pitch: f32, zoom_factor: f32) {
+    /// Turns by the given angles and moves in or out by a factor, keeping within limits: no
+    /// further back than `reach`.
+    pub fn orbit(&mut self, d_yaw: f32, d_pitch: f32, zoom_factor: f32, reach: f32) {
         self.yaw = (self.yaw + d_yaw).rem_euclid(TAU);
         self.pitch = (self.pitch + d_pitch).clamp(Self::MIN_PITCH, Self::MAX_PITCH);
-        self.radius = (self.radius * zoom_factor).clamp(Self::MIN_RADIUS, Self::MAX_RADIUS);
+        let furthest = reach.clamp(Self::MIN_RADIUS, Self::MAX_RADIUS);
+        self.radius = (self.radius * zoom_factor).clamp(Self::MIN_RADIUS, furthest);
     }
 
     /// The camera's transform: on the sphere, looking at the focus, with +Y up.
@@ -93,8 +144,8 @@ impl Default for OrbitCamera {
     }
 }
 
-fn spawn_camera(mut commands: Commands) {
-    let orbit = OrbitCamera::default();
+fn spawn_camera(mut commands: Commands, start: Res<StartView>) {
+    let orbit = start.0.unwrap_or_default();
     commands.spawn((
         Camera3d::default(),
         // Bevy's default near plane (10 cm) would cut into the board when zoomed in close.
@@ -134,6 +185,7 @@ fn orbit_input(
     pointer: PointerOverUi,
     focus: Option<Res<InputFocus>>,
     menu: Option<Res<crate::escape_menu::EscapeMenu>>,
+    reach: Res<Reach>,
     mut cameras: Query<&mut OrbitCamera>,
 ) {
     // The escape menu covers the table: the table stays as it is behind it.
@@ -177,7 +229,7 @@ fn orbit_input(
         return;
     }
     for mut orbit in &mut cameras {
-        orbit.orbit(turn.x, -turn.y, zoom);
+        orbit.orbit(turn.x, -turn.y, zoom, reach.0);
         if slide != Vec2::ZERO {
             orbit.pan(slide.x, slide.y);
         }
@@ -186,15 +238,31 @@ fn orbit_input(
 
 /// A new board on the table: every camera comes to where it sees it whole, looking from the
 /// player's side.
-fn frame_board(mut built: MessageReader<BoardBuilt>, mut cameras: Query<&mut OrbitCamera>) {
+fn frame_board(
+    mut built: MessageReader<BoardBuilt>,
+    start: Res<StartView>,
+    mut cameras: Query<&mut OrbitCamera>,
+) {
     let Some(board) = built.read().last() else {
         return;
     };
     for mut orbit in &mut cameras {
-        *orbit = OrbitCamera {
+        *orbit = start.0.unwrap_or(OrbitCamera {
             radius: OrbitCamera::radius_to_frame(board.size),
             ..default()
-        };
+        });
+    }
+}
+
+/// Brings a camera in when the place chosen lets it go less far than it is.
+fn keep_within_reach(reach: Res<Reach>, mut cameras: Query<&mut OrbitCamera>) {
+    if !reach.is_changed() {
+        return;
+    }
+    for mut orbit in &mut cameras {
+        if orbit.radius > reach.0 {
+            orbit.radius = reach.0.max(OrbitCamera::MIN_RADIUS);
+        }
     }
 }
 
@@ -255,10 +323,10 @@ mod tests {
     #[test]
     fn orbiting_keeps_within_limits() {
         let mut orbit = OrbitCamera::default();
-        orbit.orbit(0.0, 10.0, 0.0001);
+        orbit.orbit(0.0, 10.0, 0.0001, OrbitCamera::MAX_RADIUS);
         assert_eq!(orbit.pitch, OrbitCamera::MAX_PITCH);
         assert_eq!(orbit.radius, OrbitCamera::MIN_RADIUS);
-        orbit.orbit(0.0, -10.0, 10_000.0);
+        orbit.orbit(0.0, -10.0, 10_000.0, OrbitCamera::MAX_RADIUS);
         assert_eq!(orbit.pitch, OrbitCamera::MIN_PITCH);
         assert_eq!(orbit.radius, OrbitCamera::MAX_RADIUS);
     }
@@ -303,6 +371,7 @@ mod tests {
     fn a_new_board_frames_every_camera() {
         let mut app = App::new();
         app.add_message::<BoardBuilt>()
+            .init_resource::<StartView>()
             .add_systems(Update, frame_board);
         let turned = OrbitCamera {
             yaw: 2.0,
@@ -326,11 +395,62 @@ mod tests {
     }
 
     #[test]
+    fn a_place_may_keep_the_camera_closer() {
+        let mut orbit = OrbitCamera::default();
+        orbit.orbit(0.0, 0.0, 10_000.0, 2.0);
+        assert_eq!(orbit.radius, 2.0);
+        // And one that is further back is brought in when the place changes.
+        let mut app = App::new();
+        app.insert_resource(Reach(OrbitCamera::MAX_RADIUS))
+            .add_systems(Update, keep_within_reach);
+        let far = OrbitCamera {
+            radius: 2.8,
+            ..default()
+        };
+        let camera = app.world_mut().spawn(far).id();
+        app.update();
+        assert_eq!(app.world().get::<OrbitCamera>(camera).unwrap().radius, 2.8);
+        app.world_mut().resource_mut::<Reach>().0 = 2.2;
+        app.update();
+        assert_eq!(app.world().get::<OrbitCamera>(camera).unwrap().radius, 2.2);
+    }
+
+    #[test]
+    fn a_view_is_read_from_degrees_and_metres() {
+        let view = StartView::parse("90, 30,1.5").unwrap();
+        assert!((view.yaw - FRAC_PI_2).abs() < EPS);
+        assert!((view.pitch - 30f32.to_radians()).abs() < EPS);
+        assert_eq!(view.radius, 1.5);
+        assert_eq!(view.focus, Vec3::ZERO);
+        assert_eq!(
+            StartView::parse("0,89.9,1").unwrap().pitch,
+            OrbitCamera::MAX_PITCH
+        );
+        assert!(StartView::parse("1,2").is_err());
+        assert!(StartView::parse("a,b,c").is_err());
+    }
+
+    #[test]
+    fn a_view_asked_for_is_kept_when_a_board_arrives() {
+        let view = StartView::parse("120,20,1.8").unwrap();
+        let mut app = App::new();
+        app.add_message::<BoardBuilt>()
+            .insert_resource(StartView(Some(view)))
+            .add_systems(Update, frame_board);
+        let camera = app.world_mut().spawn(OrbitCamera::default()).id();
+        app.world_mut().write_message(BoardBuilt {
+            size: Vec2::new(0.3, 0.2),
+        });
+        app.update();
+        assert_eq!(*app.world().get::<OrbitCamera>(camera).unwrap(), view);
+    }
+
+    #[test]
     fn yaw_wraps_round() {
         let mut orbit = OrbitCamera::default();
-        orbit.orbit(TAU + 0.5, 0.0, 1.0);
+        orbit.orbit(TAU + 0.5, 0.0, 1.0, OrbitCamera::MAX_RADIUS);
         assert!((orbit.yaw - 0.5).abs() < EPS);
-        orbit.orbit(-1.0, 0.0, 1.0);
+        orbit.orbit(-1.0, 0.0, 1.0, OrbitCamera::MAX_RADIUS);
         assert!((orbit.yaw - (TAU - 0.5)).abs() < EPS);
     }
 }

@@ -4,9 +4,10 @@ Everything in `assets/` but the fonts is made here, by scripts, so it can be rea
 changed by a person or an agent, and made again (plan, decision 8).
 
 ```sh
-bash scripts/assets.sh                 # every step: environment, woods, stones, engraving, cards
+bash scripts/assets.sh                 # every step (the table below)
 bash scripts/assets.sh stones          # one step
 bash scripts/assets.sh previews        # render the assets in Cycles, to look at
+bash scripts/assets.sh garden_previews # the same for the garden, from where a player sits
 ```
 
 The script runs Blender with no window (`--background`) on `blender/build.py`, which:
@@ -43,7 +44,12 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg` | the stone's profile, turned; the colours drawn with numpy |
 | `engraving` | `textures/engraving/glyphs_{albedo,normal}.png`: the coordinates' glyphs as cuts in wood, an atlas of 8 × 5 cells | each glyph of Fira Sans set as a Blender text object and rendered from above in Cycles; the cut's colour (walls darkening to its bottom) and its walls' slopes worked out from that shape |
 | `cards` | `pictures/cards/points.jpg`: the picture on the cards of the games played on a square board's points, in the client's main screen | Cycles, 512 × 512: a teak board of nine lines by nine with its star points, and slate and shell stones from `assets/appearance/points.toml`, from the player's side |
+| `surfaces` | `textures/garden/*`: what the garden is made of | scanned surfaces resized as the woods are (tatami, hinoki, linen, moss, cut stone, bark, a bamboo fence, the rocks' own); and, drawn with numpy, the raked gravel (a scan of gravel with a furrow's shape laid over it), the water's ripples, a bamboo cane, clipped shrubs' leaves, sprays of maple and bamboo leaves cut out (PNG with alpha), and the trees and hills beyond the fence |
+| `tableware` | `models/bowl.glb`, `models/bowl_stones.glb`: a turned bowl, and the heap of stones in it | the bowl's profile, turned; the board's stone with few triangles, three dozen of them heaped |
+| `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
+| `garden_light` | `environment/garden_{diffuse,specular,sky}.ktx2`: the garden's light, and its sky | Cycles renders the garden from just above the table, all the way round, under the sun and sky that `assets/environments/garden.toml` gives the client; that panorama is filtered as the room's photograph is. The sky is a photograph (pure sky, no ground), turned to put its sun where the garden's is, with the sun itself clipped out |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
+| `garden_previews` | `target/asset-previews/garden-*.png`, not shipped | Cycles, the garden from the client's camera at a few places, and from high above (`GARDEN_VIEWS=garden-seat,garden-plan` renders only those) |
 
 How the client reads them:
 
@@ -60,6 +66,34 @@ How the client reads them:
 - **Materials** are not in the models: an appearance file (`assets/appearance/*.toml`) or the
   generic look (`src/look.rs`) says what each thing is made of, and the previews read the same
   file.
+
+## An environment
+
+A place to play in (`src/environment.rs`) is two files: `assets/environments/<id>.toml`, which
+is the client's (its sun, sky, mist, camera, cushions and **materials**), and a model the
+pipeline makes.
+
+- **The model is one glTF file with no materials of its own.** Each mesh's material slot is only
+  a name; the TOML file says what that name is made of (`look::MaterialSpec`), and the client and
+  the pipeline both read it (`matlib.py` builds the same material for Cycles). So a look is
+  changed by editing data, and a preview shows what the client will.
+- **The table top is at height 0 with its middle at the origin**, in metres. In Blender x is to
+  the player's right, y away from the player, z up.
+- **Things that repeat share a mesh** (`meshkit.instance`, `garden.put`): the client draws each
+  mesh's copies in one batch. The garden is about 117,000 triangles in 77 meshes.
+- **Texture coordinates** are the mesh's own. A material with `metres` expects them in metres
+  (`meshkit.box_uv`, or a floor mapped from above); a `wood` also needs the finer second set
+  (`box_uv(..., detail=True)`). Every mesh needs some, for its tangents.
+- **A face is seen from one side** in the client, though Cycles shows both: check the winding
+  of anything flat (a card, a fence) in the client's own screenshot.
+- **The cushion** is one node, standing on z = 0 about the origin; the client lays one out for
+  each seat (`[seating]`). `garden.seats` lays two out for the previews.
+- **The light is made from the model**, so run `garden_light` after `garden` when what is seen
+  from the table changes much. Its Cycles render is noisy, so its files' bytes differ from run
+  to run; the other steps give the same bytes each time.
+
+To look: `bash scripts/assets.sh garden_previews`, then the client,
+`--environment garden --view 60,15,2 --frames 200 --screenshot garden.png`.
 
 ## Adding a source
 

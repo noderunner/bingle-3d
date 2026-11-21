@@ -35,6 +35,10 @@ pub struct Config {
     /// in `keys.toml`. Never a password: none is kept.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub auto_login: bool,
+    /// Where the table stands: an environment's id (`assets/environments/`). The plain table
+    /// when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
@@ -145,6 +149,15 @@ impl Store {
         }
         self.config.server = server;
         self.config.auto_login = auto_login;
+        self.save_config()
+    }
+
+    /// Remembers where the table stands.
+    pub fn remember_environment(&mut self, id: &str) -> io::Result<()> {
+        if self.config.environment.as_deref() == Some(id) {
+            return Ok(());
+        }
+        self.config.environment = Some(id.to_string());
         self.save_config()
     }
 
@@ -290,6 +303,16 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn the_environment_is_remembered() {
+        let tmp = TempDir::new("environment");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        assert_eq!(store.config.environment, None);
+        store.remember_environment("garden").unwrap();
+        let again = Store::load(Some(tmp.0.clone()));
+        assert_eq!(again.config.environment.as_deref(), Some("garden"));
     }
 
     #[test]

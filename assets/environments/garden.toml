@@ -1,0 +1,244 @@
+# A place to play in: a Japanese garden. The table stands on a platform of tatami among raked
+# gravel, rocks on moss, a pond and a maple in autumn, late on a misty afternoon.
+#
+# An environment is this client's own choice, as a board's wood is: the server knows nothing of
+# it, and each player may sit somewhere else. Data only. The model is made by the asset pipeline
+# (`assets-src/blender/garden.py`), which reads this file too, so its previews are lit and
+# coloured as the client's picture is.
+
+name = "Garden"
+
+# The model: every node of it is drawn where it stands, each part in the material below that
+# its material is named for.
+model = "environments/garden.glb"
+
+# Daylight: the camera's exposure (EV100), where a room's is 9.7.
+exposure = 11.8
+
+# The sun: where it shines from (x to the right, y up, z towards the player), its strength in
+# lux and its colour. Low and warm, through the mist.
+[sun]
+from = [0.67, 0.47, -0.575]
+illuminance = 27000.0
+colour = [1.0, 0.86, 0.70]
+# How far shadows are drawn, in metres.
+shadows_to = 30.0
+
+# The sky and the light it gives, as cubemaps made by the pipeline from the garden itself, seen
+# from the table (`garden_light.py`): `intensity` is cd/m² for a value of 1 in them.
+[sky]
+diffuse = "environment/garden_diffuse.ktx2"
+specular = "environment/garden_specular.ktx2"
+intensity = 6800.0
+# What is seen behind everything: the sky alone, and how bright.
+backdrop = "environment/garden_sky.ktx2"
+backdrop_brightness = 6800.0
+
+# Mist: its colour, and where it starts and ends, in metres from the eye.
+[fog]
+colour = [0.74, 0.76, 0.76]
+start = 10.0
+end = 150.0
+
+# How far back the camera may go: the maple's boughs are above that.
+[camera]
+max_radius = 2.2
+# A small aperture: the garden is to be seen, not only the board.
+f_stops = 16.0
+
+# A cushion for each seat of the game, on the floor round the table: the node of the model that
+# is one, how far from the table's middle it lies, and the floor's height (the table top is 0).
+[seating]
+node = "Cushion"
+distance = 0.86
+floor = -0.33
+
+# Parts that cast no shadow, by material.
+[shadows]
+none = ["water", "treeline", "hills", "lantern_glow", "trickle", "lily", "carp"]
+
+# Water that moves: its ripples drift this far a second, in texture coordinates.
+[drift]
+water = [0.010, 0.004]
+trickle = [0.0, -0.9]
+
+# The materials (`look::MaterialSpec`). `metres` is the size one copy of the textures covers, on
+# a mesh mapped in metres.
+[materials.tatami]
+albedo = "textures/garden/tatami_albedo.jpg"
+normal = "textures/garden/tatami_normal.jpg"
+arm = "textures/garden/tatami_arm.jpg"
+reflectance = 0.35
+
+# The cloth binding a mat's long edges.
+[materials.tatami_border]
+albedo = "textures/garden/linen_albedo.jpg"
+normal = "textures/garden/linen_normal.jpg"
+arm = "textures/garden/linen_arm.jpg"
+metres = 0.12
+tint = [0.07, 0.09, 0.08]
+reflectance = 0.3
+
+[materials.deck]
+albedo = "textures/garden/hinoki_albedo.jpg"
+normal = "textures/garden/hinoki_normal.jpg"
+arm = "textures/garden/hinoki_arm.jpg"
+metres = 1.6
+tint = [0.80, 0.70, 0.60]
+
+# Posts and beams, weathered dark.
+[materials.timber]
+albedo = "textures/garden/hinoki_albedo.jpg"
+normal = "textures/garden/hinoki_normal.jpg"
+arm = "textures/garden/hinoki_arm.jpg"
+metres = 1.6
+tint = [0.34, 0.26, 0.20]
+
+# The low table: dark walnut.
+[materials.table]
+wood = "walnut"
+tint = [0.95, 0.78, 0.66]
+# Oiled, not lacquered: under an open sky a polished top would be a mirror of it.
+roughness = 1.15
+reflectance = 0.35
+
+[materials.cushion]
+albedo = "textures/garden/linen_albedo.jpg"
+normal = "textures/garden/linen_normal.jpg"
+arm = "textures/garden/linen_arm.jpg"
+metres = 0.22
+tint = [0.13, 0.17, 0.33]
+reflectance = 0.3
+
+# Raked gravel: the furrows are in the textures, and the mesh's mapping runs them round the
+# rocks.
+[materials.gravel]
+albedo = "textures/garden/gravel_albedo.jpg"
+normal = "textures/garden/gravel_normal.jpg"
+arm = "textures/garden/gravel_arm.jpg"
+metres = 0.64
+reflectance = 0.35
+
+[materials.moss]
+albedo = "textures/garden/moss_albedo.jpg"
+normal = "textures/garden/moss_normal.jpg"
+arm = "textures/garden/moss_arm.jpg"
+metres = 1.1
+reflectance = 0.25
+
+[materials.rock]
+albedo = "textures/garden/rock_albedo.jpg"
+normal = "textures/garden/rock_normal.jpg"
+arm = "textures/garden/rock_arm.jpg"
+tint = [0.80, 0.82, 0.80]
+
+# Cut stone: the lantern, the basin, the stepping stones.
+[materials.stone]
+albedo = "textures/garden/stone_albedo.jpg"
+normal = "textures/garden/stone_normal.jpg"
+arm = "textures/garden/stone_arm.jpg"
+metres = 0.9
+tint = [0.85, 0.85, 0.82]
+
+[materials.pond_bed]
+albedo = "textures/garden/stone_albedo.jpg"
+normal = "textures/garden/stone_normal.jpg"
+arm = "textures/garden/stone_arm.jpg"
+metres = 1.4
+tint = [0.20, 0.24, 0.20]
+
+[materials.water]
+normal = "textures/garden/water_normal.jpg"
+metres = 1.3
+tint = [0.02, 0.05, 0.04]
+opacity = 0.86
+roughness = 0.12
+reflectance = 0.35
+# It gives back the bank and the bamboo round it more than the open sky.
+reflects = [0.30, 0.40, 0.36]
+
+[materials.lily]
+tint = [0.16, 0.36, 0.12]
+roughness = 0.35
+reflectance = 0.4
+
+# The carp in the pond: gold, seen through the water.
+[materials.carp]
+tint = [0.95, 0.42, 0.10]
+roughness = 0.4
+
+# The thread of water from the spout.
+[materials.trickle]
+normal = "textures/garden/water_normal.jpg"
+tint = [0.75, 0.85, 0.88]
+opacity = 0.35
+roughness = 0.1
+
+[materials.bark]
+albedo = "textures/garden/bark_albedo.jpg"
+normal = "textures/garden/bark_normal.jpg"
+arm = "textures/garden/bark_arm.jpg"
+tint = [0.62, 0.58, 0.55]
+
+# Sprays of maple leaves, cut out of cards; the low sun comes through them.
+[materials.maple_leaves]
+albedo = "textures/garden/maple_albedo.png"
+cutout = 0.4
+translucency = 0.55
+roughness = 0.55
+reflectance = 0.3
+
+[materials.bamboo_fence]
+albedo = "textures/garden/fence_albedo.jpg"
+normal = "textures/garden/fence_normal.jpg"
+arm = "textures/garden/fence_arm.jpg"
+tint = [1.0, 0.92, 0.78]
+
+# Split bamboo, golden: the spout, the ladle, the fence's rails.
+[materials.bamboo]
+albedo = "textures/garden/cane_albedo.jpg"
+tint = [1.0, 0.88, 0.62]
+roughness = 0.4
+clearcoat = 0.2
+clearcoat_roughness = 0.3
+
+# Living canes.
+[materials.bamboo_cane]
+albedo = "textures/garden/cane_albedo.jpg"
+tint = [0.42, 0.62, 0.30]
+roughness = 0.35
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+[materials.bamboo_leaves]
+albedo = "textures/garden/bamboo_albedo.png"
+cutout = 0.4
+translucency = 0.4
+roughness = 0.5
+reflectance = 0.3
+
+# Clipped shrubs.
+[materials.hedge]
+albedo = "textures/garden/hedge_albedo.jpg"
+normal = "textures/garden/hedge_normal.jpg"
+metres = 0.7
+roughness = 0.75
+reflectance = 0.3
+
+# The lantern's paper, lit from within.
+[materials.lantern_glow]
+tint = [1.0, 0.78, 0.45]
+glow = [2.6, 1.5, 0.55]
+
+# The trees beyond the fence, and the hills beyond them: pictures on cards.
+[materials.treeline]
+albedo = "textures/garden/treeline_albedo.png"
+cutout = 0.5
+roughness = 1.0
+reflectance = 0.0
+
+[materials.hills]
+albedo = "textures/garden/hills_albedo.png"
+cutout = 0.5
+roughness = 1.0
+reflectance = 0.0

@@ -132,3 +132,245 @@ sha256 = "c01266ac94735d84524853e5aa4821723346a9beec8a87b3b0001e616711fd8e"
 asset = "Lythwood Room"
 page = "https://polyhaven.com/a/lythwood_room"
 by = "Greg Zaal"
+
+# The garden (assets-src/blender/garden.py): its surfaces, its rocks and its sky.
+
+[[source]]
+file = "tatami_mat_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/tatami_mat/tatami_mat_diff_2k.jpg"
+sha256 = "1a33beaf0fb93eeee8a67d8841b358a7bdbc08236e890a63c46cefd5c7e2fa48"
+asset = "Tatami Mat"
+page = "https://polyhaven.com/a/tatami_mat"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "tatami_mat_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/tatami_mat/tatami_mat_nor_gl_2k.jpg"
+sha256 = "d8b0bdb1ff7b88ee2ed44cc6e9d2de568c8ef641e1f743621a7a3e0b45bf6bf5"
+asset = "Tatami Mat"
+page = "https://polyhaven.com/a/tatami_mat"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "tatami_mat_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/tatami_mat/tatami_mat_arm_2k.jpg"
+sha256 = "4cb083e1024c80b0096e4e952a43afd3f8547ce42e1b0a14ba6209388e6f7726"
+asset = "Tatami Mat"
+page = "https://polyhaven.com/a/tatami_mat"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "hinoki_planks_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/hinoki_planks/hinoki_planks_diff_2k.jpg"
+sha256 = "e21f0bd9a5fb1ecaf1d363a8a6e0fb36f4dfb2c43dda7be3a6c2a4cb5ccda587"
+asset = "Hinoki Planks"
+page = "https://polyhaven.com/a/hinoki_planks"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "hinoki_planks_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/hinoki_planks/hinoki_planks_nor_gl_2k.jpg"
+sha256 = "d068ba2c76222280bd54b12dd9bfae7e768ed1c353c184b04826ea844e553762"
+asset = "Hinoki Planks"
+page = "https://polyhaven.com/a/hinoki_planks"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "hinoki_planks_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/hinoki_planks/hinoki_planks_arm_2k.jpg"
+sha256 = "1f78e84cfe03fbe4e7b4bf3acf15bb4cfe0ae268e1c2b30b1547c39392ed3506"
+asset = "Hinoki Planks"
+page = "https://polyhaven.com/a/hinoki_planks"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "gravel_floor_02_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/gravel_floor_02/gravel_floor_02_diff_2k.jpg"
+sha256 = "27c8953655dd2f289106106bb2c2c4845f77152bf1621b3d7091bd43b5083ffc"
+asset = "Gravel Floor 02"
+page = "https://polyhaven.com/a/gravel_floor_02"
+by = "Jenelle van Heerden, Dimitrios Savva"
+
+[[source]]
+file = "gravel_floor_02_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/gravel_floor_02/gravel_floor_02_nor_gl_2k.jpg"
+sha256 = "90f2f22016142f5ad725f8fc5540d8c9ad347db233b7540e2ab33f25ba9298e4"
+asset = "Gravel Floor 02"
+page = "https://polyhaven.com/a/gravel_floor_02"
+by = "Jenelle van Heerden, Dimitrios Savva"
+
+[[source]]
+file = "gravel_floor_02_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/gravel_floor_02/gravel_floor_02_arm_2k.jpg"
+sha256 = "8c02781ee25054fc83303e45a4bc8e1b1fdf024a4a980dc93e071f27fc3bbe22"
+asset = "Gravel Floor 02"
+page = "https://polyhaven.com/a/gravel_floor_02"
+by = "Jenelle van Heerden, Dimitrios Savva"
+
+[[source]]
+file = "sparse_grass_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sparse_grass/sparse_grass_diff_2k.jpg"
+sha256 = "3b655de96161164bf2324e136b3409ad8417c9f94750bc008e9c93ee507c2fac"
+asset = "Sparse Grass"
+page = "https://polyhaven.com/a/sparse_grass"
+by = "Amal Kumar"
+
+[[source]]
+file = "sparse_grass_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sparse_grass/sparse_grass_nor_gl_2k.jpg"
+sha256 = "5539a5913653a106a4e8a699a1d288f0b41907775b5fb36156ef5be2e937718b"
+asset = "Sparse Grass"
+page = "https://polyhaven.com/a/sparse_grass"
+by = "Amal Kumar"
+
+[[source]]
+file = "sparse_grass_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/sparse_grass/sparse_grass_arm_2k.jpg"
+sha256 = "f498dcdbfd1c29b6c36232fc56e69d467be7d6d1d180d2a294138d9c725d6b66"
+asset = "Sparse Grass"
+page = "https://polyhaven.com/a/sparse_grass"
+by = "Amal Kumar"
+
+[[source]]
+file = "trident_maple_bark_diff_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/trident_maple_bark/trident_maple_bark_diff_1k.jpg"
+sha256 = "d696c36e6a949c27bd069f36f76ff35be8317775818de09c056da6c97f72fcd7"
+asset = "Trident Maple Bark"
+page = "https://polyhaven.com/a/trident_maple_bark"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "trident_maple_bark_nor_gl_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/trident_maple_bark/trident_maple_bark_nor_gl_1k.jpg"
+sha256 = "043251cdf134af8a472542ab1f0a956e6f20714ec75fe1925150d88c84a7f33c"
+asset = "Trident Maple Bark"
+page = "https://polyhaven.com/a/trident_maple_bark"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "trident_maple_bark_arm_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/trident_maple_bark/trident_maple_bark_arm_1k.jpg"
+sha256 = "507233093b5830b81cb4b49182ff6bdf73e255fceb5282204eb971672b49ca3a"
+asset = "Trident Maple Bark"
+page = "https://polyhaven.com/a/trident_maple_bark"
+by = "Charlotte Baglioni"
+
+[[source]]
+file = "bamboo_wall_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/bamboo_wall/bamboo_wall_diff_2k.jpg"
+sha256 = "36f6c14b55f2341a16bba58104cbf5f7876f79e2015f20ce0f2989a1837d7a32"
+asset = "Bamboo Wall"
+page = "https://polyhaven.com/a/bamboo_wall"
+by = "Amal Kumar"
+
+[[source]]
+file = "bamboo_wall_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/bamboo_wall/bamboo_wall_nor_gl_2k.jpg"
+sha256 = "8de5a390fb407cfe98c85476753b9bf76d308f2153794168ceaf0b5df5072acf"
+asset = "Bamboo Wall"
+page = "https://polyhaven.com/a/bamboo_wall"
+by = "Amal Kumar"
+
+[[source]]
+file = "bamboo_wall_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/bamboo_wall/bamboo_wall_arm_2k.jpg"
+sha256 = "3b25d2198145399ee6dfc66051b123e204e4bf085f5d4e1f771ba4e8b21132b3"
+asset = "Bamboo Wall"
+page = "https://polyhaven.com/a/bamboo_wall"
+by = "Amal Kumar"
+
+[[source]]
+file = "rough_linen_diff_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_diff_1k.jpg"
+sha256 = "04897d7611d7390ddf5b2c6f7273f448dfc48341fdbd1f4f207fa30b331d7f57"
+asset = "Rough Linen"
+page = "https://polyhaven.com/a/rough_linen"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "rough_linen_nor_gl_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_nor_gl_1k.jpg"
+sha256 = "e2402166d1a489f7414814e69e1836ab672aa24e30bec2d41fea356f81687e53"
+asset = "Rough Linen"
+page = "https://polyhaven.com/a/rough_linen"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "rough_linen_arm_1k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rough_linen/rough_linen_arm_1k.jpg"
+sha256 = "e1ca6b51ed62834063253e08f8f2e23836aa00d72675b960ddd8e608d9f0c7e6"
+asset = "Rough Linen"
+page = "https://polyhaven.com/a/rough_linen"
+by = "colormass, Rico Cilliers"
+
+[[source]]
+file = "mossy_rock_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/mossy_rock/mossy_rock_diff_2k.jpg"
+sha256 = "98ecbd1d19953433f5909b79958992b1da2b45addbee772d1d4c27287f368499"
+asset = "Mossy Rock"
+page = "https://polyhaven.com/a/mossy_rock"
+by = "Rob Tuytel"
+
+[[source]]
+file = "mossy_rock_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/mossy_rock/mossy_rock_nor_gl_2k.jpg"
+sha256 = "78c05b52eb78617fcce4fde7a9ac4872a9725fb2d13aff33248cbdb9c6330563"
+asset = "Mossy Rock"
+page = "https://polyhaven.com/a/mossy_rock"
+by = "Rob Tuytel"
+
+[[source]]
+file = "mossy_rock_arm_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/mossy_rock/mossy_rock_arm_2k.jpg"
+sha256 = "fa508677559b4848a514a91428917a1545ef16d303fba2931e0c0abbbb32309d"
+asset = "Mossy Rock"
+page = "https://polyhaven.com/a/mossy_rock"
+by = "Rob Tuytel"
+
+[[source]]
+file = "kloofendal_28d_misty_puresky_2k.hdr"
+url = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/kloofendal_28d_misty_puresky_2k.hdr"
+sha256 = "7adde668fb821069a05e4dcaf09c08ebf2de6503bdd99fd5bdf7bcfddff4236a"
+asset = "Kloofendal 28d Misty (Pure Sky)"
+page = "https://polyhaven.com/a/kloofendal_28d_misty_puresky"
+by = "Greg Zaal, Jenelle van Heerden"
+
+[[source]]
+file = "rock_moss_set_01/rock_moss_set_01_2k.gltf"
+url = "https://dl.polyhaven.org/file/ph-assets/Models/gltf/2k/rock_moss_set_01/rock_moss_set_01_2k.gltf"
+sha256 = "794beaf2f4dc0ab155114f286049dc912a8f3287520965ca8bf6bb0d821ae3e2"
+asset = "Rock Moss Set 01"
+page = "https://polyhaven.com/a/rock_moss_set_01"
+by = "Kless Gyzen"
+
+[[source]]
+file = "rock_moss_set_01/rock_moss_set_01.bin"
+url = "https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/rock_moss_set_01/rock_moss_set_01.bin"
+sha256 = "de8360e6175879aaf02c171911069cf5f1852547f9ca7f10e440085dbcc3315e"
+asset = "Rock Moss Set 01"
+page = "https://polyhaven.com/a/rock_moss_set_01"
+by = "Kless Gyzen"
+
+[[source]]
+file = "rock_moss_set_01/textures/rock_moss_set_01_diff_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_moss_set_01/rock_moss_set_01_diff_2k.jpg"
+sha256 = "bdee6da8baba67bd7e85e414e669cd46aab9afaf755114fb5163f0e68775c3d6"
+asset = "Rock Moss Set 01"
+page = "https://polyhaven.com/a/rock_moss_set_01"
+by = "Kless Gyzen"
+
+[[source]]
+file = "rock_moss_set_01/textures/rock_moss_set_01_nor_gl_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_moss_set_01/rock_moss_set_01_nor_gl_2k.jpg"
+sha256 = "f11c238a203eebd5e82da3a50468040a78d25fd2e46783c4ad79b1022b144c0d"
+asset = "Rock Moss Set 01"
+page = "https://polyhaven.com/a/rock_moss_set_01"
+by = "Kless Gyzen"
+
+[[source]]
+file = "rock_moss_set_01/textures/rock_moss_set_01_rough_2k.jpg"
+url = "https://dl.polyhaven.org/file/ph-assets/Models/jpg/2k/rock_moss_set_01/rock_moss_set_01_rough_2k.jpg"
+sha256 = "a05a8bd9f2563cf55b738484b894671df7b2391aa02d66451366c5ad38077cd2"
+asset = "Rock Moss Set 01"
+page = "https://polyhaven.com/a/rock_moss_set_01"
+by = "Kless Gyzen"

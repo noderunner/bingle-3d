@@ -29,6 +29,8 @@ def fetch():
     os.makedirs(CACHE, exist_ok=True)
     for s in sources():
         path = os.path.join(CACHE, s["file"])
+        # A model's files keep their folders, as its glTF names them.
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         if not os.path.exists(path) or sha256(path) != s["sha256"]:
             print(f"fetching {s['file']}")
             request = urllib.request.Request(s["url"], headers={"User-Agent": "asset-pipeline"})
@@ -84,6 +86,15 @@ def resize(pixels, size):
     buf = oiio.ImageBuf(oiio.ImageSpec(w, h, c, oiio.FLOAT))
     buf.set_pixels(oiio.ROI(0, w, 0, h, 0, 1, 0, c), np.ascontiguousarray(pixels, np.float32))
     out = oiio.ImageBufAlgo.resize(buf, roi=oiio.ROI(0, size, 0, size, 0, 1, 0, c))
+    return out.get_pixels(oiio.FLOAT)
+
+
+def resize_to(pixels, width, height):
+    """Resizes to `width` × `height`."""
+    h, w, c = pixels.shape
+    buf = oiio.ImageBuf(oiio.ImageSpec(w, h, c, oiio.FLOAT))
+    buf.set_pixels(oiio.ROI(0, w, 0, h, 0, 1, 0, c), np.ascontiguousarray(pixels, np.float32))
+    out = oiio.ImageBufAlgo.resize(buf, roi=oiio.ROI(0, width, 0, height, 0, 1, 0, c))
     return out.get_pixels(oiio.FLOAT)
 
 
