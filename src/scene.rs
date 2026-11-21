@@ -190,7 +190,15 @@ type CameraToLight = (
     Entity,
     Option<&'static LitFor>,
     Option<&'static OrbitCamera>,
+    Has<Headset>,
 );
+
+/// A camera that is an eye of a headset (`vr.rs`). It gets the environment's light, but none
+/// of what works on the picture afterwards: temporal anti-aliasing and ambient occlusion
+/// swim when each eye has its own, and the eye focuses for itself.
+#[derive(Component)]
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+pub struct Headset;
 
 /// Gives every 3D camera the light of the environment chosen: a new camera, and every camera
 /// when another is chosen.
@@ -204,7 +212,7 @@ fn light_cameras(
     let Some(env) = all.chosen(&chosen) else {
         return;
     };
-    for (camera, lit, orbit) in &cameras {
+    for (camera, lit, orbit, headset) in &cameras {
         if lit.is_some_and(|l| l.0 == env.id) {
             continue;
         }
@@ -221,31 +229,6 @@ fn light_cameras(
             Exposure {
                 ev100: env.exposure.unwrap_or(ROOM_EXPOSURE),
             },
-            Msaa::Off,
-            TemporalAntiAliasing::default(),
-            ShadowFilteringMethod::Temporal,
-            ScreenSpaceAmbientOcclusion {
-                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
-                // At table scale: a stone, a cut line, the board's edge.
-                radius: 0.02,
-                constant_object_thickness: 0.004,
-            },
-            // Only what is brighter than white glows (a highlight on a stone), so nothing else
-            // is veiled.
-            Bloom {
-                intensity: 0.12,
-                prefilter: BloomPrefilter {
-                    threshold: 1.2,
-                    threshold_softness: 0.3,
-                },
-                ..Bloom::OLD_SCHOOL
-            },
-            DepthOfField {
-                mode: DepthOfFieldMode::Gaussian,
-                focal_distance: orbit.map_or(0.75, |o| o.radius),
-                aperture_f_stops: env.camera.f_stops.unwrap_or(F_STOPS),
-                ..default()
-            },
             // The table fades into the room past arm's length, rather than ending; a garden
             // into its mist.
             DistanceFog {
@@ -257,6 +240,37 @@ fn light_cameras(
                 ..default()
             },
         ));
+        if headset {
+            commands.entity(camera).insert(Msaa::Sample4);
+        } else {
+            commands.entity(camera).insert((
+                Msaa::Off,
+                TemporalAntiAliasing::default(),
+                ShadowFilteringMethod::Temporal,
+                ScreenSpaceAmbientOcclusion {
+                    quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+                    // At table scale: a stone, a cut line, the board's edge.
+                    radius: 0.02,
+                    constant_object_thickness: 0.004,
+                },
+                // Only what is brighter than white glows (a highlight on a stone), so nothing else
+                // is veiled.
+                Bloom {
+                    intensity: 0.12,
+                    prefilter: BloomPrefilter {
+                        threshold: 1.2,
+                        threshold_softness: 0.3,
+                    },
+                    ..Bloom::OLD_SCHOOL
+                },
+                DepthOfField {
+                    mode: DepthOfFieldMode::Gaussian,
+                    focal_distance: orbit.map_or(0.75, |o| o.radius),
+                    aperture_f_stops: env.camera.f_stops.unwrap_or(F_STOPS),
+                    ..default()
+                },
+            ));
+        }
         match &env.sky.backdrop {
             Some(file) => {
                 commands.entity(camera).insert(Skybox {
@@ -573,6 +587,27 @@ mod tests {
         app.update();
         assert!(app.world().get::<EnvironmentMapLight>(camera).is_some());
         assert!(app.world().get::<DistanceFog>(camera).is_some());
+    }
+
+    #[test]
+    fn an_eye_of_a_headset_is_lit_but_nothing_works_on_its_picture() {
+        let mut app = app("garden");
+        let flat = app.world_mut().spawn(Camera3d::default()).id();
+        let eye = app.world_mut().spawn((Camera3d::default(), Headset)).id();
+        app.update();
+        app.update();
+        let world = app.world();
+        for camera in [flat, eye] {
+            assert!(world.get::<EnvironmentMapLight>(camera).is_some());
+            assert!(world.get::<DistanceFog>(camera).is_some());
+            assert!(world.get::<Skybox>(camera).is_some());
+        }
+        assert!(world.get::<TemporalAntiAliasing>(flat).is_some());
+        assert!(world.get::<DepthOfField>(flat).is_some());
+        assert!(world.get::<TemporalAntiAliasing>(eye).is_none());
+        assert!(world.get::<ScreenSpaceAmbientOcclusion>(eye).is_none());
+        assert!(world.get::<DepthOfField>(eye).is_none());
+        assert_eq!(world.get::<Msaa>(eye), Some(&Msaa::Sample4));
     }
 
     #[test]

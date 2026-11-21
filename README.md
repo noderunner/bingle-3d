@@ -161,6 +161,18 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 `--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
 your side), degrees above it, and metres from its middle.
 
+**In a headset** (a first step: the place and the table at their real size, nothing to point at
+yet). Build with the `vr` feature, start SteamVR, then:
+
+```sh
+cargo run --features vr -- --vr --environment garden --play-bot go-9x9
+```
+
+It needs the OpenXR loader (`libopenxr_loader.so.1` on Linux; on Windows it is built in, which
+needs CMake) and SteamVR set as the OpenXR runtime. You are sat at the table when the headset is
+first tracked; press Home in the window to be sat again from where your head is. The window
+keeps the interface. Without a runtime the client says so and runs in its window alone.
+
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
 the client does not need Blender: what the scripts make is committed.

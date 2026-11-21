@@ -32,6 +32,9 @@ Options:
                      garden
   --view Y,P,R       where the camera starts: degrees round the table (0 is your
                      side), degrees above it, metres from its middle (for pictures)
+  --vr               draw the table in a headset too, through OpenXR (SteamVR must be
+                     running; only in a build with the vr feature). Home sits you
+                     at the table again
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -73,6 +76,8 @@ pub struct Options {
     pub environment: Option<String>,
     /// Where the camera starts, as `YAW,PITCH,RADIUS`.
     pub view: Option<String>,
+    /// Draw in a headset too.
+    pub vr: bool,
     pub help: bool,
 }
 
@@ -136,6 +141,7 @@ impl Options {
                 "--no-audio-devices" => opts.no_audio_devices = true,
                 "--relay-only" => opts.relay_only = true,
                 "--voice" => opts.voice = true,
+                "--vr" => opts.vr = true,
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--environment" => opts.environment = Some(value("an environment's name")?),
                 "--view" => {
@@ -313,6 +319,8 @@ mod tests {
         assert_eq!(opts.view.as_deref(), Some("30,20,1.5"));
         assert!(parse(&["--view", "sideways"]).is_err());
         assert!(parse(&["--environment"]).is_err());
+        assert!(parse(&["--vr"]).unwrap().vr);
+        assert!(!parse(&[]).unwrap().vr);
     }
 
     #[test]

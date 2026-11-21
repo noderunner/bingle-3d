@@ -280,6 +280,15 @@ A game's own rules and its players' words keep their terms.
   tests; `check.rs` `--voice-check`. Tests connect two engines over loopback with no devices: **never
   open a real microphone or speaker from a test or an agent's run** (the toolbox reaches the
   host's sound): run clients with `--no-audio-devices`.
+- `src/vr.rs`: the table in a headset (`--vr`, only in a build with the `vr` feature: OpenXR
+  through `bevy_mod_openxr`). The plugin makes a camera for each eye under its tracking root;
+  `seat_root` (no Bevy systems, tested without the feature) puts the root so the head is at a
+  sitter's eye point. An eye is marked `scene::Headset`: lit, with none of the flat camera's
+  effects. **Run `cargo clippy --all-targets --features vr -- -D warnings` too when touching
+  it**: CI does not build the feature. An agent cannot see into the headset: starting `--vr`
+  with SteamVR running draws in the headset the maintainer may be wearing, so say so first; with
+  `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
+  fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
 
 ## Dependencies and Bevy
@@ -290,7 +299,9 @@ A game's own rules and its players' words keep their terms.
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
   `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
   `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds),
-  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation).
+  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation); and, only
+  with the `vr` feature, `bevy_mod_openxr` and `bevy_mod_xr` (by git revision until released for
+  this Bevy: plan, decision 10).
   Bevy's `jpeg` feature reads the scanned textures.
 - **The API's schema**: `schema/` holds the JSON Schema of the API version the client targets
   (`API_VERSION` in `src/net/api.rs`), copied from Bingle's `docs/api.schema.json`, and a test reads
