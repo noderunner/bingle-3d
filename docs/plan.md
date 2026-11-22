@@ -554,10 +554,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   dot of ink stamped on its hex. A key the look does not name (the deployment zones) is not
   drawn. During the draft the tiles still to lay (the view's `tiles_left`, `[stock]`) wait
   beside the board to the first seat's left, a column of each colour, each tile the size of the
-  board's; a tile chosen for a hex leaves its column and shows there see-through until the
-  move is played. Laying one is still a click on the hex, then the tile's button on the panel
-  (the selection is the hex first, then the tile, so a tile cannot yet be picked up from the
-  stock and carried). Every tile is cut from the same place in the wood: one grain for all,
+  board's. On the player's draft a click on one takes it up (`Turn::take_to_place`): it
+  leaves its column and floats under the pointer, bobbing, as Fendo's fence does, and only the
+  hexes that tile may go on are lit; a click on one of them makes both of the selection's
+  gestures (the hex, then the tile, as Courtfall's selection has them) and the tile is carried
+  down onto it, solid, until the move is played; a click on another hex leaves it in hand, and
+  another tile clicked takes its place. Chosen the old way (the hex, then the tile's button on
+  the panel), it is carried there from its column. Every tile is cut from the same place in the wood: one grain for all,
   for now. Any game whose view tints positions or counts a shared stock gets the same from a
   look of its own.
 - The game's panel says what the seat on impulse is asked in the server's words, for any game

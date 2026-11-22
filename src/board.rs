@@ -42,7 +42,7 @@ use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoar
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
-use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeUp, Turn};
+use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeToPlace, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -56,7 +56,11 @@ impl Plugin for BoardPlugin {
         app.add_plugins(HandPlugin)
             .configure_sets(
                 Update,
-                Hands.after(show_turn).after(bowl_stones).after(show_fences),
+                Hands
+                    .after(show_turn)
+                    .after(bowl_stones)
+                    .after(show_fences)
+                    .after(show_tints),
             )
             .add_message::<BoardBuilt>()
             .add_systems(
@@ -461,6 +465,14 @@ struct TintAt {
 struct InStock {
     kind: String,
     index: usize,
+}
+
+/// A piece taken from the stock: held under the pointer, or (once placed) carried to its
+/// position.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct FromStock {
+    kind: String,
+    cell: Option<String>,
 }
 
 /// Fences: one's mesh and material, where its foot is below its middle (metres at the full
@@ -2135,7 +2147,17 @@ fn facings(info: &GameInfo) -> HashMap<String, f32> {
 /// what it puts down new, see-through; and what it aims, held under the pointer.
 #[allow(clippy::too_many_arguments)]
 /// What the move aims, held under the pointer (not a fence, nor a stone in hand).
-type AimedHeld<'w, 's> = Query<'w, 's, Entity, (With<Held>, Without<HeldFence>, Without<FromBowl>)>;
+type AimedHeld<'w, 's> = Query<
+    'w,
+    's,
+    Entity,
+    (
+        With<Held>,
+        Without<HeldFence>,
+        Without<FromBowl>,
+        Without<FromStock>,
+    ),
+>;
 
 fn show_turn(
     mut commands: Commands,
@@ -2372,8 +2394,26 @@ fn show_turn(
     let from_hand = in_flight
         .iter()
         .any(|f| f.source == HAND && f.cell.is_none());
+    // Nor what is placed from the stock beside the board: it is carried there (`show_tints`).
+    let from_stock: Vec<&str> = kit
+        .stock
+        .as_ref()
+        .map(|stock| {
+            turn.placings()
+                .filter(|s| {
+                    s.piece
+                        .as_ref()
+                        .is_some_and(|p| stock.slots.iter().any(|(k, _)| k == p))
+                })
+                .filter_map(|s| s.to.as_deref())
+                .collect()
+        })
+        .unwrap_or_default();
     shown.retain(|cell| {
         let made = turn.placings().any(|s| s.to.as_deref() == Some(*cell));
+        if from_stock.contains(cell) {
+            return false;
+        }
         !from_bowls.contains(cell)
             && !in_flight.iter().any(|f| f.cell.as_deref() == Some(*cell))
             && !(made && from_hand)
@@ -2727,6 +2767,12 @@ fn show_supply(
     }
 }
 
+/// What `show_tints` keeps of the stock: the pieces in it, and the one taken from it.
+type StockParts<'w, 's> = (
+    Query<'w, 's, Entity, With<InStock>>,
+    Query<'w, 's, (Entity, &'static FromStock)>,
+);
+
 /// The positions the view tints, drawn as the game's look says (a tile laid there, or a stamp),
 /// and the stock beside the board: what the view counts left of each kind, less what the move
 /// being built places.
@@ -2735,7 +2781,7 @@ fn show_tints(
     watch: Res<WatchStatus>,
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     drawn: Query<(Entity, &TintAt)>,
-    stocked: Query<(Entity, &InStock)>,
+    (stocked, in_hand): StockParts,
 ) {
     let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
         return;
@@ -2804,47 +2850,156 @@ fn show_tints(
 
     let Some(stock) = &kit.stock else { return };
     let counts = table.state.state.view_counts(&stock.counts);
-    let turn = watch.turn.as_ref();
-    let mut have: Vec<&InStock> = Vec::new();
+    let turn = watch
+        .turn
+        .as_ref()
+        .filter(|t| t.stage == Stage::Choosing || !t.made.is_empty());
+    // What the move being built takes from the stock: the piece in hand (by the choice taken
+    // up), and what it has placed, where.
+    let choosing = turn.filter(|t| t.stage == Stage::Choosing);
+    let takes: HashMap<&str, Vec<Gesture>> = stock
+        .slots
+        .iter()
+        .map(|(kind, _)| {
+            let takes = choosing
+                .map(|t| tints::takes(&t.options, &t.gestures, kind))
+                .unwrap_or_default();
+            (kind.as_str(), takes)
+        })
+        .collect();
+    let taken: Option<&str> = choosing.and_then(Turn::taken).and_then(|choices| {
+        takes
+            .iter()
+            .find(|(_, t)| choices.iter().any(|c| t.contains(c)))
+            .map(|(kind, _)| *kind)
+    });
+    let placed: Vec<(String, String)> = turn
+        .map(|t| {
+            t.placements()
+                .filter_map(|(cell, kind)| {
+                    let kind = kind.filter(|k| takes.contains_key(k))?;
+                    Some((cell.to_string(), kind.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let shown = |kind: &str| {
+        let out =
+            placed.iter().filter(|(_, k)| k == kind).count() + usize::from(taken == Some(kind));
+        (counts.get(kind).copied().unwrap_or(0) as usize).saturating_sub(out)
+    };
+    // The stock as it stands, laid again: a piece of a kind the player may take now is taken
+    // up by a click.
+    for entity in &stocked {
+        commands.entity(entity).despawn();
+    }
+    let rest_at = |kind: &str, index: usize, at: Vec2| {
+        let mut put = kit.set_down(kind, "", Vec3::new(at.x, 0.0, at.y), (kind, index), 0.0);
+        put.translation.y -= kit.surface;
+        put
+    };
     for (kind, slots) in &stock.slots {
-        let placing = turn
-            .map(|t| t.placements().filter(|(_, p)| *p == Some(kind)).count())
-            .unwrap_or(0);
-        let count = (counts.get(kind).copied().unwrap_or(0) as usize)
-            .saturating_sub(placing)
-            .min(slots.len());
-        for (entity, piece) in &stocked {
-            if piece.kind == *kind {
-                if piece.index >= count {
-                    commands.entity(entity).despawn();
-                } else {
-                    have.push(piece);
-                }
+        let count = shown(kind).min(slots.len());
+        let piece = kit.piece(kind);
+        let material = piece.material.clone().unwrap_or_default();
+        for (index, at) in slots.iter().enumerate().take(count) {
+            let mut spawned = commands.spawn((
+                Name::new(format!("{kind} in the stock")),
+                Mesh3d(piece.mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                rest_at(kind, index, *at),
+                InStock {
+                    kind: kind.clone(),
+                    index,
+                },
+                ChildOf(root),
+            ));
+            if !takes[kind.as_str()].is_empty() {
+                spawned.insert((
+                    Pickable::default(),
+                    TakeToPlace(takes[kind.as_str()].clone()),
+                ));
             }
         }
-        let shown = kit.piece(kind);
-        let material = shown.material.clone().unwrap_or_default();
-        for (index, at) in slots.iter().enumerate().take(count) {
-            let there = InStock {
-                kind: kind.clone(),
-                index,
-            };
-            if have.contains(&&there) {
-                continue;
+    }
+
+    // The piece in hand: under the pointer, bobbing, until it is placed; then carried from
+    // there (or, chosen on the panel, from its place in the stock) to where it goes.
+    let put_at = |kind: &str, cell: &str| {
+        let centre = layout.centres.get(cell)?;
+        Some(kit.set_down(kind, "", *centre, (cell, 0), kit.floor(&tints, cell)))
+    };
+    let mut kept = false;
+    for (entity, hand) in &in_hand {
+        let goes = placed.iter().find(|(_, k)| *k == hand.kind);
+        match (goes, &hand.cell) {
+            (Some((cell, _)), Some(at)) if cell == at && !kept => kept = true,
+            (Some((cell, kind)), None) if !kept => {
+                let Some(to) = put_at(kind, cell) else {
+                    commands.entity(entity).despawn();
+                    continue;
+                };
+                commands.entity(entity).remove::<Held>().insert((
+                    FromStock {
+                        kind: kind.clone(),
+                        cell: Some(cell.clone()),
+                    },
+                    Rest(to),
+                    Carry::Put(to),
+                    Visibility::Inherited,
+                ));
+                kept = true;
             }
-            let centre = Vec3::new(at.x, 0.0, at.y);
-            // On the table, not the board.
-            let mut put = kit.set_down(kind, "", centre, (kind, index), 0.0);
-            put.translation.y -= kit.surface;
+            (None, None) if taken == Some(hand.kind.as_str()) && !kept => kept = true,
+            _ => commands.entity(entity).despawn(),
+        }
+    }
+    if kept {
+        return;
+    }
+    if let Some((cell, kind)) = placed.first() {
+        let index = shown(kind);
+        let from = stock
+            .slots
+            .iter()
+            .find(|(k, _)| k == kind)
+            .and_then(|(_, slots)| slots.get(index))
+            .map(|at| rest_at(kind, index, *at));
+        if let (Some(from), Some(to)) = (from, put_at(kind, cell)) {
+            let piece = kit.piece(kind);
             commands.spawn((
-                Name::new(format!("{kind} in the stock")),
-                Mesh3d(shown.mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                put,
-                there,
+                Name::new(format!("{kind} put down")),
+                FromStock {
+                    kind: kind.clone(),
+                    cell: Some(cell.clone()),
+                },
+                Mesh3d(piece.mesh.clone()),
+                MeshMaterial3d(piece.material.clone().unwrap_or_default()),
+                from,
+                Rest(from),
+                Carry::Put(to),
                 ChildOf(root),
             ));
         }
+    } else if let Some(kind) = taken {
+        let piece = kit.piece(kind);
+        commands.spawn((
+            Name::new(format!("{kind} in hand")),
+            FromStock {
+                kind: kind.to_string(),
+                cell: None,
+            },
+            Mesh3d(piece.mesh.clone()),
+            MeshMaterial3d(piece.material.clone().unwrap_or_default()),
+            Held {
+                board: kit.surface,
+                lift: (LIFT - piece.foot) * kit.scale,
+                scale: kit.scale,
+            },
+            Transform::from_scale(Vec3::splat(kit.scale)),
+            Visibility::Hidden,
+            ChildOf(root),
+        ));
     }
 }
 
@@ -4360,7 +4515,83 @@ mod tests {
             assert_eq!(q.iter(app.world()).count(), 0, "no stone under the pointer");
             app.world_mut().resource_mut::<Hovering>().0 = None;
 
-            // A tile chosen for a hex: one fewer in the stock, and a see-through tile there.
+            // A tile taken from the stock: held under the pointer, one fewer in the stock, and
+            // only the hexes it may go on lit.
+            let from_stock = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&FromStock, Has<Held>, Option<&Carry>, &Mesh3d)>();
+                q.iter(app.world())
+                    .map(|(f, held, carry, mesh)| (f.clone(), held, carry.copied(), mesh.0.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let mut lay_c1 = lay("green");
+            lay_c1.to = Some("c1".into());
+            lay_c1.gestures[0] = Gesture::pos("c1");
+            app.world_mut().resource_mut::<WatchStatus>().turn =
+                Some(tak_turn(vec![lay("green"), lay("blue"), lay_c1]));
+            app.update();
+            let mut q = app.world_mut().query::<(&InStock, &TakeToPlace)>();
+            let takes: Vec<(String, Vec<Gesture>)> = q
+                .iter(app.world())
+                .map(|(s, t)| (s.kind.clone(), t.0.clone()))
+                .collect();
+            assert_eq!(takes.len(), 3, "each piece the player may take: {takes:?}");
+            let green = takes.iter().find(|(k, _)| k == "green").unwrap().1.clone();
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            assert_eq!(turn.take_to_place(&green), crate::play::Outcome::Changed);
+            assert_eq!(
+                turn.targets().into_iter().collect::<Vec<_>>(),
+                ["c1", "c2"],
+                "where a green tile may go"
+            );
+            app.update();
+            let held = from_stock(&mut app);
+            assert_eq!(held.len(), 1);
+            assert_eq!(held[0].0.kind, "green");
+            assert!(held[0].1, "under the pointer");
+            let server = app.world().resource::<AssetServer>();
+            assert!(
+                server
+                    .get_path(held[0].3.id())
+                    .is_some_and(|p| p.path().ends_with("tile_hex.glb"))
+            );
+            let kinds: Vec<_> = stock(&mut app).into_iter().map(|(k, ..)| k).collect();
+            assert_eq!(
+                kinds,
+                ["blue", "green"],
+                "the one in hand is out of the stock"
+            );
+            // Still in hand as the pointer goes over the board (the move shown again).
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c1".into());
+            app.update();
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            app.update();
+            assert_eq!(
+                from_stock(&mut app).len(),
+                1,
+                "not taken for an aimed piece"
+            );
+            // Laid with a click on a hex it may go on: carried there, not shown see-through.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            assert_eq!(turn.gesture(&Gesture::pos("c2")), crate::play::Outcome::Ask);
+            assert_eq!(
+                (turn.made[0].to.as_deref(), turn.made[0].piece.as_deref()),
+                (Some("c2"), Some("green"))
+            );
+            app.update();
+            let carried = from_stock(&mut app);
+            assert_eq!(carried.len(), 1);
+            assert_eq!(carried[0].0.cell.as_deref(), Some("c2"));
+            assert!(!carried[0].1);
+            assert!(matches!(carried[0].2, Some(Carry::Put(_))));
+            let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(q.iter(app.world()).count(), 0);
+
+            // Chosen on the panel instead (the hex, then the tile's button): carried from the
+            // stock, and one fewer there.
             let mut turn = tak_turn(vec![lay("blue")]);
             turn.gesture(&Gesture::pos("c2"));
             turn.gesture(&Gesture {
@@ -4371,14 +4602,14 @@ mod tests {
             app.update();
             let kinds: Vec<_> = stock(&mut app).into_iter().map(|(k, ..)| k).collect();
             assert_eq!(kinds, ["green", "green"]);
-            let mut q = app.world_mut().query_filtered::<&Mesh3d, With<Ghost>>();
-            let ghost = q.single(app.world()).unwrap().0.clone();
-            let server = app.world().resource::<AssetServer>();
-            assert!(
-                server
-                    .get_path(ghost.id())
-                    .is_some_and(|p| p.path().ends_with("tile_hex.glb"))
+            let carried = from_stock(&mut app);
+            assert_eq!(carried.len(), 1);
+            assert_eq!(
+                (carried[0].0.kind.as_str(), carried[0].0.cell.as_deref()),
+                ("blue", Some("c2"))
             );
+            let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(q.iter(app.world()).count(), 0);
 
             // Laid: the hex is tinted, and the stock as the view now counts it.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
@@ -4391,6 +4622,10 @@ mod tests {
             app.update();
             assert_eq!(tinted(&mut app).len(), 3);
             assert_eq!(stock(&mut app).len(), 2);
+            assert!(
+                from_stock(&mut app).is_empty(),
+                "laid: the hex's own tile now"
+            );
             // Once the draft is over the view counts nothing, and the stock is gone.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             let table = watch.table.as_mut().unwrap();

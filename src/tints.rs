@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use bevy::math::Vec2;
 
 use crate::appearance::TintLook;
+use crate::net::api::{Gesture, LegalSelection};
 
 /// How a tint is drawn.
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +85,30 @@ pub fn stock(
     (columns, reach)
 }
 
+/// The choices taking a piece of `kind` from the stock may become: of the selections still
+/// possible after the gestures `made`, each that places `kind`, by the choice it makes next or
+/// straight after a click (Courtfall's `tile-green`, after the hex). Empty when none may be made.
+pub fn takes(options: &[LegalSelection], made: &[Gesture], kind: &str) -> Vec<Gesture> {
+    let n = made.len();
+    let mut out: Vec<Gesture> = Vec::new();
+    for o in options {
+        if o.piece.as_deref() != Some(kind) || o.from.is_some() || !o.gestures.starts_with(made) {
+            continue;
+        }
+        let choice = match o.gestures.get(n) {
+            Some(g) if !g.is_pos() => Some(g),
+            Some(_) => o.gestures.get(n + 1).filter(|g| !g.is_pos()),
+            None => None,
+        };
+        if let Some(g) = choice
+            && !out.contains(g)
+        {
+            out.push(g.clone());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +142,39 @@ mod tests {
             })
         );
         assert_eq!(Tinted::of(&look(None, None, None)), None);
+    }
+
+    #[test]
+    fn a_kind_taken_from_the_stock_becomes_the_choice_its_selections_make_after_the_click() {
+        let lay = |hex: &str, kind: &str| LegalSelection {
+            notation: format!("tile:{kind}@{hex}"),
+            action: "tile".into(),
+            to: Some(hex.into()),
+            from: None,
+            piece: Some(kind.into()),
+            aim: None,
+            gestures: vec![
+                Gesture::pos(hex),
+                Gesture {
+                    kind: "action".into(),
+                    value: format!("tile-{kind}"),
+                },
+            ],
+        };
+        let options = [lay("b3", "green"), lay("c3", "green"), lay("b3", "red")];
+        let action = |v: &str| Gesture {
+            kind: "action".into(),
+            value: v.into(),
+        };
+        assert_eq!(takes(&options, &[], "green"), [action("tile-green")]);
+        assert_eq!(takes(&options, &[], "red"), [action("tile-red")]);
+        assert!(takes(&options, &[], "blue").is_empty());
+        // After a click on a hex, what may still be laid there.
+        assert_eq!(
+            takes(&options, &[Gesture::pos("c3")], "green"),
+            [action("tile-green")]
+        );
+        assert!(takes(&options, &[Gesture::pos("c3")], "red").is_empty());
     }
 
     #[test]

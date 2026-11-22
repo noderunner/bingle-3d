@@ -154,6 +154,9 @@ pub struct Turn {
     /// choices it may become, one of which that click makes. Not a gesture: nothing is chosen
     /// until it is put down.
     taken: Option<Vec<Gesture>>,
+    /// Whether what is taken is put down by a click on the board, which its choice follows (a
+    /// tile from the stock, laid on a hex), rather than chosen next (a fence, put on a side).
+    to_place: bool,
     /// Choices that are taken up by themselves once they are all that may be chosen next (the
     /// fences, once the piece has moved: the game's look's).
     pub auto_take: Vec<Gesture>,
@@ -173,6 +176,7 @@ impl Turn {
             may_end: false,
             problem: None,
             taken: None,
+            to_place: false,
             auto_take: Vec::new(),
         }
     }
@@ -347,7 +351,8 @@ impl Turn {
     /// Whether the player has clicked towards the selection being entered: a piece picked up,
     /// say, whose moves the board then lights.
     pub fn holding(&self) -> bool {
-        self.stage == Stage::Choosing && (self.last_click().is_some() || self.in_hand().is_some())
+        self.stage == Stage::Choosing
+            && (self.last_click().is_some() || self.in_hand().is_some() || self.taken.is_some())
     }
 
     /// What the player has taken to place (from its bowl or a seat's supply), while it waits
@@ -431,26 +436,42 @@ impl Turn {
     }
 
     /// Takes up something a later click puts somewhere (a fence from its bowl): one of
-    /// `choices`, while one of them may be chosen next. Taken up again, it is put back.
+    /// `choices`, while one of them may be chosen next. Taken up again, it is put back;
+    /// something else taken up instead takes its place.
     pub fn take_up(&mut self, choices: &[Gesture]) -> Outcome {
+        self.take(choices, false)
+    }
+
+    /// Takes up a piece to place (a tile from the stock): one of `choices`, which a click on
+    /// the board makes as well as the click, while a selection goes on with a click and then one
+    /// of them (the hex, then the tile), or with one of them next. Again, it is put back.
+    pub fn take_to_place(&mut self, choices: &[Gesture]) -> Outcome {
+        self.take(choices, true)
+    }
+
+    fn take(&mut self, choices: &[Gesture], to_place: bool) -> Outcome {
         if self.stage != Stage::Choosing {
             return Outcome::Ignored;
         }
-        if self.taken.take().is_some() {
+        let had = (self.taken.take(), self.to_place);
+        if had.0.as_deref() == Some(choices) {
             return Outcome::Changed;
         }
         let n = self.gestures.len();
-        let next = self
+        if !self
             .matching()
-            .any(|o| o.gestures.get(n).is_some_and(|g| choices.contains(g)));
-        if !next {
+            .any(|o| taking(o, n, choices, to_place).is_some())
+        {
+            (self.taken, self.to_place) = had;
             return Outcome::Ignored;
         }
         self.taken = Some(choices.to_vec());
+        self.to_place = to_place;
         Outcome::Changed
     }
 
-    /// What is taken up, while it is: the choices it may become that may be made next.
+    /// What is taken up, while it is: the choices it may become that may be made next, or
+    /// straight after the next click.
     pub fn taken(&self) -> Option<Vec<&Gesture>> {
         if self.stage != Stage::Choosing {
             return None;
@@ -459,13 +480,24 @@ impl Turn {
         let n = self.gestures.len();
         let mut next: Vec<&Gesture> = Vec::new();
         for o in self.matching() {
-            if let Some(g) = o.gestures.get(n).filter(|g| choices.contains(g))
+            if let Some((_, g)) = taking(o, n, choices, self.to_place)
                 && !next.contains(&g)
             {
                 next.push(g);
             }
         }
         (!next.is_empty()).then_some(next)
+    }
+
+    /// Whether what is taken up is put down by a click on the board, which makes its choice
+    /// after the click (a tile laid on a hex), rather than chosen next (a fence put on a side).
+    fn taken_after_click(&self) -> bool {
+        let Some(choices) = self.taken.as_ref().filter(|_| self.to_place) else {
+            return false;
+        };
+        let n = self.gestures.len();
+        self.matching()
+            .any(|o| taking(o, n, choices, true).is_some_and(|(click, _)| click.is_some()))
     }
 
     /// What the selections made place (not move): where, and the kind of piece when they say.
@@ -667,12 +699,21 @@ impl Turn {
         Some((self.notation(), ply))
     }
 
-    /// The positions a click on would be taken, for the board to show.
+    /// The positions a click on would be taken, for the board to show. With something taken up
+    /// that a click puts down, only where it may go.
     pub fn targets(&self) -> BTreeSet<String> {
         if self.stage != Stage::Choosing {
             return BTreeSet::new();
         }
         let n = self.gestures.len();
+        if self.taken_after_click() {
+            let choices = self.taken.as_deref().unwrap_or_default();
+            return self
+                .matching()
+                .filter_map(|o| taking(o, n, choices, true)?.0)
+                .map(|g| g.value.clone())
+                .collect();
+        }
         let candidates: BTreeSet<&Gesture> = self
             .matching()
             .filter_map(|o| o.gestures[n..].iter().find(|g| g.is_pos()))
@@ -768,6 +809,28 @@ impl Turn {
         {
             self.gestures.truncate(i);
             return Outcome::Changed;
+        }
+        // What is taken up and put down by a click on the board: a click where it may go makes
+        // its choice too; anywhere else, nothing (it stays in hand).
+        if gesture.is_pos() && self.taken_after_click() {
+            let n = self.gestures.len();
+            let choices = self.taken.as_deref().unwrap_or_default();
+            let made: BTreeSet<Gesture> = self
+                .matching()
+                .filter_map(|o| match taking(o, n, choices, true)? {
+                    (Some(click), choice) if click == gesture => Some(choice.clone()),
+                    _ => None,
+                })
+                .collect();
+            // One choice, or several the player must pick between (on the panel).
+            let mut made = made.into_iter();
+            let (Some(choice), None) = (made.next(), made.next()) else {
+                return Outcome::Ignored;
+            };
+            self.taken = None;
+            self.gestures.extend([gesture.clone(), choice]);
+            self.take_forced();
+            return self.settle();
         }
         self.taken = None;
         // So does the same choice again (a stone's bowl clicked twice): the stone goes back.
@@ -892,6 +955,22 @@ impl Turn {
     }
 }
 
+/// How `option` takes up one of `choices` from its gesture `n`: that choice next, or (for a
+/// piece taken `to_place`) a click and then that choice. The click, if any, and the choice.
+fn taking<'o>(
+    option: &'o LegalSelection,
+    n: usize,
+    choices: &[Gesture],
+    to_place: bool,
+) -> Option<(Option<&'o Gesture>, &'o Gesture)> {
+    let next = option.gestures.get(n)?;
+    if choices.contains(next) {
+        return Some((None, next));
+    }
+    let then = option.gestures.get(n + 1).filter(|_| to_place)?;
+    (next.is_pos() && choices.contains(then)).then_some((Some(next), then))
+}
+
 /// The position the pointer is over, if it is one on the board.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Hovering(pub Option<String>);
@@ -914,6 +993,11 @@ pub struct SideAim {
 /// choices, which the later click makes.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct TakeUp(pub Vec<Gesture>);
+
+/// A piece a click takes up to place, by the choices it may become (a tile in the stock): a
+/// click on the board then lays it (`Turn::take_to_place`).
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct TakeToPlace(pub Vec<Gesture>);
 
 /// A position of the board, on its cell and on every piece that stands there: what a click on
 /// either means.
@@ -1010,7 +1094,12 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 
 fn on_click(
     click: On<PointerClick>,
-    (spots, choices, takes): (Query<&Spot>, Query<&Choice>, Query<&TakeUp>),
+    (spots, choices, takes, places): (
+        Query<&Spot>,
+        Query<&Choice>,
+        Query<&TakeUp>,
+        Query<&TakeToPlace>,
+    ),
     (net, aim): (Res<Net>, Res<SideAim>),
     mut watch: ResMut<WatchStatus>,
 ) {
@@ -1031,6 +1120,11 @@ fn on_click(
     } else if let Ok(take) = takes.get(click.entity)
         && let Some(turn) = watch.bypass_change_detection().turn.as_mut()
         && turn.take_up(&take.0) != Outcome::Ignored
+    {
+        watch.set_changed();
+    } else if let Ok(take) = places.get(click.entity)
+        && let Some(turn) = watch.bypass_change_detection().turn.as_mut()
+        && turn.take_to_place(&take.0) != Outcome::Ignored
     {
         watch.set_changed();
     }
@@ -1421,6 +1515,60 @@ mod tests {
         t.answered(answer(2, fendo()));
         t.gesture(&g("pos", "d1"));
         assert_eq!(t.in_hand(), None);
+    }
+
+    #[test]
+    fn a_tile_taken_to_place_lights_where_it_may_go_and_a_click_there_lays_it() {
+        // Courtfall's draft: a hex, then the tile laid on it.
+        let lay = |hex: &str, tile: &str| LegalSelection {
+            piece: Some(tile.into()),
+            ..sel(
+                &format!("tile:{tile}@{hex}"),
+                Some(hex),
+                &[("pos", hex), ("action", &format!("tile-{tile}"))],
+            )
+        };
+        let green = [g("action", "tile-green")];
+        let red = [g("action", "tile-red")];
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            0,
+            vec![
+                lay("b3", "green"),
+                lay("c3", "green"),
+                lay("b3", "red"),
+                lay("d3", "red"),
+            ],
+        ));
+        let all: Vec<String> = t.targets().into_iter().collect();
+        assert_eq!(all, ["b3", "c3", "d3"]);
+        // As a fence would be, a tile is not taken up by the rule for a choice made next.
+        assert_eq!(t.take_up(&green), Outcome::Ignored);
+        assert_eq!(
+            t.take_to_place(&[g("action", "tile-blue")]),
+            Outcome::Ignored
+        );
+        assert_eq!(t.take_to_place(&green), Outcome::Changed);
+        assert!(t.holding(), "the hexes it may go on are lit");
+        assert_eq!(t.taken(), Some(vec![&green[0]]));
+        let lit: Vec<String> = t.targets().into_iter().collect();
+        assert_eq!(lit, ["b3", "c3"]);
+        // A hex it may not go on: nothing, and it stays in hand.
+        assert_eq!(t.gesture(&g("pos", "d3")), Outcome::Ignored);
+        assert!(t.taken().is_some());
+        // Another kind taken instead takes its place; Back puts it down.
+        assert_eq!(t.take_to_place(&red), Outcome::Changed);
+        let lit: Vec<String> = t.targets().into_iter().collect();
+        assert_eq!(lit, ["b3", "d3"]);
+        assert!(t.back());
+        assert!(t.taken().is_none());
+        assert!(t.gestures.is_empty());
+        // Taken again and laid with a click: the hex and the tile, the selection made.
+        t.take_to_place(&green);
+        assert_eq!(t.gesture(&g("pos", "b3")), Outcome::Ask);
+        assert_eq!(t.made.len(), 1);
+        assert_eq!(t.made[0].notation, "tile:green@b3");
+        assert!(t.taken().is_none());
     }
 
     #[test]
