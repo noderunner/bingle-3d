@@ -470,8 +470,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - Sounds as a seat is played, for a game whose appearance gives them (`[sounds]`, `sounds.rs`):
   a piece picked up, a piece set down (when a carried piece touches the board, or as one is
   placed or an arrow shot), and the move sent. Amazons': a light tap of wood, a soft thump with a
-  quick decay (a die dropped on felt; a ringing clack of wood on wood was too much), and two
-  marimba notes a fifth apart. Only the player's own; the opponent's moves are silent for now.
+  quick decay (a die dropped on felt; a ringing clack of wood on wood was too much), and a soft
+  key press on a well-lubricated mechanical keyboard as the move is sent (two marimba notes were
+  too much). Only the player's own; the opponent's moves are silent for now.
   With `--no-audio-devices` Bevy's audio plugin is left out, so such a run (an agent's, a
   screenshot's) opens no speaker; before this Bevy opened the default output at every start.
   This way of picking up and moving pieces is the desktop client's for every game; the headset

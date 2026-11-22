@@ -81,15 +81,18 @@ def thump():
     return normalised(out, -11.0)
 
 
-def chime():
-    """A move played: a soft knock, then two notes of a marimba a fifth apart, rising."""
-    out = silence(0.6)
-    ring(out, 0.0, [(180, 0.05, 0.6), (530, 0.03, 0.4)])
-    strike(out, 0.0, 0.004, 0.4, 0.3)
-    for at, note in [(0.0, 523.25), (0.085, 783.99)]:
-        # A marimba's bar: its fundamental, its fourth harmonic, and a little of its tenth.
-        ring(out, at, [(note, 0.16, 1.0), (note * 3.93, 0.05, 0.3), (note * 9.2, 0.015, 0.08)])
-    return normalised(out, -8.0)
+def key():
+    """A move played: a key pressed on a well-lubricated mechanical keyboard. A soft, rounded
+    "thock" as it bottoms out (a muffled burst over the keycap's hollow body, a few hundred Hz,
+    gone at once), the faintest tick of the stem, and, a moment later, the quieter return."""
+    out = silence(0.16)
+    # Down: the bottom-out.
+    strike(out, 0.0, 0.007, 1.0, 0.12)
+    ring(out, 0.0, [(420, 0.012, 0.8), (980, 0.006, 0.3), (2400, 0.002, 0.08)])
+    # Up: the keycap back at the top, softer and a little higher.
+    strike(out, 0.085, 0.004, 0.22, 0.15)
+    ring(out, 0.085, [(560, 0.007, 0.2), (1300, 0.003, 0.06)])
+    return normalised(out, -12.0)
 
 
 def write(name, samples):
@@ -120,7 +123,7 @@ def write(name, samples):
 
 
 if __name__ == "__main__":
-    for name, make in [("tick", tick), ("thump", thump), ("chime", chime)]:
+    for name, make in [("tick", tick), ("thump", thump), ("key", key)]:
         # Each its own noise, the same every time.
         random.seed(name)
         write(name, make())

@@ -48,7 +48,7 @@ files![
     "models/tak/flat.glb",
     "models/tak/wall.glb",
     "pictures/cards/points.jpg",
-    "sounds/chime.ogg",
+    "sounds/key.ogg",
     "sounds/thump.ogg",
     "sounds/tick.ogg",
     "textures/cards/back_albedo.jpg",
