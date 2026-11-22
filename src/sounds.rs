@@ -1,7 +1,7 @@
-//! The sounds playing a seat makes, for a game whose appearance gives them (`[sounds]`): a piece
-//! picked up, a piece set down where it goes (or one placed), the move sent, and the game won
-//! or lost. A game without
-//! them is silent; nothing here names a game.
+//! The sounds playing a seat makes: a piece picked up, a piece set down where it goes (or one
+//! placed), the move sent, and the game won or lost. Every game makes the same by default
+//! ([`Cue::default_file`]); a game's appearance may give any of them another (`[sounds]`).
+//! Nothing here names a game.
 //!
 //! Most cues are read from the turn as it changes ([`cues`], with no Bevy in it); a piece
 //! carried to where it goes sounds when it touches the board (`hand.rs` says so). With
@@ -36,8 +36,26 @@ pub enum Cue {
 impl Cue {
     const ALL: [Cue; 5] = [Cue::Lift, Cue::Put, Cue::Play, Cue::Win, Cue::Lose];
 
-    /// Its file, as the game's look gives it.
-    pub fn file(self, sounds: &SoundLook) -> Option<&str> {
+    /// The sound every game makes for it, unless its look gives another: synthesised by
+    /// `assets-src/sounds/sounds.py`.
+    pub fn default_file(self) -> &'static str {
+        match self {
+            Cue::Lift => "sounds/tick.ogg",
+            Cue::Put => "sounds/thump.ogg",
+            Cue::Play => "sounds/key.ogg",
+            Cue::Win => "sounds/cheer.ogg",
+            Cue::Lose => "sounds/groan.ogg",
+        }
+    }
+
+    /// Its file: the one the game's look gives, or the default.
+    pub fn file(self, look: Option<&SoundLook>) -> &str {
+        look.and_then(|s| self.given(s))
+            .unwrap_or(self.default_file())
+    }
+
+    /// Its file, if the game's look gives one.
+    fn given(self, sounds: &SoundLook) -> Option<&str> {
         match self {
             Cue::Lift => sounds.lift.as_deref(),
             Cue::Put => sounds.put.as_deref(),
@@ -196,13 +214,13 @@ fn load(
     server: Res<AssetServer>,
     mut loaded: ResMut<Loaded>,
 ) {
-    let Some(sounds) = sounds_of(&watch, &appearances) else {
+    if watch.table.is_none() {
         return;
-    };
+    }
+    let sounds = sounds_of(&watch, &appearances);
     for cue in Cue::ALL {
-        if let Some(file) = cue.file(sounds)
-            && !loaded.0.contains_key(file)
-        {
+        let file = cue.file(sounds);
+        if !loaded.0.contains_key(file) {
             loaded
                 .0
                 .insert(file.to_string(), server.load(assets::path(file)));
@@ -219,10 +237,7 @@ fn play(
 ) {
     let sounds = sounds_of(&watch, &appearances);
     for cue in cues_in.read() {
-        let Some(handle) = sounds
-            .and_then(|s| cue.file(s))
-            .and_then(|file| loaded.0.get(file))
-        else {
+        let Some(handle) = loaded.0.get(cue.file(sounds)) else {
             continue;
         };
         commands.spawn((
@@ -273,24 +288,32 @@ mod tests {
     }
 
     #[test]
-    fn each_cue_is_its_own_file_and_a_look_without_one_is_silent() {
+    fn every_game_makes_the_default_sounds_unless_its_look_gives_others() {
         let sounds = SoundLook {
             lift: Some("a.ogg".into()),
-            put: None,
             play: Some("c.ogg".into()),
             ..SoundLook::default()
         };
-        assert_eq!(Cue::Lift.file(&sounds), Some("a.ogg"));
-        assert_eq!(Cue::Put.file(&sounds), None);
-        assert_eq!(Cue::Play.file(&sounds), Some("c.ogg"));
+        assert_eq!(Cue::Lift.file(Some(&sounds)), "a.ogg");
+        assert_eq!(Cue::Put.file(Some(&sounds)), Cue::Put.default_file());
+        assert_eq!(Cue::Play.file(Some(&sounds)), "c.ogg");
+        // A game with no look of its own, and one whose look says nothing of sounds.
+        for look in [None, Some(&SoundLook::default())] {
+            for cue in Cue::ALL {
+                assert_eq!(cue.file(look), cue.default_file());
+            }
+        }
+        // Each cue its own sound, and every default one the client has.
+        let files: std::collections::HashSet<_> =
+            Cue::ALL.iter().map(|c| c.default_file()).collect();
+        assert_eq!(files.len(), Cue::ALL.len());
+        assert!(files.iter().all(|f| assets::exists(f)));
     }
 
     #[test]
     fn the_sounds_decode_as_the_client_plays_them_short_and_unclipped() {
         use bevy::audio::{Decodable, Source};
 
-        let look = Appearances::built_in();
-        let sounds = &look.for_game("amazons").expect("a look").sounds;
         for (cue, longest) in [
             (Cue::Lift, 0.2),
             (Cue::Put, 0.35),
@@ -298,7 +321,7 @@ mod tests {
             (Cue::Win, 2.0),
             (Cue::Lose, 2.0),
         ] {
-            let file = cue.file(sounds).expect("a sound for each");
+            let file = cue.default_file();
             let source = AudioSource {
                 bytes: assets::FILES
                     .iter()
