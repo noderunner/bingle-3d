@@ -24,29 +24,21 @@ use crate::slab::{self, Rim};
 pub const HEIGHT: f32 = 0.007;
 pub const GAP: f32 = 0.02;
 const MARGIN: f32 = 0.45;
-const COLUMNS: usize = 10;
+const ONE_ROW: usize = 10;
 /// The tray's pieces are this much smaller than the board's, unless the game's look says.
 pub const SIZE: f32 = 0.75;
 /// The most squares a tray is made with: a count wanted beyond it is not shown as a tray.
 pub const MOST: u32 = 100;
 
-/// How many squares across and how many rows a tray of `n` has: as many rows as divide `n`
-/// evenly into no more than ten across, so every row is full (15 is 5 by 3, 20 is 10 by 2, 25
-/// is 5 by 5), unless that makes it a thin strip, when the last row is short.
+/// How many squares across and how many rows a tray of `n` has: wide and shallow, one row of
+/// up to ten, and two rows for more, the second one short when `n` is odd (15 is 8 by 2, 20 is
+/// 10 by 2, 50 is 25 by 2).
 pub fn grid(n: usize) -> (usize, usize) {
-    if n == 0 {
-        return (0, 0);
+    match n {
+        0 => (0, 0),
+        1..=ONE_ROW => (n, 1),
+        _ => (n.div_ceil(2), 2),
     }
-    let even = (1..=COLUMNS.min(n))
-        .rev()
-        .find(|c| n.is_multiple_of(*c))
-        .unwrap_or(1);
-    let across = if even < 4 && n > even {
-        COLUMNS.min(n)
-    } else {
-        even
-    };
-    (across, n.div_ceil(across))
 }
 
 /// The middle of each of a tray's `n` squares, each `side` across, about the tray's middle: x
@@ -221,19 +213,19 @@ mod tests {
     #[test]
     fn a_tray_has_a_square_for_each_capture_wanted_in_full_rows() {
         // Blooms' boards: base 4, 5, 6, 8 and 10.
-        assert_eq!(grid(15), (5, 3));
+        assert_eq!(grid(15), (8, 2));
         assert_eq!(grid(20), (10, 2));
-        assert_eq!(grid(25), (5, 5));
-        assert_eq!(grid(40), (10, 4));
-        assert_eq!(grid(50), (10, 5));
-        // Few: one row. A count no row divides: rows of ten, the last short.
+        assert_eq!(grid(25), (13, 2));
+        assert_eq!(grid(40), (20, 2));
+        assert_eq!(grid(50), (25, 2));
+        // Few: one row.
         assert_eq!(grid(3), (3, 1));
-        assert_eq!(grid(13), (10, 2));
+        assert_eq!(grid(10), (10, 1));
         assert_eq!(grid(0), (0, 0));
-        for n in 1..=60 {
+        for n in 1..=100 {
             let (across, rows) = grid(n);
             assert!(across * rows >= n && across * (rows - 1) < n, "{n}");
-            assert!(across <= COLUMNS);
+            assert!(rows <= 2, "never more than two rows");
         }
     }
 
@@ -244,13 +236,14 @@ mod tests {
         assert_eq!(at.len(), 15);
         // The first at the far left of the row nearest the board (z away from the seat).
         assert!(at[0].x < at[1].x && at[0].y == at[1].y);
-        assert!(at[0].y < at[5].y, "the next row is nearer the seat");
+        assert!(at[0].y < at[8].y, "the next row is nearer the seat");
         let half = half_size(15, side);
         for p in &at {
             assert!(p.x.abs() + side / 2.0 < half.x && p.y.abs() + side / 2.0 < half.y);
         }
-        // Centred.
-        let middle = at.iter().sum::<Vec2>() / 15.0;
+        // Centred, a full tray (a short row leaves a square empty at its end).
+        let full = squares(20, side);
+        let middle = full.iter().sum::<Vec2>() / 20.0;
         assert!(middle.length() < 1e-6);
     }
 

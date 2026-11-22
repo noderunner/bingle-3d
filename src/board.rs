@@ -2856,6 +2856,29 @@ mod tests {
         }
 
         #[test]
+        fn a_tray_is_made_of_the_boards_wood_and_changes_with_it() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(captures_table(&[("b2", "red")], 0, 0));
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&Name, &MeshMaterial3d<StandardMaterial>)>();
+            let tray = q
+                .iter(app.world())
+                .find(|(n, _)| n.as_str() == "Tray of seat 1")
+                .map(|(_, m)| m.0.clone())
+                .expect("a tray");
+            let mut kits = app.world_mut().query::<&Kit>();
+            let kit = kits.single(app.world()).unwrap();
+            let rebuilt = kit.woodwork.iter().find(|(h, _)| *h == tray);
+            assert!(
+                rebuilt.is_some_and(|(_, spec)| spec.is_board_wood()),
+                "built again when another wood is chosen"
+            );
+        }
+
+        #[test]
         fn a_game_that_counts_nothing_has_no_trays() {
             let mut app = with_looks();
             app.world_mut().resource_mut::<WatchStatus>().table = Some(table());

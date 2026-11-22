@@ -96,7 +96,7 @@ pub struct BowlLook {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrayLook {
-    /// What a tray is made of: a material of this file's. Pale maple when not said.
+    /// What a tray is made of: a material of this file's. The board's wood when not said.
     pub material: Option<String>,
     /// How big its pieces, and so its squares, are against the board's (`trays::SIZE` when not
     /// said).

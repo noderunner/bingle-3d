@@ -273,10 +273,10 @@ pub fn board() -> MaterialSpec {
     }
 }
 
-/// A tray for what a seat captures: pale maple, oiled.
+/// A tray for what a seat captures: the board's wood, whichever is chosen, oiled.
 pub fn tray() -> MaterialSpec {
     MaterialSpec {
-        wood: Some("maple".into()),
+        wood: Some(BOARD.into()),
         clearcoat: Some(0.3),
         clearcoat_roughness: Some(0.25),
         ..default()

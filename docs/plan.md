@@ -481,10 +481,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   `may_end` (a move sent part way) is read too, though only a one-seat game sets it. The lit
   cells of a plain board are stained amber as well as glowing, as a chessboard's are: the glow
   alone barely showed on teak.
-- Captures in trays (`trays.rs`): a small maple tray in front of each seat, between the board
-  and its player, with a square for each capture its win wants (`counters[].max`: 15, 20, 25, 40
-  and 50 on Blooms' five boards, in full rows of up to ten: 5 by 3, 10 by 2, 5 by 5, 10 by 4, 10
-  by 5). The counts are the position's `reserves` (by the seat's colour word, then the
+- Captures in trays (`trays.rs`): a small tray in front of each seat, between the board and its
+  player, of the board's own wood (it changes with the board's), with a square for each capture
+  its win wants (`counters[].max`: 15, 20, 25, 40 and 50 on Blooms' five boards). Wide and
+  shallow: one row of up to ten, otherwise two rows (8 by 2, 10 by 2, 13 by 2, 20 by 2, 25 by 2;
+  first tried in full rows of up to ten, which made the bigger boards' trays deep). The counts are the position's `reserves` (by the seat's colour word, then the
   counter's id). The server does not say which stones were taken (a move's `captured` names one
   cell), so the board sees it: what leaves the board as a seat's count goes up, not of a colour
   it plays, is its capture, carried from where it stood (straight up clear of its neighbours,
