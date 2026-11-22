@@ -277,6 +277,7 @@ mod tests {
                     .iter()
                     .map(|(id, c)| (id.to_string(), vec![stone(c)]))
                     .collect(),
+                ..Default::default()
             },
             status: "active".into(),
             impulse_seat: Some(if move_seq.is_multiple_of(2) { 1 } else { 2 }),
@@ -313,6 +314,7 @@ mod tests {
                 actions: vec![],
                 goals: vec![],
                 pieces: vec![],
+                counters: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),

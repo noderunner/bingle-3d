@@ -38,13 +38,15 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest};
+use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest, Route};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, PieceOnBoard};
 use crate::play::{Hovering, Spot, Stage, Turn};
 use crate::slab::{self, Rim};
+use crate::sounds::Cue;
 use crate::table::Table;
+use crate::trays;
 
 pub struct BoardPlugin;
 
@@ -179,8 +181,11 @@ impl Default for BoardWood {
 /// A board has been put on the table, centred on the origin: the camera may frame it.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct BoardBuilt {
-    /// Its width (X) and depth (Z), in metres.
+    /// Its width (X) and depth (Z), in metres, with what stands in front of it for the player
+    /// (their tray).
     pub size: Vec2,
+    /// The middle of that on the table (x, z): the board's, or a little nearer the player.
+    pub middle: Vec2,
 }
 
 /// Where every position of a board is on the table.
@@ -385,7 +390,37 @@ struct Kit {
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
     ghosts: HashMap<String, Handle<StandardMaterial>>,
+    /// Each seat's tray, in seat order, for a game that counts what each captures (none
+    /// otherwise); the pool the count is kept in; how big the pieces in them are.
+    trays: Vec<Tray>,
+    counter: String,
+    tray_scale: f32,
+    /// How far towards the player the first seat's tray reaches, if there are trays.
+    front: f32,
 }
+
+/// A seat's tray of what it captured: the colour word its count is kept under, the colours it
+/// plays, and where each square's middle is.
+struct Tray {
+    seat: String,
+    colours: Vec<String>,
+    squares: Vec<Vec3>,
+}
+
+/// A piece in a seat's tray (by the seat's place in the game's seats), and its place there.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+struct InTray {
+    seat: usize,
+    index: usize,
+}
+
+/// A captured piece's way to its tray: it waits for the move that took it to be set down, and
+/// each after it a little longer, so several go one after another.
+const CAPTURE_WAIT: f32 = 0.3;
+const CAPTURE_EACH: f32 = 0.16;
+const CAPTURE_ACROSS: f32 = 0.32;
+/// How far over the board's other pieces it is raised (metres at the full pitch).
+const CAPTURE_OVER: f32 = 0.018;
 
 impl Kit {
     /// The colour word a piece of kind `id` is played in: its own, or else the player's.
@@ -401,6 +436,32 @@ impl Kit {
 
     fn piece(&self, id: &str) -> &PieceKit {
         self.pieces.get(id).unwrap_or(&self.stone)
+    }
+
+    /// Where a piece of kind `id` lies in seat `seat`'s tray, the `index`th in: in its square,
+    /// as loose as on the board, and on the first ones in once every square has one.
+    fn in_tray(&self, id: &str, colour: &str, seat: usize, index: usize) -> Option<Transform> {
+        let squares = &self.trays.get(seat)?.squares;
+        let centre = *squares.get(index % squares.len().max(1))?;
+        let layer = index / squares.len();
+        let kind = self.piece(id);
+        let facing = self.facing.get(colour).copied().unwrap_or(0.0);
+        let stance = stance(kind.stands, &format!("tray {seat}"), index, facing);
+        let y = centre.y + (layer as f32 * kind.height - kind.foot * stance.size) * self.tray_scale;
+        Some(
+            Transform::from_xyz(centre.x, y, centre.z)
+                .with_rotation(stance.turn)
+                .with_scale(Vec3::splat(self.tray_scale * stance.size)),
+        )
+    }
+
+    /// The kind of piece of colour word `colour`, for one nobody saw captured: the kind played in
+    /// it, if its pieces have their own colours, or the generic stone.
+    fn kind_in(&self, colour: &str) -> &str {
+        self.piece_colour
+            .iter()
+            .find(|(_, c)| *c == colour)
+            .map_or("", |(id, _)| id.as_str())
     }
 
     /// How tall a stack of pieces is, bottom first, at the full pitch.
@@ -521,12 +582,21 @@ type Shown = (
     &'static Spot,
 );
 
+/// What else `sync_board` reads of the scene: the pieces shown, those of a move sent, those
+/// taken from bowls, and those in trays.
+type Others<'w, 's> = (
+    Query<'w, 's, Shown>,
+    Query<'w, 's, &'static Sent>,
+    Query<'w, 's, &'static FromBowl>,
+    Query<'w, 's, (Entity, &'static InTray)>,
+);
+
 fn sync_board(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     mut drawing: Drawing,
     roots: Query<(Entity, &BoardRoot, &Kit)>,
-    (pieces, sent, from_bowls): (Query<Shown>, Query<&Sent>, Query<&FromBowl>),
+    (pieces, sent, from_bowls, in_trays): Others,
     mut marks: Query<(&mut Transform, &mut Visibility), With<LastMoveMark>>,
     mut built: MessageWriter<BoardBuilt>,
 ) {
@@ -560,10 +630,16 @@ fn sync_board(
             woodwork: Vec::new(),
         };
         let kit = build_board(&mut commands, &mut tools, table, &layout);
-        built.write(BoardBuilt { size: layout.size });
+        // Framed with the player's tray in front of it, if it has one.
+        let extra = (kit.1.front - layout.size.y / 2.0).max(0.0);
+        built.write(BoardBuilt {
+            size: layout.size + Vec2::Y * extra,
+            middle: Vec2::Y * extra / 2.0,
+        });
         // A board just built shows the position as it is, without dropping every piece.
         let root = kit.0;
-        place_pieces(&mut commands, root, &kit.1, &layout, table, &[], None);
+        place_pieces(&mut commands, root, &kit.1, &layout, table, &[], None, &[]);
+        fill_trays(&mut commands, root, &kit.1, table, &[], &[]);
         commands.entity(root).insert(kit.1);
         return;
     };
@@ -578,7 +654,25 @@ fn sync_board(
         .chain(sent.iter().map(|s| s.0.as_str()))
         .chain(from_bowls.iter().filter_map(|f| f.cell.as_deref()))
         .collect();
-    place_pieces(&mut commands, root, kit, &layout, table, &shown, Some(&put));
+    // What left the board and was captured goes to its captor's tray, rather than away.
+    let wanted = wanted_pieces(table, kit);
+    let gone: Vec<(Entity, &PieceAt)> = shown
+        .iter()
+        .filter(|(_, at)| !wanted.contains(at))
+        .copied()
+        .collect();
+    let held: Vec<(Entity, InTray)> = in_trays.iter().map(|(e, t)| (e, *t)).collect();
+    let taken = fill_trays(&mut commands, root, kit, table, &gone, &held);
+    place_pieces(
+        &mut commands,
+        root,
+        kit,
+        &layout,
+        table,
+        &shown,
+        Some(&put),
+        &taken,
+    );
     for (mut t, mut vis) in &mut marks {
         match table.last_move.as_ref().and_then(|c| layout.centres.get(c)) {
             Some(centre) => {
@@ -591,8 +685,9 @@ fn sync_board(
 }
 
 /// The pieces the position has and the scene does not are added, and those the scene has and the
-/// position does not are taken away. With `animate`, those added drop in, but on the positions it
-/// names, where the move being built showed them already.
+/// position does not are taken away, but those `kept` (gone to a tray). With `animate`, those
+/// added drop in, but on the positions it names, where the move being built showed them already.
+#[allow(clippy::too_many_arguments)]
 fn place_pieces(
     commands: &mut Commands,
     root: Entity,
@@ -601,10 +696,11 @@ fn place_pieces(
     table: &Table,
     shown: &[(Entity, &PieceAt)],
     animate: Option<&[&str]>,
+    kept: &[Entity],
 ) {
     let wanted = wanted_pieces(table, kit);
     for (entity, at) in shown {
-        if !wanted.contains(at) {
+        if !wanted.contains(at) && !kept.contains(entity) {
             commands.entity(*entity).despawn();
         }
     }
@@ -656,6 +752,98 @@ fn place_pieces(
             piece.insert(settled);
         }
     }
+}
+
+/// Each seat's tray brought up to its count: pieces that left the board (`gone`) and that a
+/// seat's count going up says it captured are carried there from where they stood (returned, to
+/// be kept), others it captured that nobody saw (a game opened part way through) laid there at
+/// once, and the last taken out of a tray whose count went down. `held` is what the trays hold.
+fn fill_trays(
+    commands: &mut Commands,
+    root: Entity,
+    kit: &Kit,
+    table: &Table,
+    gone: &[(Entity, &PieceAt)],
+    held: &[(Entity, InTray)],
+) -> Vec<Entity> {
+    if kit.trays.is_empty() {
+        return Vec::new();
+    }
+    let had: Vec<usize> = (0..kit.trays.len())
+        .map(|seat| held.iter().filter(|(_, t)| t.seat == seat).count())
+        .collect();
+    let counts: Vec<u32> = kit
+        .trays
+        .iter()
+        .map(|t| table.state.state.count(&t.seat, &kit.counter))
+        .collect();
+    let colours: Vec<Vec<String>> = kit.trays.iter().map(|t| t.colours.clone()).collect();
+    let gone_colours: Vec<&str> = gone
+        .iter()
+        .map(|(_, at)| kit.colour_of(&at.piece.piece, &at.piece.color))
+        .collect();
+    let mut taken = Vec::new();
+    for (seat, change) in trays::fill(&had, &counts, &colours, &gone_colours)
+        .into_iter()
+        .enumerate()
+    {
+        let mut last: Vec<&(Entity, InTray)> =
+            held.iter().filter(|(_, t)| t.seat == seat).collect();
+        last.sort_by_key(|(_, t)| std::cmp::Reverse(t.index));
+        for (entity, _) in last.into_iter().take(change.drop) {
+            commands.entity(*entity).despawn();
+        }
+        for (k, source) in change.add.into_iter().enumerate() {
+            let index = had[seat] + k;
+            match source {
+                trays::Source::Board(i) => {
+                    let (entity, at) = gone[i];
+                    let Some(to) = kit.in_tray(&at.piece.piece, &at.piece.color, seat, index)
+                    else {
+                        continue;
+                    };
+                    commands
+                        .entity(entity)
+                        .remove::<(PieceAt, Spot, Pickable, Dropping)>()
+                        .insert((
+                            Name::new(format!("{} captured by seat {}", at.piece.piece, seat + 1)),
+                            InTray { seat, index },
+                            Rest(to),
+                            Route {
+                                delay: CAPTURE_WAIT + CAPTURE_EACH * taken.len() as f32,
+                                over: CAPTURE_OVER * kit.scale,
+                                across: CAPTURE_ACROSS,
+                                lands: Cue::Capture,
+                            },
+                            Carry::Put(to),
+                        ));
+                    taken.push(entity);
+                }
+                trays::Source::Unseen(colour) => {
+                    let id = kit.kind_in(&colour);
+                    let Some(to) = kit.in_tray(id, &colour, seat, index) else {
+                        continue;
+                    };
+                    let kind = kit.piece(id);
+                    let material = kind
+                        .material
+                        .clone()
+                        .or_else(|| kit.materials.get(&colour).cloned())
+                        .unwrap_or_default();
+                    commands.spawn((
+                        Name::new(format!("{colour} captured by seat {}", seat + 1)),
+                        Mesh3d(kind.mesh.clone()),
+                        MeshMaterial3d(material),
+                        to,
+                        Rest(to),
+                        InTray { seat, index },
+                        ChildOf(root),
+                    ));
+                }
+            }
+        }
+    }
+    taken
 }
 
 /// A number from 0 to 1 for a place on the board and what it is for: the same for the same
@@ -1049,6 +1237,7 @@ fn build_board(
         .collect();
     // A bowl of each colour's stones beside the board, for a game whose look has them: a click
     // on one takes a stone of the piece in that colour.
+    let edge: Vec<Vec2> = outline.iter().map(|(point, _)| *point).collect();
     let mut bowls_at = HashMap::new();
     if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
         && let Some(spec) = tools.look.and_then(|l| l.materials.get(&bowls.material))
@@ -1080,8 +1269,60 @@ fn build_board(
                     .collect()
             })
             .collect();
-        let edge: Vec<Vec2> = outline.iter().map(|(point, _)| *point).collect();
         bowls_at = crate::bowls::spawn(commands, root, tools.server, bowls, bowl, seats, &edge);
+    }
+    // A tray in front of each seat for a game that counts what each captures, a square for each
+    // capture its win wants.
+    let counter = table
+        .info
+        .counters
+        .iter()
+        .find(|c| c.max > 0 && c.max <= trays::MOST);
+    let tray_size = tools.look.and_then(|l| l.trays.size).unwrap_or(trays::SIZE);
+    let mut seat_trays = Vec::new();
+    let mut front = 0.0;
+    if let Some(counter) = counter {
+        let spec = tools
+            .look
+            .and_then(|l| l.materials.get(l.trays.material.as_ref()?))
+            .cloned()
+            .unwrap_or_else(look::tray);
+        let [r, g, b] = spec.tint.unwrap_or([1.0; 3]);
+        let lines = MaterialSpec {
+            tint: Some([r * 0.42, g * 0.33, b * 0.27]),
+            ..spec.clone()
+        };
+        let wood = (tools.material(&spec), tools.material(&lines));
+        let (n, side) = (counter.max as usize, pitch * tray_size);
+        let depth = trays::half_size(n, side).y;
+        let seats = &table.info.seats;
+        for (i, place) in trays::places(seats.len(), &edge, depth)
+            .into_iter()
+            .enumerate()
+        {
+            if i == 0 {
+                front = place.0.y + depth;
+            }
+            let s = &seats[i];
+            let squares = trays::spawn(
+                commands,
+                tools.meshes,
+                root,
+                wood.clone(),
+                place,
+                (n, side),
+                i,
+            );
+            seat_trays.push(Tray {
+                seat: s.color.clone(),
+                colours: if s.colors.is_empty() {
+                    vec![s.color.clone()]
+                } else {
+                    s.colors.clone()
+                },
+                squares,
+            });
+        }
     }
     let kit = Kit {
         stone,
@@ -1096,6 +1337,10 @@ fn build_board(
         bowls: bowls_at,
         piece_colour,
         ghosts,
+        trays: seat_trays,
+        counter: counter.map(|c| c.id.clone()).unwrap_or_default(),
+        tray_scale: pitch / PITCH * tray_size,
+        front,
     };
     (root, kit)
 }
@@ -1966,6 +2211,7 @@ mod tests {
                             (c.to_string(), vec![stone])
                         })
                         .collect(),
+                    ..Default::default()
                 },
                 status: "active".into(),
                 move_seq: seq,
@@ -1993,6 +2239,7 @@ mod tests {
                     actions: vec![],
                     goals: vec![],
                     pieces: vec![],
+                    counters: vec![],
                 },
                 game: Game {
                     game_def_id: "g".into(),
@@ -2052,6 +2299,7 @@ mod tests {
                         .iter()
                         .map(|(cell, pieces)| (cell.to_string(), stack(pieces)))
                         .collect(),
+                    ..Default::default()
                 },
                 status: "active".into(),
                 move_seq: seq,
@@ -2448,6 +2696,178 @@ mod tests {
             );
         }
 
+        /// Blooms on a 3×3 grid, Warm (red, yellow) against Cool (blue, black), a capture's
+        /// count of four winning, with these stones (each a cell and a colour) and counts.
+        fn captures_table(stones: &[(&str, &str)], warm: u32, cool: u32) -> Table {
+            let mut table = grid_table("blooms", &[]);
+            table.info.seats = [
+                (1, "red", ["red", "yellow"]),
+                (2, "blue", ["blue", "black"]),
+            ]
+            .map(|(seat, word, colours)| SeatDef {
+                seat,
+                color: word.into(),
+                label: word.into(),
+                colors: colours.map(String::from).to_vec(),
+            })
+            .to_vec();
+            table.info.pieces = ["red", "yellow", "blue", "black"]
+                .map(|c| crate::net::api::PieceDef {
+                    id: c.into(),
+                    color: c.into(),
+                })
+                .to_vec();
+            table.info.counters = vec![crate::net::api::Counter {
+                id: "captured".into(),
+                label: "Captured".into(),
+                max: 4,
+            }];
+            table.state = captures_state(1, stones, warm, cool);
+            table
+        }
+
+        fn captures_state(seq: u64, stones: &[(&str, &str)], warm: u32, cool: u32) -> GameState {
+            let cells: Vec<(&str, &[(&str, &str)])> = stones
+                .iter()
+                .map(|(cell, colour)| {
+                    let one: &[(&str, &str)] = match *colour {
+                        "red" => &[("red", "red")],
+                        "yellow" => &[("yellow", "yellow")],
+                        "blue" => &[("blue", "blue")],
+                        _ => &[("black", "black")],
+                    };
+                    (*cell, one)
+                })
+                .collect();
+            let mut state = stacks(seq, &cells);
+            state.state.reserves = serde_json::json!({
+                "red": {"captured": warm},
+                "blue": {"captured": cool},
+            });
+            state
+        }
+
+        fn in_trays(app: &mut App) -> Vec<(InTray, String, Transform)> {
+            let mut q = app.world_mut().query::<(&InTray, &Name, &Rest)>();
+            let mut out: Vec<_> = q
+                .iter(app.world())
+                .map(|(t, n, r)| (*t, n.to_string(), r.0))
+                .collect();
+            out.sort_by_key(|(t, ..)| (t.seat, t.index));
+            out
+        }
+
+        #[test]
+        fn stones_captured_are_carried_one_after_another_to_their_captors_tray() {
+            let mut app = with_looks();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ));
+            let before = [("a1", "blue"), ("b1", "black"), ("c3", "red")];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(captures_table(&before, 0, 0));
+            app.update();
+            let mut trays = app.world_mut().query::<&Name>();
+            let count = trays
+                .iter(app.world())
+                .filter(|n| n.starts_with("Tray of seat"))
+                .count();
+            assert_eq!(count, 2, "a tray for each seat");
+            assert!(in_trays(&mut app).is_empty());
+
+            // Warm plays b2 and captures a1 and b1.
+            let after = [("b2", "yellow"), ("c3", "red")];
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: captures_state(2, &after, 2, 0),
+            });
+            app.update();
+            let held = in_trays(&mut app);
+            assert_eq!(held.len(), 2, "{held:?}");
+            assert!(held.iter().all(|(t, ..)| t.seat == 0), "Warm's tray");
+            assert!(held[0].1.starts_with("blue") && held[1].1.starts_with("black"));
+            // In front of Warm (the player's side, +z), beyond the board, in two squares.
+            let (first, second) = (held[0].2.translation, held[1].2.translation);
+            assert!(first.z > 0.04 && first.y < BOARD_HEIGHT, "{first}");
+            assert!(first.distance(second) > 0.01);
+            let mut q = app.world_mut().query::<(&InTray, &Route, &Carry)>();
+            let mut routes: Vec<(usize, Route)> = q
+                .iter(app.world())
+                .map(|(t, r, c)| {
+                    assert!(matches!(c, Carry::Put(_)));
+                    (t.index, *r)
+                })
+                .collect();
+            routes.sort_by_key(|(i, _)| *i);
+            assert_eq!(routes[0].1.lands, Cue::Capture);
+            assert!(routes[1].1.delay > routes[0].1.delay, "one after another");
+            // Nothing else changed: two stones left on the board.
+            let mut on_board = app.world_mut().query::<&PieceAt>();
+            assert_eq!(on_board.iter(app.world()).count(), 2);
+
+            // In a second or so both are in the tray.
+            for _ in 0..80 {
+                app.update();
+            }
+            let mut q = app.world_mut().query::<(&InTray, &Transform, &Rest)>();
+            for (_, t, rest) in q.iter(app.world()) {
+                assert_eq!(*t, rest.0);
+            }
+
+            // Taken back: the last one out.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::State {
+                reason: "undo".into(),
+                state: captures_state(3, &after, 1, 0),
+                seats: vec![],
+                lobby: false,
+                host_seat: None,
+            });
+            app.update();
+            app.update();
+            let held = in_trays(&mut app);
+            assert_eq!(held.len(), 1);
+            assert_eq!(held[0].0.index, 0);
+        }
+
+        #[test]
+        fn a_game_opened_with_captures_made_has_them_in_the_trays_already() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(captures_table(&[("b2", "red")], 3, 1));
+            app.update();
+            app.update();
+            let held = in_trays(&mut app);
+            let names: Vec<(usize, &str)> = held
+                .iter()
+                .map(|(t, n, _)| (t.seat, n.split(' ').next().unwrap()))
+                .collect();
+            assert_eq!(
+                names,
+                [(0, "blue"), (0, "black"), (0, "blue"), (1, "red")],
+                "the other seat's colours by turns"
+            );
+            // Lying in them, not on their way.
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(), (With<InTray>, With<Carry>)>();
+            assert_eq!(q.iter(app.world()).count(), 0);
+        }
+
+        #[test]
+        fn a_game_that_counts_nothing_has_no_trays() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table());
+            app.update();
+            let mut trays = app.world_mut().query::<&Name>();
+            assert!(
+                !trays
+                    .iter(app.world())
+                    .any(|n| n.starts_with("Tray of seat"))
+            );
+        }
+
         #[test]
         fn a_stone_is_taken_from_its_bowl_waits_over_it_and_is_carried_to_its_cell() {
             use crate::net::api::{LegalSelection, PieceDef, Selections};
@@ -2712,6 +3132,7 @@ mod tests {
             actions: vec![],
             goals: vec![goal(1, "top", "bottom"), goal(2, "left", "right")],
             pieces: vec![],
+            counters: vec![],
         }
     }
 

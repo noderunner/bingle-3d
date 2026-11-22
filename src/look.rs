@@ -273,6 +273,16 @@ pub fn board() -> MaterialSpec {
     }
 }
 
+/// A tray for what a seat captures: pale maple, oiled.
+pub fn tray() -> MaterialSpec {
+    MaterialSpec {
+        wood: Some("maple".into()),
+        clearcoat: Some(0.3),
+        clearcoat_roughness: Some(0.25),
+        ..default()
+    }
+}
+
 /// The lines between the cells, cut into the board and darkened.
 pub fn groove() -> MaterialSpec {
     MaterialSpec {

@@ -256,6 +256,7 @@ fn frame_board(
     for mut orbit in &mut cameras {
         *orbit = start.0.unwrap_or(OrbitCamera {
             radius: OrbitCamera::radius_to_frame(board.size),
+            focus: Vec3::new(board.middle.x, 0.0, board.middle.y),
             ..default()
         });
     }
@@ -389,6 +390,7 @@ mod tests {
         let b = app.world_mut().spawn(turned).id();
         app.world_mut().write_message(BoardBuilt {
             size: Vec2::new(0.3, 0.2),
+            middle: Vec2::new(0.0, 0.04),
         });
         app.update();
         for e in [a, b] {
@@ -398,6 +400,8 @@ mod tests {
                 orbit.radius,
                 OrbitCamera::radius_to_frame(Vec2::new(0.3, 0.2))
             );
+            // Looking at the middle of what it frames: here a little nearer the player.
+            assert_eq!(orbit.focus, Vec3::new(0.0, 0.0, 0.04));
         }
     }
 
@@ -452,6 +456,7 @@ mod tests {
         let camera = app.world_mut().spawn(OrbitCamera::default()).id();
         app.world_mut().write_message(BoardBuilt {
             size: Vec2::new(0.3, 0.2),
+            middle: Vec2::ZERO,
         });
         app.update();
         assert_eq!(*app.world().get::<OrbitCamera>(camera).unwrap(), view);

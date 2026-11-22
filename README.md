@@ -166,7 +166,9 @@ walls and capstones, stacked as they are played; draughts wooden checkers; Break
 Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
 wood with a dark border, and red checkers for arrows. Blooms' stones are polished minerals (red
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden
-bowl beside the board: click a bowl to take a stone, then click where it goes. The client needs a Bingle whose API is 1.6 or newer.
+bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
+captures is carried to a small tray in front of them, with a square for every capture the win
+needs. The client needs a Bingle whose API is 1.6 or newer.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,

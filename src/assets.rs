@@ -54,6 +54,7 @@ files![
     "sounds/key.ogg",
     "sounds/thump.ogg",
     "sounds/tick.ogg",
+    "sounds/tock.ogg",
     "textures/cards/back_albedo.jpg",
     "textures/cards/faces/clubs_10_albedo.png",
     "textures/cards/faces/clubs_2_albedo.png",

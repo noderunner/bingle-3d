@@ -220,6 +220,12 @@ A game's own rules and its players' words keep their terms.
   outline; `places` and `width_at` have no Bevy in them. A click on a bowl makes its choice (a
   stone of its colour: `play::Choice`); the stone waits over the bowl and is carried to the cell
   it is placed on (`board::bowl_stones`).
+- `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
+  (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
+  position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which
+  pieces that left the board each seat's rising count took (the server does not say).
+  `board::fill_trays` carries them there (`hand::Route`: a wait, straight up, across, and a
+  sound of their own as they land).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
   `embedded://<path>`; a test checks the list against the folder. It also reads a model's
   height and its parts' names from the file's own JSON. `src/textures.rs`: mipmaps for
@@ -259,8 +265,8 @@ A game's own rules and its players' words keep their terms.
   it moves held over its space or carried to where it goes, and what it aims held under the
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
   then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
-- `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down, the move
-  sent, the game won or lost), the same for every game (`Cue::default_file`) unless its
+- `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down or
+  captured, the move sent, the game won or lost), the same for every game (`Cue::default_file`) unless its
   appearance gives others (`[sounds]`). `cues` and `ended`
   read them from the turn's and the table's changes, with no Bevy in them; a carried piece sounds as it lands (`hand.rs`). The files are synthesised
   by `assets-src/sounds/sounds.py` (Python's standard library and ffmpeg, on the host), never
