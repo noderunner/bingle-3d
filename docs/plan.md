@@ -483,7 +483,10 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   alone barely showed on teak.
 - A board's lines are as thick round the outside as between its cells: the darkened layer under
   the cells is grown by a cell's margin, since round the outside only one cell's margin made the
-  line (half as thick). A points board's thicker edge lines are a Go board's, on purpose.
+  line (half as thick). The cells stand only 0.3 mm proud of the lines, not 1.2 mm: the deeper
+  trenches between cells were darkened by shadow and ambient occlusion, so the lines round the
+  outside, walled on one side only, still looked thinner. A points board's thicker edge lines are
+  a Go board's, on purpose.
 - Sounds as a seat is played (`sounds.rs`), the same for every game by default (made for
   Amazons first, and the default for now); a game's appearance may give any of them another
   (`[sounds]`): a piece picked up, a piece set down (when a carried piece touches the board, or

@@ -80,7 +80,10 @@ pub const MAX_SIZE: f32 = 0.5;
 
 /// The slab's top, and the cells cut into it, standing a little proud of the lines between them.
 pub const BOARD_HEIGHT: f32 = 0.03;
-const CELL_HEIGHT: f32 = 0.0012;
+/// Only just proud: higher, each line between cells is a trench walled on both sides, which
+/// shadow and ambient occlusion darken, and those round the outside (walled on one side) look
+/// thinner than those inside.
+const CELL_HEIGHT: f32 = 0.0003;
 /// The top of the cells, where pieces stand.
 pub const SURFACE: f32 = BOARD_HEIGHT + CELL_HEIGHT;
 /// How much of a cell is left between the lines.
