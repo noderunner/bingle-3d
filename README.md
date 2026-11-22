@@ -167,8 +167,10 @@ the board at their right hand: click it to take a stone (the wheel turns it from
 standing), then click where it goes. A stack clicked is picked up whole; the wheel puts its
 stones back down one at a time, and each click then drops one where it goes. Fendo has pale
 and orange pawns, the ones each player has left in stock standing beside the board, and dark
-wooden fences on the squares' sides: click a pawn in stock to add one, or move a piece, then
-take a fence from the bowl both players share and click the side of the square it goes on.
+wooden fences on the squares' sides: click a pawn in stock to add one, or move a piece; the
+pointer then becomes a fence, which shows where it would go as it comes near a side of the
+piece's square (the wheel goes round them too), and a click puts it there. To build without
+moving, click the piece, then the bowl of fences both players share.
 Draughts wooden checkers; Breakthrough,
 Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
 wood with a dark border, and red checkers for arrows. Blooms' stones are polished minerals (red

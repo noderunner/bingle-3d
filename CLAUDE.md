@@ -231,9 +231,11 @@ A game's own rules and its players' words keep their terms.
 - `src/fences.rs`: the walls the view says stand between positions (`Position::walls`; Fendo's
   fences), drawn on the side two squares share; where one stands has no Bevy in it. A game whose
   look has `[fences]` has a bowl of them both seats take from (`play::TakeUp`: a click takes
-  one up, `Turn::take_up`, and it waits over the bowl while the sides it may go on are lit; a
-  click on one makes the choice that builds it there, and it is carried there:
-  `board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
+  one up, `Turn::take_up`; or it is taken up by itself once nothing else may follow,
+  `Turn::auto_take`). It is held under the pointer (`hand::Held`), the sides it may go on lit;
+  the side nearest the pointer, or turned to with the wheel, is aimed at (`play::SideAim`,
+  `board::fence_aim`: a see-through fence there), and a click on the board makes the choice
+  that builds it there, and it is carried there (`board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
   does not say.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the

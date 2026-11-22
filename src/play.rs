@@ -35,6 +35,7 @@ impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovering>()
             .init_resource::<WheelTaken>()
+            .init_resource::<SideAim>()
             .add_observer(on_click)
             .add_observer(on_over)
             .add_observer(on_out)
@@ -153,6 +154,9 @@ pub struct Turn {
     /// choices it may become, one of which that click makes. Not a gesture: nothing is chosen
     /// until it is put down.
     taken: Option<Vec<Gesture>>,
+    /// Choices that are taken up by themselves once they are all that may be chosen next (the
+    /// fences, once the piece has moved: the game's look's).
+    pub auto_take: Vec<Gesture>,
 }
 
 impl Turn {
@@ -169,6 +173,7 @@ impl Turn {
             may_end: false,
             problem: None,
             taken: None,
+            auto_take: Vec::new(),
         }
     }
 
@@ -328,8 +333,12 @@ impl Turn {
         Outcome::Changed
     }
 
-    /// Whether the wheel would change anything now (so the camera leaves it alone).
+    /// Whether the wheel would change anything now (so the camera leaves it alone): it also
+    /// goes through the places what is taken up may go (`SideAim`).
     pub fn wheel_changes(&self, pools: &HashMap<String, String>) -> bool {
+        if self.taken().is_some_and(|t| t.len() > 1) {
+            return true;
+        }
         [true, false]
             .iter()
             .any(|up| self.clone().wheel(*up, pools) != Outcome::Ignored)
@@ -367,6 +376,12 @@ impl Turn {
         matching
             .all(|o| o.gestures[i + 1..].iter().any(Gesture::is_pos))
             .then(|| &self.gestures[i])
+    }
+
+    /// The selections still possible that would place something (not move it) on `cell`.
+    pub fn could_place(&self, cell: &str) -> impl Iterator<Item = &LegalSelection> {
+        self.matching()
+            .filter(move |s| s.from.is_none() && s.to.as_deref() == Some(cell))
     }
 
     /// The selections made that place something (not move it): each says where, and by its
@@ -746,7 +761,27 @@ impl Turn {
         self.gestures.extend(path);
         self.take_forced();
         self.take_all();
-        self.settle()
+        let outcome = self.settle();
+        if outcome == Outcome::Changed {
+            self.take_if_only();
+        }
+        outcome
+    }
+
+    /// Takes up what `auto_take` names once nothing else may be chosen next: a fence, once the
+    /// piece it is built beside has moved.
+    fn take_if_only(&mut self) {
+        let n = self.gestures.len();
+        if self.taken.is_some() || self.auto_take.is_empty() || n <= self.forced {
+            return;
+        }
+        let only = {
+            let mut next = self.matching().map(|o| o.gestures.get(n)).peekable();
+            next.peek().is_some() && next.all(|g| g.is_some_and(|g| self.auto_take.contains(g)))
+        };
+        if only {
+            self.taken = Some(self.auto_take.clone());
+        }
     }
 
     /// A stack just picked up is picked up whole, as much of it as may be carried: every
@@ -828,6 +863,15 @@ pub struct Hovering(pub Option<String>);
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct Choice(pub Gesture);
 
+/// Which of the places what is taken up may go a click would put it (a side of a square, for
+/// a fence): the one nearest the pointer, or the one the wheel turned to. The board says.
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+pub struct SideAim {
+    pub choice: Option<Gesture>,
+    /// Turned to with the wheel: it stands until the pointer comes near another.
+    pub by_wheel: bool,
+}
+
 /// Something a click takes up to put down with a later click (a bowl of fences): one of these
 /// choices, which the later click makes.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -840,14 +884,34 @@ pub struct Spot(pub String);
 
 /// When this client's seat is on impulse, a turn begins and the server is asked what it may
 /// select; when it is not, there is no turn.
-pub(crate) fn start_turn(net: Res<Net>, mut watch: ResMut<WatchStatus>) {
+pub(crate) fn start_turn(
+    net: Res<Net>,
+    appearances: Option<Res<crate::appearance::Appearances>>,
+    mut watch: ResMut<WatchStatus>,
+) {
     let seq = watch.table.as_ref().map(|t| t.state.move_seq);
     let ours = watch.table.as_ref().is_some_and(|t| t.to_play());
     match (&watch.turn, ours) {
         (Some(_), false) => watch.turn = None,
         (Some(turn), true) if Some(turn.asked_at) == seq => {}
         (_, true) => {
-            watch.turn = Some(Turn::new(seq.unwrap_or_default()));
+            let mut turn = Turn::new(seq.unwrap_or_default());
+            // The fences of a game whose look has them are taken up by themselves.
+            turn.auto_take = watch
+                .table
+                .as_ref()
+                .and_then(|t| appearances.as_ref()?.for_game(&t.info.id)?.fences.as_ref())
+                .map(|f| {
+                    f.sides
+                        .keys()
+                        .map(|id| Gesture {
+                            kind: "action".into(),
+                            value: id.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            watch.turn = Some(turn);
             net::ask(&net, &watch);
         }
         (None, false) => {}
@@ -909,7 +973,7 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 fn on_click(
     click: On<PointerClick>,
     (spots, choices, takes): (Query<&Spot>, Query<&Choice>, Query<&TakeUp>),
-    net: Res<Net>,
+    (net, aim): (Res<Net>, Res<SideAim>),
     mut watch: ResMut<WatchStatus>,
 ) {
     if click.button != PointerButton::Primary {
@@ -918,7 +982,12 @@ fn on_click(
     // Clicks bubble up to the board; only the cell or piece itself is a position. A bowl's
     // choice is the bowl's, whether the bowl or the stones in it were clicked.
     if let Ok(spot) = spots.get(click.entity) {
-        gesture(&net, &mut watch, &Gesture::pos(&spot.0));
+        // With something taken up, a click on the board puts it where it is aimed.
+        let taken = watch.turn.as_ref().is_some_and(|t| t.taken().is_some());
+        match (&aim.choice, taken) {
+            (Some(choice), true) => gesture(&net, &mut watch, &choice.clone()),
+            _ => gesture(&net, &mut watch, &Gesture::pos(&spot.0)),
+        }
     } else if let Ok(choice) = choices.get(click.entity) {
         gesture(&net, &mut watch, &choice.0);
     } else if let Ok(take) = takes.get(click.entity)
@@ -1027,7 +1096,7 @@ fn wheel(
     pointer: PointerOverUi,
     menu: Option<Res<EscapeMenu>>,
     mut notches: Local<f32>,
-    mut watch: ResMut<WatchStatus>,
+    (mut watch, mut aim): (ResMut<WatchStatus>, ResMut<SideAim>),
 ) {
     if !taken.0 || pointer.is_over_ui() || !escape_menu::closed(menu.as_deref()) {
         *notches = 0.0;
@@ -1044,6 +1113,23 @@ fn wheel(
         let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
             return;
         };
+        // What is taken up: on to the next place it may go.
+        if let Some(places) = turn.taken() {
+            let at = aim
+                .choice
+                .as_ref()
+                .and_then(|c| places.iter().position(|p| *p == c));
+            let next = match (at, up) {
+                (None, _) => 0,
+                (Some(i), true) => (i + 1) % places.len(),
+                (Some(i), false) => (i + places.len() - 1) % places.len(),
+            };
+            *aim = SideAim {
+                choice: Some(places[next].clone()),
+                by_wheel: true,
+            };
+            continue;
+        }
         if turn.wheel(up, &pools) != Outcome::Ignored {
             watch.set_changed();
         }
@@ -1336,6 +1422,36 @@ mod tests {
         assert_eq!(t.gesture(&g("action", "fence-w")), Outcome::Ask);
         assert!(t.taken().is_none());
         assert_eq!(t.made[0].gestures.last(), Some(&g("action", "fence-w")));
+    }
+
+    #[test]
+    fn a_fence_is_taken_up_by_itself_once_the_piece_has_moved() {
+        let mut t = Turn::new(1);
+        t.auto_take = sides();
+        t.answered(answer(2, fendo()));
+        // Picked up, the piece may still move or stay: nothing taken yet.
+        t.gesture(&g("pos", "d1"));
+        assert!(t.taken().is_none());
+        // Moved: only a fence may follow, so it is in hand, and the wheel goes round its sides.
+        t.gesture(&g("pos", "d3"));
+        let taken: Vec<&str> = t
+            .taken()
+            .unwrap()
+            .iter()
+            .map(|g| g.value.as_str())
+            .collect();
+        assert_eq!(taken, ["fence-e", "fence-w"]);
+        assert!(t.wheel_changes(&HashMap::new()));
+        // Back puts it back; it is taken up again from the bowl.
+        t.back();
+        assert!(t.taken().is_none());
+        assert_eq!(t.take_up(&sides()), Outcome::Changed);
+        // A game whose look has none takes nothing up by itself.
+        let mut t = Turn::new(1);
+        t.answered(answer(2, fendo()));
+        t.gesture(&g("pos", "d1"));
+        t.gesture(&g("pos", "d3"));
+        assert!(t.taken().is_none());
     }
 
     #[test]

@@ -519,9 +519,16 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   as Tak's stones do, counted by the view's `stock` counter (`[supply]`: the reserves do not
   say), and a click on the player's own takes one (the `add` choice), which waits over its
   place; a click on a square, or a square clicked at once, adds it there. The fences never run
-  out, so they are heaped in one bowl, at the first seat's left hand, that both players take
-  from: once the piece has moved (or been picked up, to stay), a click on the bowl takes a fence
-  up, the sides of the piece's square it may go on are lit, and a click on one carries it there.
+  out, so they are heaped in one bowl that both players take from, beside the middle of the
+  board's side (beyond the other seat's pawns there), where it reads as shared. Once the piece
+  has moved, the fence is taken up by itself (`auto_take`: once nothing but a fence may follow)
+  and held under the pointer in place of its arrow, as Amazons' arrow is; to leave the piece
+  where it stands, it is picked up and the bowl clicked. The sides of the piece's square the
+  fence may go on are lit; the one the pointer comes near shows a see-through fence (in place of
+  its light), and a click anywhere on the board puts it there, carried and set down. The wheel
+  goes round the sides as well (`play::SideAim`), the camera leaving it alone. Nothing is shown
+  under the pointer over an empty square before a pawn is taken: a stone there misled (the
+  selection does not say what it adds); with a pawn in hand, a see-through pawn.
   Which action builds on which side is the look's (`[fences] sides`: the API names the actions
   but not their sides). The panel's fence buttons still work.
 - A board's lines are as thick round the outside as between its cells: the darkened layer under

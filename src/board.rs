@@ -38,11 +38,11 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest, Route};
+use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
-use crate::play::{Choice, Hovering, Spot, Stage, TakeUp, Turn};
+use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -70,12 +70,14 @@ impl Plugin for BoardPlugin {
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
+                    fence_aim,
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
                     .chain(),
             )
             .init_resource::<BoardWood>()
+            .init_resource::<SideAim>()
             .init_resource::<ShowLegalMoves>();
     }
 }
@@ -432,6 +434,24 @@ struct FenceKit {
     side_lit: Handle<StandardMaterial>,
 }
 
+impl FenceKit {
+    /// How high a fence held under the pointer is over the board: lifted, its foot clear.
+    fn held(&self, kit: &Kit) -> Held {
+        Held {
+            board: kit.surface,
+            lift: (LIFT - self.foot) * kit.scale,
+            scale: kit.scale,
+        }
+    }
+}
+
+/// The space between the bowl of fences and what stands beside the board.
+const FENCE_BOWL_GAP: f32 = 0.025;
+
+/// A see-through fence on the side a click would put the one taken on.
+#[derive(Component)]
+struct FenceGhost;
+
 /// A wall the position has, drawn as a fence, by its name (`fences::key`).
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct WallAt(String);
@@ -441,9 +461,9 @@ struct WallAt(String);
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct HeldFence(Option<String>);
 
-/// A side of a square a click would put the fence taken on.
+/// A side of a square a click would put the fence taken on, by the choice that builds there.
 #[derive(Component)]
-struct SideTarget;
+struct SideTarget(String);
 
 /// One pool of a seat's supply: its id, the kind of piece a click on it takes, where each of
 /// its pieces stands, and how high they stand.
@@ -1467,6 +1487,8 @@ fn build_board(
     // Each seat's supply beside the board, for a game whose seats keep pieces to place.
     let mut supply: HashMap<String, Vec<SupplyPool>> = HashMap::new();
     let mut beside = 0.0f32;
+    // How far to the first seat's left the supply reaches (the other seat's line, at its right).
+    let mut left = edge.iter().fold(0.0f32, |l, p| l.max(-p.x));
     let mut kinds: Vec<(crate::supply::Pool, Option<String>, Gesture)> =
         crate::supply::pools(&table.info)
             .into_iter()
@@ -1540,6 +1562,9 @@ fn build_board(
             {
                 for t in &slots {
                     beside = beside.max(t.translation.x.abs() + stance.out);
+                    if t.translation.x < 0.0 {
+                        left = left.max(-t.translation.x + stance.out / 2.0);
+                    }
                 }
                 supply
                     .entry(seat.color.clone())
@@ -1579,7 +1604,9 @@ fn build_board(
         let (wood, bowl_wood) = (spec(&said.material), spec(&said.bowl_material));
         let (fence_material, bowl_material) = (tools.material(&wood), tools.material(&bowl_wood));
         let radius = crate::bowls::BOWL_RADIUS * size;
-        let at = crate::bowls::places(&[2], &edge, radius)[0][0].0;
+        // Shared: beside the middle of the board's side to the first seat's left, beyond any
+        // supply there.
+        let at = Vec2::new(-(left + FENCE_BOWL_GAP + radius), 0.0);
         beside = beside.max(at.x.abs() + radius);
         let choices: Vec<Gesture> = said
             .sides
@@ -1610,6 +1637,18 @@ fn build_board(
             emissive: LinearRgba::rgb(0.9, 0.55, 0.12),
             ..default()
         });
+        let mut ghost = wood.on_board(tools.wood).build(tools.server);
+        ghost.base_color = ghost.base_color.with_alpha(0.6);
+        ghost.alpha_mode = AlphaMode::Blend;
+        commands.spawn((
+            Name::new("Fence aimed"),
+            FenceGhost,
+            Mesh3d(load(&said.model)),
+            MeshMaterial3d(tools.materials.add(ghost)),
+            Transform::default(),
+            Visibility::Hidden,
+            ChildOf(root),
+        ));
         FenceKit {
             mesh: load(&said.model),
             material: fence_material,
@@ -1988,7 +2027,7 @@ fn show_turn(
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
     mut pieces: Query<(Entity, &PieceAt, &mut Spot, Option<&Carry>)>,
-    held: Query<Entity, With<Held>>,
+    held: Query<Entity, (With<Held>, Without<HeldFence>)>,
 ) {
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
@@ -2182,8 +2221,18 @@ fn show_turn(
         Stage::Choosing | Stage::Failed => Vec::new(),
     };
     // Under the pointer too, where a click would put something (not where it would pick one up).
+    // Not before anything is in hand, where what would go there comes from a bowl or the
+    // supply: it is shown once it is taken.
+    let in_hand = turn
+        .in_hand_choice()
+        .and_then(|g| kit.source_for(g, colour))
+        .map(|(_, piece)| piece);
     if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
         && turn.arriving(cell).is_some()
+        && (in_hand.is_some()
+            || !turn
+                .could_place(cell)
+                .any(|s| kit.source_of_placing(s, colour).is_some()))
     {
         shown.push(cell);
     }
@@ -2207,6 +2256,8 @@ fn show_turn(
             coming
                 .piece
                 .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
+                // What is in hand, when the selections do not say (Fendo's pawn, added).
+                .or(in_hand.as_deref())
         }
         .unwrap_or_default();
         let stack = after.get(cell).map_or(&[][..], Vec::as_slice);
@@ -2548,10 +2599,14 @@ fn show_fences(
     for (entity, h) in &held {
         match (&chosen, &h.0) {
             (Some((key, _)), Some(k)) if k == key => kept = true,
+            // Put down: from under the pointer, carried to the side chosen.
             (Some((key, to)), None) if !kept => {
-                commands
-                    .entity(entity)
-                    .insert((HeldFence(Some(key.clone())), Carry::Put(*to)));
+                commands.entity(entity).remove::<Held>().insert((
+                    HeldFence(Some(key.clone())),
+                    Rest(*to),
+                    Carry::Put(*to),
+                    Visibility::Inherited,
+                ));
                 kept = true;
             }
             (None, None) if taken.is_some() && !kept => kept = true,
@@ -2563,28 +2618,34 @@ fn show_fences(
     let waiting = Transform::from_translation(fence.over + Vec3::Y * 0.012 * kit.scale)
         .with_scale(Vec3::splat(kit.scale));
     if !kept {
-        let spawn = |commands: &mut Commands, key: Option<String>, carry: Carry| {
-            commands.spawn((
-                Name::new("Fence in hand"),
-                HeldFence(key),
-                Mesh3d(fence.mesh.clone()),
-                MeshMaterial3d(fence.material.clone()),
-                waiting,
-                Rest(waiting),
-                carry,
-                ChildOf(root),
-            ));
-        };
+        let looks = (
+            Mesh3d(fence.mesh.clone()),
+            MeshMaterial3d(fence.material.clone()),
+            ChildOf(root),
+        );
         match (&chosen, &taken) {
-            (Some((key, to)), _) => spawn(&mut commands, Some(key.clone()), Carry::Put(*to)),
-            (None, Some(_)) => spawn(
-                &mut commands,
-                None,
-                Carry::Held {
-                    lift: LIFT * kit.scale,
-                    scale: kit.scale,
-                },
-            ),
+            // Chosen with nothing in hand (the panel's button): from the bowl.
+            (Some((key, to)), _) => {
+                commands.spawn((
+                    Name::new("Fence put down"),
+                    HeldFence(Some(key.clone())),
+                    looks,
+                    waiting,
+                    Rest(waiting),
+                    Carry::Put(*to),
+                ));
+            }
+            // Taken: under the pointer, in place of its arrow, as an aimed piece is.
+            (None, Some(_)) => {
+                commands.spawn((
+                    Name::new("Fence in hand"),
+                    HeldFence(None),
+                    looks,
+                    fence.held(kit),
+                    Transform::from_scale(Vec3::splat(kit.scale)),
+                    Visibility::Hidden,
+                ));
+            }
             _ => {}
         }
     }
@@ -2603,13 +2664,11 @@ fn show_fences(
             };
             commands.spawn((
                 Name::new(format!("Side for {}", choice.value)),
-                SideTarget,
+                SideTarget(choice.value.clone()),
                 Mesh3d(fence.side_mesh.clone()),
                 MeshMaterial3d(fence.side_lit.clone()),
                 Transform::from_translation(at.translation.with_y(kit.surface + 0.0004))
                     .with_rotation(at.rotation),
-                Pickable::default(),
-                Choice((*choice).clone()),
                 ChildOf(root),
             ));
         }
@@ -2656,6 +2715,114 @@ fn show_fences(
                     to: at.translation.y,
                 },
             ));
+        }
+    }
+}
+
+/// The fence under the pointer, not the one aimed.
+type InHandFence = (With<HeldFence>, With<Held>, Without<FenceGhost>);
+
+/// How near a side the pointer must come for the fence taken to be aimed at it, against the
+/// distance between neighbours.
+const AIM_REACH: f32 = 0.7;
+
+/// While a fence is taken up: which side it would go on (`play::SideAim`) — the one the
+/// pointer is nearest, when it is near one, or the one the wheel turned to — shown by a
+/// see-through fence there, and the fence under the pointer turned to lie as it would.
+fn fence_aim(
+    watch: Res<WatchStatus>,
+    roots: Query<&Kit, With<BoardRoot>>,
+    pointer: Res<PointerOnBoard>,
+    mut aim: ResMut<SideAim>,
+    mut ghosts: Query<(&mut Transform, &mut Visibility), With<FenceGhost>>,
+    mut held: Query<&mut Transform, InHandFence>,
+    mut sides: Query<(&SideTarget, &mut Visibility), Without<FenceGhost>>,
+) {
+    let places: Vec<(Gesture, Transform)> = (|| {
+        let table = watch.table.as_ref()?;
+        let turn = watch.turn.as_ref()?;
+        let kit = roots.single().ok()?;
+        let taken = turn.taken()?;
+        let cell = turn.gestures.iter().rev().find(|g| g.is_pos())?;
+        let layout = Layout::new(&table.info.board.positions);
+        Some(
+            taken
+                .into_iter()
+                .filter_map(|g| Some((g.clone(), kit.fence_on(&layout, &cell.value, &g.value)?.1)))
+                .collect(),
+        )
+    })()
+    .unwrap_or_default();
+    if places.is_empty() {
+        if *aim != SideAim::default() {
+            *aim = SideAim::default();
+        }
+        for (_, mut vis) in &mut ghosts {
+            vis.set_if_neq(Visibility::Hidden);
+        }
+        return;
+    }
+    let kit = roots.single().expect("a board");
+    // The pointer near a side aims at it; away from them all, it leaves what the wheel chose.
+    if pointer.is_changed()
+        && let Some((hit, eye)) = pointer.0
+    {
+        let at = crate::hand::on_surface(hit, eye, kit.surface);
+        let reach = AIM_REACH * PITCH * kit.scale;
+        let nearest = places
+            .iter()
+            .map(|(g, t)| (g, t.translation.xz().distance(at.xz())))
+            .filter(|(_, d)| *d < reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(g, _)| g.clone());
+        match nearest {
+            Some(g) => {
+                let wanted = SideAim {
+                    choice: Some(g),
+                    by_wheel: false,
+                };
+                if *aim != wanted {
+                    *aim = wanted;
+                }
+            }
+            None if !aim.by_wheel && aim.choice.is_some() => *aim = SideAim::default(),
+            None => {}
+        }
+    }
+    let aimed = aim
+        .choice
+        .as_ref()
+        .and_then(|c| places.iter().find(|(g, _)| g == c));
+    if aimed.is_none() && aim.choice.is_some() {
+        *aim = SideAim::default();
+    }
+    for (mut t, mut vis) in &mut ghosts {
+        match aimed {
+            Some((_, at)) => {
+                if *t != *at {
+                    *t = *at;
+                }
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+    // The side aimed at shows the fence, not its light.
+    for (side, mut vis) in &mut sides {
+        let here = aimed.is_some_and(|(g, _)| g.value == side.0);
+        vis.set_if_neq(if here {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+    }
+    if let Some((_, at)) = aimed {
+        for mut t in &mut held {
+            if t.rotation != at.rotation {
+                t.rotation = at.rotation;
+            }
         }
     }
 }
@@ -3880,6 +4047,54 @@ mod tests {
             let between = (layout.centres["a1"] + layout.centres["b1"]) / 2.0;
             assert!(at.translation.xz().distance(between.xz()) < 1e-5);
 
+            // Over an empty square before a pawn is taken: nothing shown; with one in hand, a
+            // see-through pawn, not the generic stone.
+            let adds = vec![
+                option(&[("action", "add"), ("pos", "a3")], None),
+                option(&[("action", "add"), ("pos", "c3")], None),
+            ];
+            let mut adds: Vec<_> = adds
+                .into_iter()
+                .map(|mut o| {
+                    o.to = Some(o.gestures[1].value.clone());
+                    o
+                })
+                .collect();
+            // And the piece's own move, so adding is a choice, not one made for the player.
+            adds.push(option(&[("pos", "b2"), ("action", "fence-n")], Some("b2")));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(tak_turn(adds));
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a3".into());
+            app.update();
+            let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(q.iter(app.world()).count(), 0, "no stone under the pointer");
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "action".into(),
+                value: "add".into(),
+            });
+            app.update();
+            let pawn = assets::path("models/chess/pawn.glb");
+            let mut q = app.world_mut().query_filtered::<&Mesh3d, With<Ghost>>();
+            let ghost = q.single(app.world()).unwrap().0.clone();
+            let server = app.world().resource::<AssetServer>();
+            assert_eq!(
+                server.get_path(ghost.id()).map(|p| p.path().to_path_buf()),
+                server
+                    .get_path(
+                        server
+                            .load::<Mesh>(
+                                GltfAssetLabel::Primitive {
+                                    mesh: 0,
+                                    primitive: 0
+                                }
+                                .from_asset(pawn)
+                            )
+                            .id()
+                    )
+                    .map(|p| p.path().to_path_buf())
+            );
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+
             // The piece on b2 stays, a fence taken: it waits, the sides it may go on lit.
             let options = vec![
                 option(&[("pos", "b2"), ("action", "fence-n")], Some("b2")),
@@ -3891,16 +4106,42 @@ mod tests {
             turn.gesture(&Gesture::pos("b2"));
             turn.take_up(&sides);
             app.update();
-            let mut q = app.world_mut().query::<(&HeldFence, &Carry)>();
-            let (held, carry) = q.single(app.world()).unwrap();
-            assert_eq!(held.0, None);
-            assert!(matches!(carry, Carry::Held { .. }));
-            let mut q = app
-                .world_mut()
-                .query_filtered::<&Choice, With<SideTarget>>();
-            let mut lit: Vec<String> = q.iter(app.world()).map(|c| c.0.value.clone()).collect();
+            // Under the pointer, as an aimed piece is.
+            let mut q = app.world_mut().query_filtered::<&HeldFence, With<Held>>();
+            assert_eq!(q.single(app.world()).unwrap().0, None);
+            let mut q = app.world_mut().query_filtered::<&Name, With<SideTarget>>();
+            let mut lit: Vec<String> = q
+                .iter(app.world())
+                .map(|n| n.as_str().trim_start_matches("Side for ").to_string())
+                .collect();
             lit.sort();
             assert_eq!(lit, ["fence-e", "fence-n"]);
+            // The pointer near b2's east side aims there: a see-through fence on it.
+            let layout_now = layout.clone();
+            let east = (layout_now.centres["b2"] + layout_now.centres["c2"]) / 2.0;
+            let surface = Vec3::Y * SURFACE;
+            app.world_mut().resource_mut::<PointerOnBoard>().0 =
+                Some((east + surface, east + surface + Vec3::Y));
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<SideAim>()
+                    .choice
+                    .as_ref()
+                    .map(|c| c.value.as_str()),
+                Some("fence-e")
+            );
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(&Transform, &Visibility), With<FenceGhost>>();
+            let (ghost, shown) = q.single(app.world()).unwrap();
+            assert_eq!(*shown, Visibility::Inherited);
+            assert!(ghost.translation.xz().distance(east.xz()) < 1e-5);
+            // Far from every side: aimed nowhere.
+            let far = layout_now.centres["a3"] + surface;
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((far, far + Vec3::Y));
+            app.update();
+            assert_eq!(app.world().resource::<SideAim>().choice, None);
             // Put on the east side: carried to the side b2 shares with c2.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             watch.turn.as_mut().unwrap().gesture(&Gesture {
