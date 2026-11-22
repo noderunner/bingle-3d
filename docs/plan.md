@@ -496,6 +496,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   has a counter with a count wanted gets them, with no look of its own; `[trays]` may give a
   material and a size. The camera frames the board with the player's tray in front of it. No
   number is shown: the squares are the score.
+- A board's lines are as thick round the outside as between its cells: the darkened layer under
+  the cells is grown by a cell's margin, since round the outside only one cell's margin made the
+  line (half as thick). A points board's thicker edge lines are a Go board's, on purpose.
 - Sounds as a seat is played (`sounds.rs`), the same for every game by default (made for
   Amazons first, and the default for now); a game's appearance may give any of them another
   (`[sounds]`): a piece picked up, a piece set down (when a carried piece touches the board, or

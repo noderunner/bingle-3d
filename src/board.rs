@@ -87,6 +87,10 @@ const CELL_HEIGHT: f32 = 0.0012;
 pub const SURFACE: f32 = BOARD_HEIGHT + CELL_HEIGHT;
 /// How much of a cell is left between the lines.
 const CELL_SCALE: f32 = 0.955;
+/// The darkened cells under the cells, against the pitch. Between two cells the line is both
+/// cells' margins; round the outside it would be one cell's alone, half as thick, so each is
+/// grown by a margin more (they overlap between cells, unseen).
+const LINE_SCALE: f32 = 2.0 - CELL_SCALE;
 /// The wood round the cells, as a share of the pitch (room for the coordinates), and how round
 /// the slab's top edge is.
 const MARGIN: f32 = 0.85;
@@ -1023,11 +1027,13 @@ fn build_board(
     let lines = tools.material(&look::groove());
     match surface {
         Surface::Cells(_) => {
-            // The lines between the cells: the whole of each cell, darkened, under the cells.
+            // The lines between the cells: each cell, darkened, under the cells, and grown so the
+            // lines round the outside are as thick as those between cells.
+            let line_corners = slab::cell_corners(shape, pitch * LINE_SCALE);
             commands.spawn((
                 Name::new("Lines"),
                 Mesh3d(tools.meshes.add(look::world_uvs(
-                    slab::flat_cells(&centres, &corners, BOARD_HEIGHT + 0.0001),
+                    slab::flat_cells(&centres, &line_corners, BOARD_HEIGHT + 0.0001),
                     Vec3::ZERO,
                 ))),
                 MeshMaterial3d(lines),
@@ -3303,6 +3309,29 @@ mod tests {
         assert_eq!(CellShape::of(&board("grid")), CellShape::Square);
         assert_eq!(CellShape::of(&board("explicit")), CellShape::Spot);
         assert_eq!(CellShape::of(&board("something-new")), CellShape::Spot);
+    }
+
+    #[test]
+    fn the_lines_round_the_outside_are_as_thick_as_those_between_cells() {
+        let pitch = PITCH;
+        for shape in [CellShape::Square, CellShape::Hexagon] {
+            // How far a cell's corners reach from its middle along x, at a scale.
+            let reach = |scale: f32| {
+                slab::cell_corners(shape, pitch * scale)
+                    .iter()
+                    .fold(0.0f32, |m, c| m.max(c.x))
+            };
+            // Across a flat side, along x for both (a hexagon's points are to the far and near
+            // sides): neighbours there are a pitch apart.
+            assert!((reach(1.0) - pitch / 2.0).abs() < 1e-7);
+            let between = pitch - 2.0 * reach(CELL_SCALE);
+            let outside = reach(LINE_SCALE) - reach(CELL_SCALE);
+            assert!(
+                (between - outside).abs() < 1e-7,
+                "{shape:?}: {between} {outside}"
+            );
+            assert!(between > 0.0);
+        }
     }
 
     #[test]
