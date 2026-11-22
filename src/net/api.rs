@@ -1011,6 +1011,18 @@ impl Position {
             .map(|n| n.min(u32::MAX as u64) as u32)
     }
 
+    /// What the view says the seat on impulse is asked to choose, in words ("Choose a Court."):
+    /// its `impulse`, else its `prompt` (the same, with the seat's name), as Bingle's page shows
+    /// it. Any game whose rules are written in Go may say; others do not.
+    pub fn impulse_words(&self) -> Option<&str> {
+        let view = &self.ext["view"];
+        ["impulse", "prompt"]
+            .into_iter()
+            .filter_map(|key| view[key].as_str())
+            .map(str::trim)
+            .find(|words| !words.is_empty())
+    }
+
     /// The positions the view tints, each with the key of the game's legend it is tinted by
     /// (Courtfall's terrain).
     pub fn tints(&self) -> BTreeMap<String, String> {
@@ -1233,6 +1245,23 @@ mod tests {
         assert_eq!(Version::parse("1.2"), None);
         assert_eq!(Version::parse("1.2.3.4"), None);
         assert_eq!(Version::parse("v1.2.3"), None);
+    }
+
+    #[test]
+    fn a_view_says_in_words_what_the_seat_on_impulse_is_asked() {
+        let read = |json: &str| serde_json::from_str::<Position>(json).unwrap();
+        let both = read(
+            r#"{"cells":{},"ext":{"view":{"prompt":"Dark: Choose a Court.","impulse":"Choose a Court."}}}"#,
+        );
+        assert_eq!(both.impulse_words(), Some("Choose a Court."));
+        let prompt =
+            read(r#"{"cells":{},"ext":{"view":{"prompt":"Dark: Choose a Court.","impulse":" "}}}"#);
+        assert_eq!(prompt.impulse_words(), Some("Dark: Choose a Court."));
+        assert_eq!(read(r#"{"cells":{}}"#).impulse_words(), None);
+        assert_eq!(
+            read(r#"{"cells":{},"ext":{"view":{"impulse":3}}}"#).impulse_words(),
+            None
+        );
     }
 
     #[test]

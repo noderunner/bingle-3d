@@ -259,6 +259,18 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
         table.summary()
     };
     p.spawn(line(f.semibold(15.0), colour, &summary));
+    // What the seat on impulse is asked, as the server words it, for everyone watching; the
+    // player's own is the hint under their move (`your_turn`).
+    if let Some(words) = asked(table) {
+        p.spawn(line(f.regular(14.0), colours::TEXT, words));
+    }
+}
+
+/// What the server says the seat on impulse is asked, while the game waits on someone who is
+/// not this client.
+fn asked(table: &Table) -> Option<&str> {
+    let waiting = !table.finished() && table.state.status == "active" && !table.to_play();
+    waiting.then(|| table.state.state.impulse_words()).flatten()
 }
 
 /// While a game this client is in waits for players: how somebody else joins it.
@@ -311,21 +323,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     if let Some(problem) = &turn.problem {
         p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
     }
-    let hint = match turn.stage {
-        Stage::Asking => String::new(),
-        Stage::Choosing if turn.can_play() => {
-            format!("Play {} as it is (Enter), or go on.", turn.notation())
-        }
-        Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
-        Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
-        Stage::Choosing => "There is nothing to play.".into(),
-        Stage::Ready => format!(
-            "Play {}? Enter plays it; a right-click or Backspace takes it back.",
-            turn.notation()
-        ),
-        Stage::Sending => format!("Playing {}…", turn.notation()),
-        Stage::Failed => "The server could not say what may be played.".into(),
-    };
+    let hint = hint(turn, table.state.state.impulse_words());
     if !hint.is_empty() {
         p.spawn(line(f.regular(14.0), colours::TEXT, &hint));
     }
@@ -352,6 +350,29 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
             row.spawn(button(f, "Try again", Action::AskAgain));
         }
     });
+}
+
+/// What the player is told of their move: before they have chosen anything, what the server
+/// says they are asked (`said`), if it says; after that, or without it, how to go on from here.
+fn hint(turn: &Turn, said: Option<&str>) -> String {
+    match turn.stage {
+        Stage::Asking => String::new(),
+        Stage::Choosing if !turn.can_go_back() && said.is_some() => {
+            said.unwrap_or_default().to_string()
+        }
+        Stage::Choosing if turn.can_play() => {
+            format!("Play {} as it is (Enter), or go on.", turn.notation())
+        }
+        Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
+        Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
+        Stage::Choosing => "There is nothing to play.".into(),
+        Stage::Ready => format!(
+            "Play {}? Enter plays it; a right-click or Backspace takes it back.",
+            turn.notation()
+        ),
+        Stage::Sending => format!("Playing {}…", turn.notation()),
+        Stage::Failed => "The server could not say what may be played.".into(),
+    }
 }
 
 /// What a button for a choice says: an action by the label the rules give it, anything else by
@@ -408,6 +429,52 @@ mod tests {
         assert_eq!(choice_label(&info, &g("action", "pass")), "Pass");
         assert_eq!(choice_label(&info, &g("piece", "stone")), "Stone");
         assert_eq!(choice_label(&info, &g("count", "3")), "3");
+    }
+
+    #[test]
+    fn the_player_is_told_what_the_server_asks_until_they_choose_something() {
+        use crate::net::api::{LegalSelection, Selections};
+        let option = |hex: &str, tile: &str| LegalSelection {
+            notation: format!("tile:{tile}@{hex}"),
+            action: "tile".into(),
+            to: Some(hex.into()),
+            from: None,
+            piece: Some(tile.into()),
+            aim: None,
+            gestures: vec![
+                Gesture::pos(hex),
+                Gesture {
+                    kind: "action".into(),
+                    value: format!("tile-{tile}"),
+                },
+            ],
+        };
+        let mut turn = Turn::new(1);
+        let asking = hint(&turn, Some("Choose a Court."));
+        assert_eq!(
+            asking, "",
+            "nothing while the server is asked what may be played"
+        );
+        turn.answered(Selections {
+            seat: 1,
+            ply: 0,
+            made: vec![],
+            options: vec![
+                option("b3", "green"),
+                option("b3", "red"),
+                option("c3", "green"),
+            ],
+            complete: false,
+            may_end: false,
+        });
+        let said = Some("Choose where to lay a tile.");
+        assert_eq!(hint(&turn, said), "Choose where to lay a tile.");
+        // A game that says nothing gets the generic words.
+        assert_eq!(hint(&turn, None), "Click where to play.");
+        // Once the player has chosen something, how to go on from there: the server's words were
+        // for the position, not for the half-made move.
+        turn.gesture(&Gesture::pos("b3"));
+        assert_eq!(hint(&turn, said), "Choose below.");
     }
 
     #[test]
