@@ -66,6 +66,9 @@ pub struct SoundLook {
     pub put: Option<String>,
     /// The move sent.
     pub play: Option<String>,
+    /// The game over, the player having won, or lost.
+    pub win: Option<String>,
+    pub lose: Option<String>,
 }
 
 /// The bowls the seats keep their stones in (`bowls.rs`).
@@ -225,9 +228,16 @@ impl Appearance {
                 out.push(format!("board: no material {name}"));
             }
         }
-        for file in [&self.sounds.lift, &self.sounds.put, &self.sounds.play]
-            .into_iter()
-            .flatten()
+        let sounds = &self.sounds;
+        for file in [
+            &sounds.lift,
+            &sounds.put,
+            &sounds.play,
+            &sounds.win,
+            &sounds.lose,
+        ]
+        .into_iter()
+        .flatten()
         {
             if !assets::exists(file) {
                 out.push(format!("sounds: no file {file}"));
@@ -440,6 +450,7 @@ mod tests {
         // And may make sounds as it is played.
         assert!(look.sounds.lift.is_some() && look.sounds.put.is_some());
         assert!(look.sounds.play.is_some());
+        assert!(look.sounds.win.is_some() && look.sounds.lose.is_some());
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
     }
 

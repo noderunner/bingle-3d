@@ -94,8 +94,8 @@ stone is shown there; click it again, press Enter or choose *Play* to play it, o
 or press Backspace (or *Back*) to take it back, one click at a time. A piece that moves is
 picked up with a click and hovers over its space, the places it may go lit; a click on one
 carries it there and sets it down. In Amazons the arrow is then held under the pointer, and
-picking up, setting down and playing each make a sound of wood (none with
-`--no-audio-devices`). A choice that is not a cell, such as
+picking up, setting down and playing each make a sound, and a crowd cheers when you win and
+groans when you lose (none with `--no-audio-devices`). A choice that is not a cell, such as
 swapping sides in Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
 again.

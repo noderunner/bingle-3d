@@ -256,8 +256,8 @@ A game's own rules and its players' words keep their terms.
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
   then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
 - `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down, the move
-  sent), for a game whose appearance has `[sounds]`. `cues` reads them from the turn's changes,
-  with no Bevy in it; a carried piece sounds as it lands (`hand.rs`). The files are synthesised
+  sent, the game won or lost), for a game whose appearance has `[sounds]`. `cues` and `ended`
+  read them from the turn's and the table's changes, with no Bevy in them; a carried piece sounds as it lands (`hand.rs`). The files are synthesised
   by `assets-src/sounds/sounds.py` (Python's standard library and ffmpeg, on the host), never
   recorded. `--no-audio-devices` leaves Bevy's audio out, so no speaker is opened.
 - `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by

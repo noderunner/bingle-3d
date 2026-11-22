@@ -472,7 +472,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   placed or an arrow shot), and the move sent. Amazons': a light tap of wood, a soft thump with a
   quick decay (a die dropped on felt; a ringing clack of wood on wood was too much), and a soft
   key press on a well-lubricated mechanical keyboard as the move is sent (two marimba notes were
-  too much). Only the player's own; the opponent's moves are silent for now.
+  too much). The game's end, for the player's own seat, as it happens (not a game opened over):
+  a crowd's short cheer as it is won, with applause, or a groan as it is lost (a loss with every
+  seat too); a draw is silent. The crowd is synthesised as the rest are: a score of voices of
+  their own pitch and start, each a glottal buzz through a vowel's three formants, gliding
+  ("eh" to "ah", rising, for the cheer; "aw" to "oh", falling, for the groan). Only the player's own; the opponent's moves are silent for now.
   With `--no-audio-devices` Bevy's audio plugin is left out, so such a run (an agent's, a
   screenshot's) opens no speaker; before this Bevy opened the default output at every start.
   This way of picking up and moving pieces is the desktop client's for every game; the headset

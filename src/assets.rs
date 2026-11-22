@@ -48,6 +48,8 @@ files![
     "models/tak/flat.glb",
     "models/tak/wall.glb",
     "pictures/cards/points.jpg",
+    "sounds/cheer.ogg",
+    "sounds/groan.ogg",
     "sounds/key.ogg",
     "sounds/thump.ogg",
     "sounds/tick.ogg",

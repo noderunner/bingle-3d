@@ -1,5 +1,6 @@
 //! The sounds playing a seat makes, for a game whose appearance gives them (`[sounds]`): a piece
-//! picked up, a piece set down where it goes (or one placed), and the move sent. A game without
+//! picked up, a piece set down where it goes (or one placed), the move sent, and the game won
+//! or lost. A game without
 //! them is silent; nothing here names a game.
 //!
 //! Most cues are read from the turn as it changes ([`cues`], with no Bevy in it); a piece
@@ -15,6 +16,7 @@ use crate::appearance::{Appearances, SoundLook};
 use crate::assets;
 use crate::net::WatchStatus;
 use crate::play::{Stage, Turn};
+use crate::table::Table;
 
 /// Something the player did that may make a sound.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,15 +27,23 @@ pub enum Cue {
     Put,
     /// The move sent.
     Play,
+    /// The game over, this client's seat having won.
+    Win,
+    /// The game over, this client's seat having lost.
+    Lose,
 }
 
 impl Cue {
+    const ALL: [Cue; 5] = [Cue::Lift, Cue::Put, Cue::Play, Cue::Win, Cue::Lose];
+
     /// Its file, as the game's look gives it.
     pub fn file(self, sounds: &SoundLook) -> Option<&str> {
         match self {
             Cue::Lift => sounds.lift.as_deref(),
             Cue::Put => sounds.put.as_deref(),
             Cue::Play => sounds.play.as_deref(),
+            Cue::Win => sounds.win.as_deref(),
+            Cue::Lose => sounds.lose.as_deref(),
         }
     }
 }
@@ -64,6 +74,60 @@ impl Moment {
             sent: turn.stage == Stage::Sending,
         }
     }
+}
+
+/// How a game stands, for the sound of its end: which room, and how it ended for this client's
+/// seat, once it has.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Standing {
+    room: String,
+    finished: bool,
+    /// The seat's sound: won or lost. `None` for a draw, a game it has no seat in, or one going
+    /// on.
+    result: Option<Cue>,
+}
+
+impl Standing {
+    pub fn of(table: Option<&Table>) -> Self {
+        let Some(t) = table else {
+            return Standing::default();
+        };
+        let s = &t.state;
+        Standing {
+            room: t.room_code.clone(),
+            finished: t.finished(),
+            result: result(
+                t.yours().map(|y| y.seat),
+                t.finished(),
+                s.winner_seat,
+                s.all_lost,
+            ),
+        }
+    }
+}
+
+/// How a game ended for the seat `mine`, as a sound: won, lost (to another seat, or with every
+/// seat), or nothing (a draw, no seat, not over).
+pub fn result(
+    mine: Option<u32>,
+    finished: bool,
+    winner: Option<u32>,
+    all_lost: bool,
+) -> Option<Cue> {
+    let mine = mine.filter(|_| finished)?;
+    match winner {
+        Some(w) if w == mine => Some(Cue::Win),
+        Some(_) => Some(Cue::Lose),
+        None if all_lost => Some(Cue::Lose),
+        None => None,
+    }
+}
+
+/// The sound of a game's end: only as the game being watched ends, not when one already over is
+/// opened.
+pub fn ended(before: &Standing, now: &Standing) -> Option<Cue> {
+    let ending = now.finished && !before.finished && now.room == before.room;
+    now.result.filter(|_| ending)
 }
 
 /// The sounds a change of the turn makes: a piece newly in hand, something newly placed, the move
@@ -102,9 +166,19 @@ impl Plugin for SoundsPlugin {
 #[derive(Resource, Default)]
 struct Loaded(HashMap<String, Handle<AudioSource>>);
 
-fn listen(watch: Res<WatchStatus>, mut before: Local<Moment>, mut cues_out: MessageWriter<Cue>) {
-    let now = Moment::of(watch.turn.as_ref());
-    for cue in cues(&before, &now) {
+fn listen(
+    watch: Res<WatchStatus>,
+    mut before: Local<(Moment, Standing)>,
+    mut cues_out: MessageWriter<Cue>,
+) {
+    let now = (
+        Moment::of(watch.turn.as_ref()),
+        Standing::of(watch.table.as_ref()),
+    );
+    for cue in cues(&before.0, &now.0) {
+        cues_out.write(cue);
+    }
+    if let Some(cue) = ended(&before.1, &now.1) {
         cues_out.write(cue);
     }
     *before = now;
@@ -125,7 +199,7 @@ fn load(
     let Some(sounds) = sounds_of(&watch, &appearances) else {
         return;
     };
-    for cue in [Cue::Lift, Cue::Put, Cue::Play] {
+    for cue in Cue::ALL {
         if let Some(file) = cue.file(sounds)
             && !loaded.0.contains_key(file)
         {
@@ -204,6 +278,7 @@ mod tests {
             lift: Some("a.ogg".into()),
             put: None,
             play: Some("c.ogg".into()),
+            ..SoundLook::default()
         };
         assert_eq!(Cue::Lift.file(&sounds), Some("a.ogg"));
         assert_eq!(Cue::Put.file(&sounds), None);
@@ -216,7 +291,13 @@ mod tests {
 
         let look = Appearances::built_in();
         let sounds = &look.for_game("amazons").expect("a look").sounds;
-        for (cue, longest) in [(Cue::Lift, 0.2), (Cue::Put, 0.35), (Cue::Play, 0.7)] {
+        for (cue, longest) in [
+            (Cue::Lift, 0.2),
+            (Cue::Put, 0.35),
+            (Cue::Play, 0.7),
+            (Cue::Win, 2.0),
+            (Cue::Lose, 2.0),
+        ] {
             let file = cue.file(sounds).expect("a sound for each");
             let source = AudioSource {
                 bytes: assets::FILES
@@ -234,5 +315,49 @@ mod tests {
             let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
             assert!(peak > 0.1 && peak < 0.95, "{file}: peak {peak}");
         }
+    }
+
+    fn standing(room: &str, finished: bool, result: Option<Cue>) -> Standing {
+        Standing {
+            room: room.into(),
+            finished,
+            result,
+        }
+    }
+
+    #[test]
+    fn a_game_won_or_lost_sounds_as_it_ends_and_not_when_opened_over() {
+        let playing = standing("AB12", false, None);
+        let won = standing("AB12", true, Some(Cue::Win));
+        let lost = standing("AB12", true, Some(Cue::Lose));
+        assert_eq!(ended(&playing, &won), Some(Cue::Win));
+        assert_eq!(ended(&playing, &lost), Some(Cue::Lose));
+        assert_eq!(ended(&won, &won), None, "once");
+        assert_eq!(
+            ended(&playing, &standing("AB12", true, None)),
+            None,
+            "a draw"
+        );
+        // A game opened when it is over already, or another table's end: no sound.
+        assert_eq!(ended(&Standing::default(), &won), None);
+        assert_eq!(ended(&standing("ZZ99", false, None), &won), None);
+    }
+
+    #[test]
+    fn how_a_game_ended_is_read_for_this_clients_seat() {
+        assert_eq!(result(Some(1), false, None, false), None, "not over");
+        assert_eq!(result(Some(1), true, Some(1), false), Some(Cue::Win));
+        assert_eq!(result(Some(1), true, Some(2), false), Some(Cue::Lose));
+        assert_eq!(
+            result(Some(1), true, None, true),
+            Some(Cue::Lose),
+            "everybody lost"
+        );
+        assert_eq!(result(Some(1), true, None, false), None, "a draw");
+        assert_eq!(
+            result(None, true, Some(1), false),
+            None,
+            "watching others play"
+        );
     }
 }
