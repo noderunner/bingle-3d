@@ -22,7 +22,10 @@
 //!
 //! While this client's seat is on impulse, the positions a click would be taken on are lit, and
 //! the move being built is shown as see-through pieces in the seat's colour: where its selections
-//! put something, and under the pointer, where a click would.
+//! put something, and under the pointer, where a click would. A piece picked up is lifted and
+//! bobs over its space, and once put somewhere stands there (`hand.rs`); what the move then aims
+//! (an arrow) is held under the pointer. A game's appearance may lay the cells in two materials
+//! by turns, as a chessboard's (`squares`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -35,10 +38,11 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
+use crate::hand::{Carry, HandPlugin, Held, LIFT, Rest};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
-use crate::play::{Hovering, Spot, Stage};
+use crate::play::{Hovering, Spot, Stage, Turn};
 use crate::slab::{self, Rim};
 use crate::table::Table;
 
@@ -46,7 +50,8 @@ pub struct BoardPlugin;
 
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<BoardBuilt>()
+        app.add_plugins(HandPlugin)
+            .add_message::<BoardBuilt>()
             .add_systems(
                 Update,
                 (
@@ -220,6 +225,24 @@ impl Layout {
     }
 }
 
+/// Which of a chessboard's two materials each position is: 0 for the corner nearest the player
+/// on the left (a chessboard's a1, dark) and every other position from there, 1 for the rest, by
+/// the positions' layout coordinates.
+pub fn by_turns(positions: &[BoardPosition]) -> HashMap<String, usize> {
+    let left = positions.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+    let near = positions
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    positions
+        .iter()
+        .map(|p| {
+            let steps = ((p.x - left) + (near - p.y)).round() as i64;
+            (p.id.clone(), steps.rem_euclid(2) as usize)
+        })
+        .collect()
+}
+
 /// The shape of a board's cells, from its kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellShape {
@@ -273,9 +296,14 @@ struct PieceAt {
     under: u32,
 }
 
-/// A cell of the board, which is lit while a click on it would be taken.
+/// A cell of the board, which is lit while a click on it would be taken, and otherwise its own
+/// material.
 #[derive(Component)]
-struct Cell(String);
+struct Cell {
+    id: String,
+    rest: Handle<StandardMaterial>,
+    lit: Handle<StandardMaterial>,
+}
 
 /// A see-through piece: part of the move being built, or where a click would put one.
 #[derive(Component)]
@@ -315,8 +343,9 @@ struct PieceKit {
     foot: f32,
     height: f32,
     stands: Stands,
-    /// What it is made of, when that is not its seat's material.
+    /// What it is made of, when that is not its seat's material, and the same see-through.
     material: Option<Handle<StandardMaterial>>,
+    ghost: Option<Handle<StandardMaterial>>,
 }
 
 /// The meshes and materials of the board being shown.
@@ -331,15 +360,14 @@ struct Kit {
     /// the vertical from the first seat's, which looks to the far side).
     materials: HashMap<String, Handle<StandardMaterial>>,
     facing: HashMap<String, f32>,
-    cell: Handle<StandardMaterial>,
-    /// A cell a click would be taken on.
-    target: Handle<StandardMaterial>,
     /// A piece of the move being built, in this client's seat's colour.
     ghost: Handle<StandardMaterial>,
     /// The materials made of the board's wood, to build again when another is chosen.
     woodwork: Vec<(Handle<StandardMaterial>, MaterialSpec)>,
     /// The height pieces stand on.
     surface: f32,
+    /// The kind of piece what a move aims is shown as, if the game's look says.
+    aimed: Option<String>,
 }
 
 impl Kit {
@@ -415,7 +443,14 @@ impl Tools<'_> {
             .and_then(|l| l.material.as_ref())
             .and_then(|name| self.look?.materials.get(name))
             .cloned();
+        let ghost = own.as_ref().map(|spec| {
+            let mut m = spec.on_board(self.wood).build(self.server);
+            m.base_color = m.base_color.with_alpha(0.5);
+            m.alpha_mode = AlphaMode::Blend;
+            self.materials.add(m)
+        });
         PieceKit {
+            ghost,
             mesh: self.server.load(
                 GltfAssetLabel::Primitive {
                     mesh: 0,
@@ -454,7 +489,7 @@ fn sync_board(
     watch: Res<WatchStatus>,
     mut drawing: Drawing,
     roots: Query<(Entity, &BoardRoot, &Kit)>,
-    pieces: Query<(Entity, &PieceAt)>,
+    pieces: Query<(Entity, &PieceAt, Option<&Carry>, &Spot)>,
     mut marks: Query<(&mut Transform, &mut Visibility), With<LastMoveMark>>,
     mut built: MessageWriter<BoardBuilt>,
 ) {
@@ -491,14 +526,20 @@ fn sync_board(
         built.write(BoardBuilt { size: layout.size });
         // A board just built shows the position as it is, without dropping every piece.
         let root = kit.0;
-        place_pieces(&mut commands, root, &kit.1, &layout, table, &[], false);
+        place_pieces(&mut commands, root, &kit.1, &layout, table, &[], None);
         commands.entity(root).insert(kit.1);
         return;
     };
 
     let layout = Layout::new(&table.info.board.positions);
-    let shown: Vec<(Entity, &PieceAt)> = pieces.iter().collect();
-    place_pieces(&mut commands, root, kit, &layout, table, &shown, true);
+    let shown: Vec<(Entity, &PieceAt)> = pieces.iter().map(|(e, at, ..)| (e, at)).collect();
+    // Where the move just played was shown put down already: what arrives there is not dropped.
+    let put: Vec<&str> = pieces
+        .iter()
+        .filter(|(_, _, carry, _)| matches!(carry, Some(Carry::Put(_))))
+        .map(|(.., spot)| spot.0.as_str())
+        .collect();
+    place_pieces(&mut commands, root, kit, &layout, table, &shown, Some(&put));
     for (mut t, mut vis) in &mut marks {
         match table.last_move.as_ref().and_then(|c| layout.centres.get(c)) {
             Some(centre) => {
@@ -510,8 +551,9 @@ fn sync_board(
     }
 }
 
-/// The pieces the position has and the scene does not are added (dropping in when `animate`),
-/// and those the scene has and the position does not are taken away.
+/// The pieces the position has and the scene does not are added, and those the scene has and the
+/// position does not are taken away. With `animate`, those added drop in, but on the positions it
+/// names, where the move being built showed them already.
 fn place_pieces(
     commands: &mut Commands,
     root: Entity,
@@ -519,7 +561,7 @@ fn place_pieces(
     layout: &Layout,
     table: &Table,
     shown: &[(Entity, &PieceAt)],
-    animate: bool,
+    animate: Option<&[&str]>,
 ) {
     let wanted = wanted_pieces(table, kit);
     for (entity, at) in shown {
@@ -550,6 +592,8 @@ fn place_pieces(
             at.under as f32 * 1e-6,
         );
         let to = rest.translation.y;
+        let settled = Rest(rest);
+        let animate = animate.is_some_and(|put| !put.contains(&at.cell.as_str()));
         if animate {
             rest.translation.y += DROP_HEIGHT;
         }
@@ -569,6 +613,8 @@ fn place_pieces(
                 timer: Timer::new(DROP_TIME, TimerMode::Once),
                 to,
             });
+        } else {
+            piece.insert(settled);
         }
     }
 }
@@ -748,7 +794,7 @@ fn build_board(
     }
 
     let lines = tools.material(&look::groove());
-    let (cell, target) = match surface {
+    match surface {
         Surface::Cells(_) => {
             // The lines between the cells: the whole of each cell, darkened, under the cells.
             commands.spawn((
@@ -762,20 +808,45 @@ fn build_board(
             ));
             let target = tools.material(&look::lit_cell());
             let cell_mesh = shape.mesh(pitch, CELL_SCALE, CELL_HEIGHT);
+            // A chessboard's two materials by turns, if the game's look has them, each lit as
+            // the board is.
+            let squares = tools
+                .look
+                .and_then(|l| l.board.squares.clone())
+                .map(|names| {
+                    let look = tools.look.expect("a look has the names");
+                    let specs = names.map(|n| look.materials.get(&n).cloned());
+                    specs.map(|spec| {
+                        let spec = spec?;
+                        let lit = look::lit_square(&spec);
+                        Some((tools.material(&spec), tools.material(&lit)))
+                    })
+                });
+            let turns = squares
+                .as_ref()
+                .map(|_| by_turns(&table.info.board.positions))
+                .unwrap_or_default();
             for (id, centre) in &layout.centres {
                 let at = *centre + Vec3::Y * BOARD_HEIGHT;
+                let (rest, lit) = squares
+                    .as_ref()
+                    .and_then(|s| s[turns.get(id).copied().unwrap_or(0)].clone())
+                    .unwrap_or_else(|| (wood.clone(), target.clone()));
                 commands.spawn((
                     Name::new(format!("Cell {id}")),
                     Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
-                    MeshMaterial3d(wood.clone()),
+                    MeshMaterial3d(rest.clone()),
                     Transform::from_translation(at),
-                    Cell(id.clone()),
+                    Cell {
+                        id: id.clone(),
+                        rest,
+                        lit,
+                    },
                     Spot(id.clone()),
                     Pickable::default(),
                     ChildOf(root),
                 ));
             }
-            (wood.clone(), target)
         }
         Surface::Points => {
             // The lines, cut into the board between neighbouring points.
@@ -820,15 +891,18 @@ fn build_board(
                     Mesh3d(disc.clone()),
                     MeshMaterial3d(unseen.clone()),
                     Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + 0.0003)),
-                    Cell(id.clone()),
+                    Cell {
+                        id: id.clone(),
+                        rest: unseen.clone(),
+                        lit: glowing.clone(),
+                    },
                     Spot(id.clone()),
                     Pickable::default(),
                     ChildOf(root),
                 ));
             }
-            (unseen, glowing)
         }
-    };
+    }
 
     // Marked positions (a Go board's star points): dots cut as the lines are.
     let marked: Vec<Vec2> = tools
@@ -915,11 +989,10 @@ fn build_board(
         scale: pitch / PITCH,
         materials,
         facing: facings(&table.info),
-        cell,
-        target,
         ghost,
         woodwork: std::mem::take(&mut tools.woodwork),
         surface: surface.height(),
+        aimed: tools.look.and_then(|l| l.aimed.clone()),
     };
     (root, kit)
 }
@@ -1239,8 +1312,10 @@ fn facings(info: &GameInfo) -> HashMap<String, f32> {
         .collect()
 }
 
-/// Lights the cells a click would be taken on (when the player wants that), and shows the move
-/// being built.
+/// Lights the cells a click would be taken on (when the player wants that, and always while a
+/// piece is in hand), and shows the move being built: each piece it moves, held or put down;
+/// what it puts down new, see-through; and what it aims, held under the pointer.
+#[allow(clippy::too_many_arguments)]
 fn show_turn(
     mut commands: Commands,
     watch: Res<WatchStatus>,
@@ -1248,6 +1323,8 @@ fn show_turn(
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
+    mut pieces: Query<(Entity, &PieceAt, &mut Spot, Has<Carry>)>,
+    held: Query<Entity, With<Held>>,
 ) {
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
@@ -1257,16 +1334,106 @@ fn show_turn(
     };
     let turn = watch.turn.as_ref();
     let targets = turn.map(|t| t.targets()).unwrap_or_default();
+    let lit = legal.0 || turn.is_some_and(Turn::holding);
     for (cell, mut material) in &mut cells {
-        let wanted = if legal.0 && targets.contains(&cell.0) {
-            &kit.target
+        let wanted = if lit && targets.contains(&cell.id) {
+            &cell.lit
         } else {
-            &kit.cell
+            &cell.rest
         };
         if material.0 != *wanted {
             material.0 = wanted.clone();
         }
     }
+
+    let layout = Layout::new(&table.info.board.positions);
+    let cells = &table.state.state.cells;
+    // The position as the move being built leaves it, so what it puts down stands on what will be
+    // there: each piece it moves taken off its space, and on where it is put.
+    let mut after = cells.clone();
+    let mut carried: HashMap<(String, usize), (Carry, String)> = HashMap::new();
+    for c in turn.map(Turn::carried).unwrap_or_default() {
+        let Some(piece) = after.get_mut(c.from).and_then(Vec::pop) else {
+            continue;
+        };
+        let layer = after[c.from].len();
+        let (carry, at) = match c.to.and_then(|to| Some((to, layout.centres.get(to)?))) {
+            Some((to, centre)) => {
+                let stack = after.entry(to.to_string()).or_default();
+                let put = kit.set_down(
+                    &piece.piece,
+                    &piece.color,
+                    *centre,
+                    (to, stack.len()),
+                    kit.stack_height(stack.iter()),
+                );
+                stack.push(piece);
+                (Carry::Put(put), to)
+            }
+            None => {
+                after.get_mut(c.from).expect("taken from it").push(piece);
+                let lift = LIFT * kit.scale;
+                (
+                    Carry::Held {
+                        lift,
+                        scale: kit.scale,
+                    },
+                    c.from,
+                )
+            }
+        };
+        carried.insert((c.from.to_string(), layer), (carry, at.to_string()));
+    }
+    for (entity, at, mut spot, has) in &mut pieces {
+        match carried.get(&(at.cell.clone(), at.layer)) {
+            Some((carry, cell)) => {
+                commands.entity(entity).insert(*carry);
+                // A click on a piece put down is a click on where it is now.
+                if spot.0 != *cell {
+                    spot.0 = cell.clone();
+                }
+            }
+            None => {
+                if has {
+                    commands.entity(entity).remove::<Carry>();
+                }
+                if spot.0 != at.cell {
+                    spot.0 = at.cell.clone();
+                }
+            }
+        }
+    }
+
+    let colour = table.yours().map_or("", |s| s.color.as_str());
+    // What the move aims, held under the pointer while it is next.
+    let aiming = turn.is_some_and(Turn::aiming);
+    match (aiming, held.iter().next()) {
+        (true, None) => {
+            let id = kit.aimed.as_deref().unwrap_or_default();
+            let kind = kit.piece(id);
+            let material = kind
+                .material
+                .clone()
+                .or_else(|| kit.materials.get(colour).cloned())
+                .unwrap_or_default();
+            commands.spawn((
+                Name::new("Held"),
+                Held {
+                    board: kit.surface,
+                    lift: (2.0 * LIFT - kind.foot) * kit.scale,
+                    scale: kit.scale,
+                },
+                Mesh3d(kind.mesh.clone()),
+                MeshMaterial3d(material),
+                Transform::from_scale(Vec3::splat(kit.scale)),
+                Visibility::Hidden,
+                ChildOf(root),
+            ));
+        }
+        (false, Some(entity)) => commands.entity(entity).despawn(),
+        _ => {}
+    }
+
     let Some(turn) = turn else { return };
     let mut shown: Vec<&str> = match turn.stage {
         Stage::Asking | Stage::Ready | Stage::Sending => turn.placed().collect(),
@@ -1278,21 +1445,22 @@ fn show_turn(
     {
         shown.push(cell);
     }
-    let layout = Layout::new(&table.info.board.positions);
-    let cells = &table.state.state.cells;
-    let colour = table.yours().map_or("", |s| s.color.as_str());
     for cell in shown {
         let Some(centre) = layout.centres.get(cell) else {
             continue;
         };
-        // The kind of piece that would stand there: the one the selections name, or the one
-        // that would come from where they say.
+        // The kind of piece that would stand there: the one the selections name, the one that
+        // would come from where they say, or what the move aims.
         let coming = turn.arriving(cell).unwrap_or_default();
-        let id = coming
-            .piece
-            .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
-            .unwrap_or_default();
-        let stack = cells.get(cell).map_or(&[][..], Vec::as_slice);
+        let id = if coming.aimed {
+            kit.aimed.as_deref()
+        } else {
+            coming
+                .piece
+                .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
+        }
+        .unwrap_or_default();
+        let stack = after.get(cell).map_or(&[][..], Vec::as_slice);
         let at = kit.set_down(
             id,
             colour,
@@ -1300,11 +1468,12 @@ fn show_turn(
             (cell, stack.len()),
             kit.stack_height(stack),
         );
+        let kind = kit.piece(id);
         commands.spawn((
             Name::new(format!("Ghost at {cell}")),
             Ghost,
-            Mesh3d(kit.piece(id).mesh.clone()),
-            MeshMaterial3d(kit.ghost.clone()),
+            Mesh3d(kind.mesh.clone()),
+            MeshMaterial3d(kind.ghost.clone().unwrap_or_else(|| kit.ghost.clone())),
             at,
             ChildOf(root),
         ));
@@ -1339,7 +1508,10 @@ fn drop_pieces(
         t.translation.y = drop.to + DROP_HEIGHT * (1.0 - f * f);
         if drop.timer.is_finished() {
             t.translation.y = drop.to;
-            commands.entity(entity).remove::<Dropping>();
+            commands
+                .entity(entity)
+                .remove::<Dropping>()
+                .insert(Rest(*t));
         }
     }
 }
@@ -1491,6 +1663,22 @@ mod tests {
         assert!((facings(&info)["black"] - TAU / 4.0).abs() < 1e-6, "four");
         info.seats.clear();
         assert!(facings(&info).is_empty());
+    }
+
+    #[test]
+    fn a_chessboards_squares_go_by_turns_from_the_near_left_corner() {
+        // A layout's y grows towards the player: a1 is at the bottom left.
+        let squares = by_turns(&[
+            pos("a2", 0.0, 0.0),
+            pos("b2", 1.0, 0.0),
+            pos("a1", 0.0, 1.0),
+            pos("b1", 1.0, 1.0),
+        ]);
+        assert_eq!(squares["a1"], 0);
+        assert_eq!(squares["b2"], 0);
+        assert_eq!(squares["a2"], 1);
+        assert_eq!(squares["b1"], 1);
+        assert!(by_turns(&[]).is_empty());
     }
 
     #[test]
@@ -1782,6 +1970,7 @@ mod tests {
                 to: Some("c3".into()),
                 from: None,
                 piece: Some(piece.into()),
+                aim: None,
                 gestures: vec![
                     Gesture {
                         kind: "piece".into(),
@@ -1829,6 +2018,175 @@ mod tests {
             app.update();
             let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
             assert_eq!(ghosts.iter(app.world()).count(), 0);
+        }
+
+        #[test]
+        fn a_piece_picked_up_is_held_then_put_where_it_goes_and_its_arrow_held() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use crate::play::Turn;
+
+            let mut app = with_looks();
+            let cells: &[(&str, &[(&str, &str)])] = &[("a1", &[("queen", "white")])];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("amazons", cells));
+            app.update();
+            let shoot = |to: &str, aim: &str| LegalSelection {
+                notation: format!("a1-{to}/{aim}"),
+                action: "move".into(),
+                to: Some(to.into()),
+                from: Some("a1".into()),
+                piece: None,
+                aim: Some(aim.into()),
+                gestures: vec![Gesture::pos("a1"), Gesture::pos(to), Gesture::pos(aim)],
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options: vec![shoot("a2", "a3"), shoot("a2", "a1"), shoot("b2", "c3")],
+                complete: false,
+            });
+            let click = |app: &mut App, at: &str| {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                watch.turn.as_mut().unwrap().gesture(&Gesture::pos(at));
+                app.update();
+            };
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let mut kits = app.world_mut().query::<&Kit>();
+            let kit = kits.single(app.world()).unwrap();
+            let arrow = kit.pieces["arrow"].clone();
+            let queen = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&PieceAt, Option<&Carry>, &Spot)>();
+                let (_, carry, spot) = q.single(app.world()).unwrap();
+                (carry.copied(), spot.0.clone())
+            };
+            let lit = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
+                let mut out: Vec<String> = q
+                    .iter(app.world())
+                    .filter(|(c, m)| m.0 == c.lit)
+                    .map(|(c, _)| c.id.clone())
+                    .collect();
+                out.sort();
+                out
+            };
+            assert_eq!(queen(&mut app), (None, "a1".into()));
+            assert!(
+                lit(&mut app).is_empty(),
+                "nothing is lit before a piece is picked up"
+            );
+
+            // Picked up: held over its space, and where it may go lit.
+            click(&mut app, "a1");
+            assert!(matches!(queen(&mut app).0, Some(Carry::Held { .. })));
+            assert_eq!(lit(&mut app), ["a2", "b2"]);
+
+            // Put down: standing where it goes, a click on it a click there, and what it may
+            // shoot at lit, the space it left among them.
+            click(&mut app, "a2");
+            let layout = Layout::new(&grid_table("amazons", cells).info.board.positions);
+            let (carry, spot) = queen(&mut app);
+            let Some(Carry::Put(put)) = carry else {
+                panic!("not put down: {carry:?}");
+            };
+            assert_eq!(put.translation.xz(), layout.centres["a2"].xz());
+            assert_eq!(spot, "a2");
+            assert_eq!(lit(&mut app), ["a1", "a3"]);
+
+            // The arrow is held for the pointer, in its own red; over a space it may land on,
+            // a see-through one lies there, on the board the queen left.
+            let mut held = app
+                .world_mut()
+                .query_filtered::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>), With<Held>>();
+            let (mesh, material) = held.single(app.world()).unwrap();
+            assert_eq!(mesh.0, arrow.mesh);
+            assert_eq!(Some(&material.0), arrow.material.as_ref());
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a1".into());
+            app.update();
+            let mut ghosts = app.world_mut().query_filtered::<(
+                &Mesh3d,
+                &MeshMaterial3d<StandardMaterial>,
+                &Transform,
+            ), With<Ghost>>();
+            let (mesh, material, t) = ghosts.single(app.world()).unwrap();
+            assert_eq!(mesh.0, arrow.mesh);
+            assert_eq!(Some(&material.0), arrow.ghost.as_ref());
+            assert!(
+                (t.translation.y - (SURFACE - arrow.foot)).abs() < 2e-4,
+                "on the board"
+            );
+
+            // Shot: nothing more is held, and the arrow waits to be confirmed.
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            click(&mut app, "a1");
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                let turn = watch.turn.as_mut().unwrap();
+                turn.answered(Selections {
+                    complete: true,
+                    ..Selections {
+                        seat: 1,
+                        ply: 3,
+                        made: vec![],
+                        options: vec![],
+                        complete: false,
+                    }
+                });
+            }
+            app.update();
+            let mut held = app.world_mut().query_filtered::<(), With<Held>>();
+            assert_eq!(held.iter(app.world()).count(), 0);
+            let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(ghosts.iter(app.world()).count(), 1);
+            assert!(matches!(queen(&mut app).0, Some(Carry::Put(_))));
+
+            // Played: the queen is where it was shown, not dropped there again; the arrow drops.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = None;
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(
+                    2,
+                    &[("a2", &[("queen", "white")]), ("a1", &[("arrow", "white")])],
+                ),
+            });
+            app.update();
+            assert_eq!(
+                pieces(&mut app),
+                [("a1".to_string(), true), ("a2".to_string(), false)]
+            );
+        }
+
+        #[test]
+        fn a_game_whose_look_says_so_has_a_chessboard() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("amazons", &[]));
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
+            let rest: HashMap<String, Handle<StandardMaterial>> = q
+                .iter(app.world())
+                .map(|(c, m)| (c.id.clone(), m.0.clone()))
+                .collect();
+            assert_eq!(rest["a1"], rest["b2"]);
+            assert_eq!(rest["a1"], rest["c1"]);
+            assert_ne!(rest["a1"], rest["a2"]);
+            assert_ne!(rest["a1"], rest["b1"]);
+
+            // Any other game's cells are all the board's wood.
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("breakthrough", &[]));
+            app.update();
+            let mut q = app.world_mut().query::<&Cell>();
+            let materials: std::collections::HashSet<_> =
+                q.iter(app.world()).map(|c| c.rest.clone()).collect();
+            assert_eq!(materials.len(), 1);
         }
 
         fn pieces(app: &mut App) -> Vec<(String, bool)> {

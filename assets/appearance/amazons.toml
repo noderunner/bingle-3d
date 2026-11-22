@@ -1,0 +1,64 @@
+# How this client draws Amazons (Bingle's ADR 0124: the server says what things are, and each
+# client decides how they look). Data only: nothing here changes the rules.
+#
+# A chessboard of pale and dark wood in a frame of the board's own, turned chessmen of pale and
+# of dark wood for the amazons (`assets-src/blender/chessmen.py`), and a red checker
+# (`assets-src/blender/checkers.py`) for each arrow, whoever shot it.
+
+games = ["amazons", "amazons-6"]
+
+# While a move is built, its arrow is shown as an arrow is.
+aimed = "arrow"
+
+[board]
+squares = ["dark_square", "light_square"]
+
+# An amazon moves as a queen does.
+[pieces.queen]
+model = "models/chess/queen.glb"
+stands = "upright"
+
+[pieces.arrow]
+model = "models/checkers/man.glb"
+material = "red"
+
+[seats.white]
+pieces = "boxwood"
+colour = [0.90, 0.80, 0.62]
+
+[seats.black]
+pieces = "ebonised"
+colour = [0.13, 0.11, 0.10]
+
+# Pale wood, polished.
+[materials.boxwood]
+wood = "maple"
+tint = [1.0, 0.93, 0.78]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# Dark wood stained near black, polished.
+[materials.ebonised]
+wood = "walnut"
+tint = [0.30, 0.26, 0.25]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# A checker's red stain, satin, as draughts' red men.
+[materials.red]
+wood = "maple"
+tint = [0.66, 0.13, 0.10]
+clearcoat = 0.35
+clearcoat_roughness = 0.22
+
+# The squares: walnut, and maple a shade warmer than the pale queens, so they stand out on it.
+[materials.dark_square]
+wood = "walnut"
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+[materials.light_square]
+wood = "maple"
+tint = [0.96, 0.84, 0.64]
+clearcoat = 0.3
+clearcoat_roughness = 0.25

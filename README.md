@@ -158,8 +158,9 @@ choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
 the board's lines cross, each player's in a wooden bowl beside the board. Tak has its blocks,
-walls and capstones, stacked as they are played; draughts wooden checkers; and Breakthrough,
-Amazons, Brandubh and Fist turned chessmen. The client needs a Bingle whose API is 1.6 or newer.
+walls and capstones, stacked as they are played; draughts wooden checkers; Breakthrough,
+Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
+wood, with red checkers for arrows. The client needs a Bingle whose API is 1.6 or newer.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,

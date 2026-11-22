@@ -21,6 +21,7 @@ mod families;
 mod fonts;
 mod friends;
 mod game_panel;
+mod hand;
 mod hud;
 mod lobby;
 mod login;

@@ -1601,6 +1601,7 @@ mod tests {
             to: Some(cell.into()),
             from: None,
             piece: Some("stone".into()),
+            aim: None,
             gestures: vec![
                 Gesture {
                     kind: "piece".into(),
