@@ -490,8 +490,9 @@ impl Turn {
     }
 
     /// Whether what is taken up is put down by a click on the board, which makes its choice
-    /// after the click (a tile laid on a hex), rather than chosen next (a fence put on a side).
-    fn taken_after_click(&self) -> bool {
+    /// after the click (a tile laid on a hex), rather than chosen next (a fence put on a side):
+    /// the board then shows it see-through where the pointer is, in place of that cell's light.
+    pub fn taken_after_click(&self) -> bool {
         let Some(choices) = self.taken.as_ref().filter(|_| self.to_place) else {
             return false;
         };

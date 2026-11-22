@@ -75,7 +75,9 @@ impl Plugin for BoardPlugin {
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
-                    show_tints.run_if(resource_changed::<WatchStatus>),
+                    show_tints.run_if(
+                        resource_changed::<WatchStatus>.or_eager(resource_changed::<Hovering>),
+                    ),
                     fence_aim,
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
@@ -2177,8 +2179,13 @@ fn show_turn(
     let turn = watch.turn.as_ref();
     let targets = turn.map(|t| t.targets()).unwrap_or_default();
     let lit = legal.0 || turn.is_some_and(Turn::holding);
+    // Where a tile in hand would go is shown by the tile, see-through (`show_tints`), not lit.
+    let previewed = hovering
+        .0
+        .as_deref()
+        .filter(|_| turn.is_some_and(Turn::taken_after_click));
     for (cell, mut material) in &mut cells {
-        let wanted = if lit && targets.contains(&cell.id) {
+        let wanted = if lit && targets.contains(&cell.id) && previewed != Some(cell.id.as_str()) {
             &cell.lit
         } else {
             &cell.rest
@@ -2771,7 +2778,14 @@ fn show_supply(
 type StockParts<'w, 's> = (
     Query<'w, 's, Entity, With<InStock>>,
     Query<'w, 's, (Entity, &'static FromStock)>,
+    Query<'w, 's, Entity, With<TileGhost>>,
+    Res<'w, Hovering>,
 );
+
+/// A see-through piece of the stock's on the position the pointer is over, where the one in
+/// hand would go.
+#[derive(Component)]
+struct TileGhost;
 
 /// The positions the view tints, drawn as the game's look says (a tile laid there, or a stamp),
 /// and the stock beside the board: what the view counts left of each kind, less what the move
@@ -2781,7 +2795,7 @@ fn show_tints(
     watch: Res<WatchStatus>,
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     drawn: Query<(Entity, &TintAt)>,
-    (stocked, in_hand): StockParts,
+    (stocked, in_hand, ghosts, hovering): StockParts,
 ) {
     let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
         return;
@@ -2883,6 +2897,31 @@ fn show_tints(
                 .collect()
         })
         .unwrap_or_default();
+    // Where the piece in hand would go, see-through on the position under the pointer, if it
+    // may go there.
+    for entity in &ghosts {
+        commands.entity(entity).despawn();
+    }
+    if let (Some(kind), Some(turn), Some(cell)) = (taken, choosing, hovering.0.as_deref())
+        && turn.targets().contains(cell)
+        && let Some(centre) = layout.centres.get(cell)
+    {
+        let piece = kit.piece(kind);
+        commands.spawn((
+            Name::new(format!("{kind} would go on {cell}")),
+            TileGhost,
+            Mesh3d(piece.mesh.clone()),
+            MeshMaterial3d(
+                piece
+                    .ghost
+                    .clone()
+                    .or_else(|| piece.material.clone())
+                    .unwrap_or_default(),
+            ),
+            kit.set_down(kind, "", *centre, (cell, 0), kit.floor(&tints, cell)),
+            ChildOf(root),
+        ));
+    }
     let shown = |kind: &str| {
         let out =
             placed.iter().filter(|(_, k)| k == kind).count() + usize::from(taken == Some(kind));
@@ -4573,6 +4612,54 @@ mod tests {
                 1,
                 "not taken for an aimed piece"
             );
+            // Over a hex it may go on, a see-through tile there; over one it may not, none.
+            let ghosts = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query_filtered::<(&Transform, &Mesh3d), With<TileGhost>>();
+                q.iter(app.world())
+                    .map(|(t, m)| (t.translation, m.0.clone()))
+                    .collect::<Vec<_>>()
+            };
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c2".into());
+            app.update();
+            let shown = ghosts(&mut app);
+            assert_eq!(shown.len(), 1);
+            let layout = Layout::new(
+                &app.world()
+                    .resource::<WatchStatus>()
+                    .table
+                    .as_ref()
+                    .unwrap()
+                    .info
+                    .board
+                    .positions,
+            );
+            assert!(shown[0].0.xz().distance(layout.centres["c2"].xz()) < 1e-6);
+            assert_eq!(shown[0].1, held[0].3, "the tile in hand's model");
+            // In place of the cell's light there; the others it may go on still lit.
+            let lit = |app: &mut App, id: &str| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
+                q.iter(app.world()).any(|(c, m)| c.id == id && m.0 == c.lit)
+            };
+            assert!(!lit(&mut app, "c2"));
+            assert!(lit(&mut app, "c1"));
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c1".into());
+            app.update();
+            let moved = ghosts(&mut app);
+            assert_eq!(moved.len(), 1, "it follows the pointer");
+            assert!(moved[0].0.xz().distance(layout.centres["c1"].xz()) < 1e-6);
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b2".into());
+            app.update();
+            assert!(ghosts(&mut app).is_empty(), "the Eye: not a target");
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b3".into());
+            app.update();
+            assert!(ghosts(&mut app).is_empty(), "nor where no green may go");
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            app.update();
+            assert!(ghosts(&mut app).is_empty());
             // Laid with a click on a hex it may go on: carried there, not shown see-through.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             let turn = watch.turn.as_mut().unwrap();

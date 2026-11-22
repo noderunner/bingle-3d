@@ -556,7 +556,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   beside the board to the first seat's left, a column of each colour, each tile the size of the
   board's. On the player's draft a click on one takes it up (`Turn::take_to_place`): it
   leaves its column and floats under the pointer, bobbing, as Fendo's fence does, and only the
-  hexes that tile may go on are lit; a click on one of them makes both of the selection's
+  hexes that tile may go on are lit; over one of them the tile is shown there see-through, in
+  place of the hex's light, following the pointer from hex to hex; a click on one of them makes both of the selection's
   gestures (the hex, then the tile, as Courtfall's selection has them) and the tile is carried
   down onto it, solid, until the move is played; a click on another hex leaves it in hand, and
   another tile clicked takes its place. Chosen the old way (the hex, then the tile's button on

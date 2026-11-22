@@ -248,7 +248,8 @@ A game's own rules and its players' words keep their terms.
   drawn. And what both seats have still to place, counted in the view (`[stock]`, a draft's
   tiles: `Position::view_counts`), in a column of each kind beside the board to the first
   seat's left; a click on one takes it to place (`play::TakeToPlace`, `Turn::take_to_place`:
-  held under the pointer, the hexes it may go on lit, and a click on one makes the click and
+  held under the pointer, the hexes it may go on lit, the one under the pointer showing it
+  see-through in place of its light (`board::TileGhost`), and a click on one makes the click and
   the tile's choice that follows it), and it is carried where it goes (`board::FromStock`).
   `Tinted`, `shown`, `stock` and `takes` have no Bevy in them; `board::show_tints` draws them.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
