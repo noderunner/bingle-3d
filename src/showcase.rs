@@ -1,6 +1,6 @@
 //! `--showcase`: every model the client has for a piece, in each material its games give it,
-//! with a few playing cards of the usual deck and the dice, laid out on the table with nothing
-//! else: to look at an asset in the client's own light, as the asset pipeline asks before one
+//! with a few playing cards of the usual deck, a row of each themed set's and the dice, laid
+//! out on the table with nothing else: to look at an asset in the client's own light, as the asset pipeline asks before one
 //! is called done (`assets-src/README.md`). A face is seen from one side here, as nowhere in
 //! Blender, so this is where a card mapped or wound the wrong way shows.
 //!
@@ -52,6 +52,9 @@ const ROW: usize = 8;
 /// The cards lying face up, by suit and rank: one of each suit, and of each kind of face (an
 /// ace, a court card, the fullest number card, and one that is not the same either way up).
 const FACES: [(&str, &str); 4] = [("♠", "A"), ("♥", "Q"), ("♦", "10"), ("♣", "7")];
+/// The rank shown of each suit of a themed set, in the set's order: each kind of face, and
+/// both ways a game may name an ace and a court card.
+const SET_RANKS: [&str; 8] = ["A", "10", "K", "7", "12", "3", "J", "1"];
 
 /// One piece to show: its model, what it is made of, and how its game stands it.
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +119,9 @@ fn lay_out(
     // In front of the pieces: the dice, then the cards. The whole is centred on the table.
     let dice_at = GAP + props::DIE_SIDE / 2.0;
     let cards_at = dice_at + props::DIE_SIDE / 2.0 + GAP + props::CARD_SIZE.y / 2.0;
-    let front = cards_at + props::CARD_SIZE.y / 2.0;
+    // In front of those, a row for each themed set.
+    let row = props::CARD_SIZE.y + GAP / 2.0;
+    let front = cards_at + props::CARD_SIZE.y / 2.0 + props::CARD_SETS.len() as f32 * row;
     let shift = (depth - front) / 2.0;
     let root = commands
         .spawn((
@@ -215,10 +220,36 @@ fn lay_out(
         commands.entity(whole).insert(ChildOf(root));
     }
 
+    // A themed set: a card of each of its suits face up, and one face down for its back.
+    let across = SET_RANKS.len() + 1;
+    for (i, (set, _)) in props::CARD_SETS.iter().enumerate() {
+        let z = cards_at + (i + 1) as f32 * row;
+        let back = props::set_back(set).map_or_else(look::paper, |file| look::card_side(&file));
+        let back = materials.add(back.build(&server));
+        for place in 0..across {
+            let face = SET_RANKS
+                .get(place)
+                .and_then(|rank| props::set_face(set, place, rank))
+                .map_or_else(look::paper, |file| look::card_side(&file));
+            let card = [
+                ("face", materials.add(face.build(&server))),
+                ("back", back.clone()),
+                ("edge", edge.clone()),
+            ];
+            let x = (place as f32 - (across as f32 - 1.0) / 2.0) * step;
+            let yaw = 0.03 * (place % 3) as f32 - 0.03;
+            let at = Transform::from_xyz(x, props::CARD_SIZE.z / 2.0, z).with_rotation(
+                Quat::from_rotation_y(yaw) * props::card_lies(place < SET_RANKS.len()),
+            );
+            let whole = props::spawn(&mut commands, &server, props::CARD, &card, at);
+            commands.entity(whole).insert(ChildOf(root));
+        }
+    }
+
     // The camera frames it as it frames a board.
     let widest = ROW.min(pieces.len()) as f32 * ACROSS;
     built.write(BoardBuilt {
-        size: Vec2::new(widest.max(count as f32 * step), depth + front),
+        size: Vec2::new(widest.max(count.max(across) as f32 * step), depth + front),
     });
 }
 

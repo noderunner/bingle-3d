@@ -6,6 +6,7 @@ import os
 import struct
 import tomllib
 import urllib.request
+import zlib
 
 import numpy as np
 import OpenImageIO as oiio
@@ -121,6 +122,34 @@ def write_png(path, pixels):
     if not buf.write(path):
         raise SystemExit(f"{path}: {buf.geterror()}")
     print(f"wrote {os.path.relpath(path, REPO)} ({os.path.getsize(path) // 1024} KiB)")
+
+
+def write_png_flat(path, pixels):
+    """Writes a picture of few colours (flat inks on paper: a card's face) as an 8-bit PNG
+    with a palette, which is a third of the size such a picture is with a colour to every
+    pixel. One of more than 256 colours is written as `write_png` writes it."""
+    h, w, c = pixels.shape
+    data = np.clip(np.round(pixels * 255.0), 0, 255).astype(np.uint32)
+    keys = (data[..., 0] << 16) | (data[..., 1] << 8) | data[..., 2]
+    colours, index = np.unique(keys, return_inverse=True)
+    if c != 3 or len(colours) > 256:
+        return write_png(path, pixels)
+    palette = np.stack([colours >> 16, (colours >> 8) & 255, colours & 255], -1).astype(np.uint8)
+    # Each row is its filter's number (0: none), then a palette entry for each pixel.
+    rows = np.zeros((h, w + 1), np.uint8)
+    rows[:, 1:] = index.reshape(h, w)
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    out = b"\x89PNG\r\n\x1a\n"
+    out += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 3, 0, 0, 0))
+    out += chunk(b"PLTE", palette.tobytes())
+    out += chunk(b"IDAT", zlib.compress(rows.tobytes(), 9))
+    out += chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(out)
+    print(f"wrote {os.path.relpath(path, REPO)} ({len(out) // 1024} KiB)")
 
 
 # KTX2, as Bevy reads it: the format from the header, each mip level's data (every face of it, in

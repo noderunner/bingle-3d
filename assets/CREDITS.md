@@ -23,7 +23,7 @@ And the garden's:
 
 The stone's model and the stones' colours are made by the pipeline's own scripts, as are the
 bowls, the chessmen, the checkers, Tak's pieces, the playing card, its back and the faces of the
-usual deck (their ranks lettered in Fira Sans), the die, and
+usual deck and of the themed sets (their ranks lettered in Fira Sans), the die, and
 everything in the garden but its rocks: the table, the cushions, the platform, the
 maple, the bamboo, the shrubs, the lantern, the basin, the pond, the fence, the leaves, the trees
 beyond the fence and the hills.

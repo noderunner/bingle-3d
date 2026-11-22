@@ -493,8 +493,17 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     the rank and suit in two corners, the suit as many times as the rank counts in the places
     cards have them, and for a court card a crown, a coronet or a plumed cap in a frame, twice,
     so it reads the same from either end. The client finds one by the suit's symbol and the
-    rank's label as the server gives them (`props::standard_face`), so no game is named. 1 MB
-    together. No jokers: no game deals one yet.
+    rank's label as the server gives them (`props::standard_face`), so no game is named. 0.4 MB
+    together, as PNGs with a palette. No jokers: no game deals one yet.
+  - **A themed set of cards, Ancient Empires** (`empires`): eight suits and a back, as Bingle's
+    own sets have (its ADR 0085), drawn by the pipeline as the usual deck is (`card_sets.py`).
+    Greece is a temple, Egypt the eye of Horus, Rome a laurel wreath, China a pagoda, the
+    Aztecs the stone of the sun, the Zulu a shield with a spear and a club, Persia the winged
+    disc, Japan a cherry blossom, each in a colour of its own with gold beside it, on paper the
+    colour of parchment. Every suit has every rank a game may ask for (A or 1, 2 to 10, and J Q
+    K or 11 12 13): 137 pictures, 1.7 MB. A game's suits wear the set's by place
+    (`props::set_face`), so a game of four suits wears the first four, whose colours go warm,
+    cool, warm, cool for a patience's red and black.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
 - No game's cards or dice are drawn yet (card zones, below): `props.rs` holds only how the two
   models are read. `--showcase` lays every piece model, the dice and some cards on the table,
@@ -515,6 +524,15 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     client's to draw.
   - The court cards are plain: what a rank wears, not a figure. Whether they want figures, as
     printed cards have, is the maintainer's to say.
+  - **Which set a table plays with.** The client has the pictures and nothing yet chooses
+    among them. Bingle's `card_set` is the table's choice and the server checks it against the
+    sets it knows, which `empires` is not one of: for a table to choose it, Bingle needs the
+    set too (its id, and its art on the page). A set that is a game's own look, worn when the
+    table chose none, would be for that game's appearance file to name, which for a private
+    game comes from its folder (decision 2). Neither is built: both belong with card zones.
+  - A set's pictures are baked, one for each suit and rank: 137 files for a set, and a rank no
+    game has asked for yet has none. Drawing a face in the client from a suit's picture and
+    the lettering would take any rank and a fraction of the bytes; to weigh if sets multiply.
   - A board of squares is plain wood: light and dark squares, where a game is known by them
     (draughts), would be an appearance's to ask for.
 - **Next**: the maintainer's eye on it, on the GPU; pictures on these games' cards in the main

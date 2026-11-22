@@ -1,7 +1,7 @@
 //! Cards and dice: what lies on a table beside a board, or in place of one. The models are the
 //! asset pipeline's (`assets-src/blender/playing_cards.py`, `dice.py`); this is how the client
 //! reads them: a model's parts, a card turned over, the picture on the face of a card of the
-//! usual deck, a die turned to show a number. Their generic looks are in `look.rs`.
+//! usual deck or of a themed set, a die turned to show a number. Their generic looks are in `look.rs`.
 //!
 //! Nothing draws a game's cards or dice with them yet (plan: card zones); `showcase.rs` lays
 //! them out to look at.
@@ -35,6 +35,36 @@ pub fn standard_face(suit: &str, rank: &str) -> Option<String> {
     };
     let rank = rank.trim().to_ascii_lowercase();
     let file = format!("textures/cards/faces/{suit}_{rank}_albedo.png");
+    assets::exists(&file).then_some(file)
+}
+
+/// The themed sets of cards the client has pictures for (the pipeline's,
+/// `assets-src/blender/card_sets.py`): each its id and its eight suits, in order. A set gives a
+/// deck of plain suits and ranks another look and changes nothing of how it plays, as Bingle's
+/// own sets do (its ADR 0085); which a table plays with is not this file's to say.
+pub const CARD_SETS: &[(&str, [&str; 8])] = &[(
+    "empires",
+    [
+        "greece", "egypt", "rome", "china", "aztec", "zulu", "persia", "japan",
+    ],
+)];
+
+/// The picture for the face of a card in a themed set: by the set's id, the place of the
+/// card's suit among its game's suits (from 0, in the game's own order: a game of four suits
+/// wears the set's first four) and its rank's label. The ranks are the game's own: an ace by
+/// either name (A, 1), 2 to 10, and the court cards by their letters (J, Q, K) or counted on
+/// past ten (11, 12, 13). None for a set, a place or a rank the client has no picture of.
+pub fn set_face(set: &str, suit: usize, rank: &str) -> Option<String> {
+    let (_, suits) = CARD_SETS.iter().find(|(id, _)| *id == set)?;
+    let suit = suits.get(suit)?;
+    let rank = rank.trim().to_ascii_lowercase();
+    let file = format!("textures/cards/sets/{set}/{suit}_{rank}_albedo.png");
+    assets::exists(&file).then_some(file)
+}
+
+/// The picture for the back of a themed set's cards.
+pub fn set_back(set: &str) -> Option<String> {
+    let file = format!("textures/cards/sets/{set}/back_albedo.png");
     assets::exists(&file).then_some(file)
 }
 
@@ -155,6 +185,57 @@ mod tests {
         assert_eq!(standard_face("♥", ""), None);
         assert_eq!(standard_face("hearts", "A"), None, "by symbol, not by id");
         assert_eq!(standard_face("★", "A"), None);
+    }
+
+    #[test]
+    fn a_themed_set_has_a_face_for_each_suit_and_rank_a_game_may_ask_for_and_a_back() {
+        let ranks = [
+            "A", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "J", "Q", "K",
+        ];
+        for (set, suits) in CARD_SETS {
+            let mut pictures: Vec<String> = Vec::new();
+            for place in 0..suits.len() {
+                for rank in ranks {
+                    let face = set_face(set, place, rank);
+                    assert!(face.is_some(), "{set}: {rank} of suit {place}");
+                    pictures.extend(face);
+                }
+            }
+            pictures.extend(set_back(set));
+            // Each its own, read as a colour, and nothing in the set's folder that no card
+            // shows.
+            let folder = format!("textures/cards/sets/{set}/");
+            let all = assets::FILES
+                .iter()
+                .filter(|(file, _)| file.starts_with(&folder));
+            assert_eq!(all.count(), suits.len() * ranks.len() + 1, "{set}");
+            pictures.sort();
+            pictures.dedup();
+            assert_eq!(pictures.len(), suits.len() * ranks.len() + 1, "{set}");
+            assert!(pictures.iter().all(|f| crate::textures::is_colour(f)));
+
+            assert_eq!(set_face(set, 8, "A"), None, "a set has eight suits");
+            assert_eq!(set_face(set, 0, "14"), None);
+            assert_eq!(set_face(set, 0, ""), None);
+            assert_eq!(set_face(set, 0, " q "), set_face(set, 0, "Q"));
+            // An ace by either name has the same face but for the name in its corners.
+            assert_ne!(set_face(set, 0, "A"), set_face(set, 0, "1"));
+        }
+        // A game's suits wear a set's by place: its first is the set's first.
+        assert_eq!(
+            set_face("empires", 0, "7").as_deref(),
+            Some("textures/cards/sets/empires/greece_7_albedo.png")
+        );
+        assert_eq!(set_face("no such set", 0, "A"), None);
+        assert_eq!(set_back("no such set"), None);
+        // A set's folder is never left without the set being listed here.
+        let folders = assets::FILES
+            .iter()
+            .filter_map(|(file, _)| file.strip_prefix("textures/cards/sets/"))
+            .filter_map(|rest| rest.split('/').next());
+        for folder in folders {
+            assert!(CARD_SETS.iter().any(|(id, _)| *id == folder), "{folder}");
+        }
     }
 
     #[test]
