@@ -397,6 +397,8 @@ mod tests {
             goals: vec![],
             pieces: vec![],
             counters: vec![],
+            opening: None,
+            reserves: Default::default(),
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),

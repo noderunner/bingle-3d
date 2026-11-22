@@ -162,7 +162,10 @@ choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
 the board's lines cross, each player's in a wooden bowl beside the board. Tak has its blocks,
-walls and capstones, stacked as they are played; draughts wooden checkers; Breakthrough,
+walls and capstones, stacked as they are played, and what each player has left stands beside
+the board at their right hand: click it to take a stone (the wheel turns it from flat to
+standing), then click where it goes. A stack clicked is picked up whole; the wheel puts its
+stones back down one at a time, and each click then drops one where it goes. Draughts wooden checkers; Breakthrough,
 Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
 wood with a dark border, and red checkers for arrows. Blooms' stones are polished minerals (red
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden

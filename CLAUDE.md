@@ -220,6 +220,13 @@ A game's own rules and its players' words keep their terms.
   outline; `places` and `width_at` have no Bevy in them. A click on a bowl makes its choice (a
   stone of its colour: `play::Choice`); the stone waits over the bowl and is carried to the cell
   it is placed on (`board::bowl_stones`).
+- `src/supply.rs`: what each seat has left to place (the definition's `reserves` and each
+  piece's `pool`; the position's counts), in a line along the board's side at the seat's right
+  hand: a flat piece on its edge, a tall one upright. `pools`, `Stance` and `line` have no Bevy
+  in them. A click on the player's own takes its plain piece (`board::show_supply`); it waits
+  over its place and is carried where it goes, as from a bowl (`board::bowl_stones`, whose
+  sources are both). In an opening where seats place each other's pieces (`opening.owner`), the
+  piece is shown in the other's colour.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which
@@ -259,7 +266,8 @@ A game's own rules and its players' words keep their terms.
   and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
-  (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
+  (`goal_strips`): the rim there is stained, and the cells shaded, in its colour; a goal every
+  seat shares (Tak's roads) is nobody's to colour, and is not marked. The board also
   lights the cells a click would be taken on (always while a piece is in hand) and shows the
   move being built: what it places as see-through pieces (solid once the move is sent), a piece
   it moves held over its space or carried to where it goes, and what it aims held under the
@@ -281,8 +289,12 @@ A game's own rules and its players' words keep their terms.
 - `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
   escape menu's).
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it
-  (`in_hand` is a piece taken to place; `may_end` a move a one-seat game may send part of); its systems turn clicks on a `Spot` (a board cell or a
-  piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
+  (`in_hand` is a piece taken to place; `may_end` a move a one-seat game may send part of;
+  `stack_moves` a stack picked up, by its gestures: a position, a count, a position for each
+  piece dropped; a stack clicked is taken whole); its systems turn clicks on a `Spot` (a board cell or a
+  piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
+  kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
+  and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position
   names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.

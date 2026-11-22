@@ -370,6 +370,8 @@ mod tests {
                 goals: vec![],
                 pieces: vec![],
                 counters: vec![],
+                opening: None,
+                reserves: Default::default(),
             },
             vec![BotInfo {
                 id: "mcts".into(),

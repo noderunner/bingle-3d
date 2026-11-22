@@ -212,6 +212,25 @@ pub fn model_span(file: &str) -> Option<(f32, f32)> {
     span
 }
 
+/// The least and greatest corners of a model's first mesh's box, in metres.
+pub fn model_bounds(file: &str) -> Option<(Vec3, Vec3)> {
+    let doc = model_json(file)?;
+    let corner = |v: &serde_json::Value| -> Option<Vec3> {
+        Some(Vec3::new(
+            v[0].as_f64()? as f32,
+            v[1].as_f64()? as f32,
+            v[2].as_f64()? as f32,
+        ))
+    };
+    let mut bounds: Option<(Vec3, Vec3)> = None;
+    for part in doc["meshes"][0]["primitives"].as_array()? {
+        let positions = &doc["accessors"][part["attributes"]["POSITION"].as_u64()? as usize];
+        let (low, high) = (corner(&positions["min"])?, corner(&positions["max"])?);
+        bounds = Some(bounds.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
+    }
+    bounds
+}
+
 /// The parts of a model's first mesh, in order, each by the name of its material: a card's
 /// face, back and edge. A model with no materials has one part, with no name.
 pub fn model_parts(file: &str) -> Vec<String> {
@@ -286,6 +305,15 @@ mod tests {
         assert_eq!(model_span("appearance/hex.toml"), None, "not a model");
         assert_eq!(model_span("models/nothing.glb"), None);
         assert!(model_parts("models/nothing.glb").is_empty());
+        // A Tak flat stone: a square block, 18.6 mm across and 6.6 mm thick.
+        let (low, high) = model_bounds("models/tak/flat.glb").unwrap();
+        let size = high - low;
+        assert!(
+            (size.x - 0.0186).abs() < 2e-4 && (size.z - size.x).abs() < 1e-5,
+            "{size}"
+        );
+        assert!((size.y - 0.0066).abs() < 2e-4, "{size}");
+        assert_eq!(model_bounds("models/nothing.glb"), None);
         // Every model can be stood on the table.
         for (file, _) in FILES.iter().filter(|(f, _)| f.starts_with("models/")) {
             let (low, high) = model_span(file).unwrap_or_else(|| panic!("{file}"));

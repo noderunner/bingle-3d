@@ -21,6 +21,7 @@ pub struct OrbitCameraPlugin;
 impl Plugin for OrbitCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Reach>()
+            .init_resource::<WheelTaken>()
             .init_resource::<StartView>()
             .add_systems(Startup, spawn_camera)
             .add_systems(
@@ -176,8 +177,13 @@ const PAN_KEY_SPEED: f32 = 0.8;
 const KEY_SPEED: f32 = 1.5;
 /// How much one wheel notch brings the camera in.
 const ZOOM_PER_LINE: f32 = 0.9;
+/// The wheel is the move's while it changes something there (how many of a stack are carried,
+/// a flat stone or a standing one): the camera does not zoom with it then (`play.rs`).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WheelTaken(pub bool);
+
 /// Pixel-precise scrolling (touchpads) counts this many pixels as one notch.
-const PIXELS_PER_LINE: f32 = 40.0;
+pub(crate) const PIXELS_PER_LINE: f32 = 40.0;
 
 #[expect(
     clippy::too_many_arguments,
@@ -193,7 +199,7 @@ fn orbit_input(
     focus: Option<Res<InputFocus>>,
     menu: Option<Res<crate::escape_menu::EscapeMenu>>,
     reach: Res<Reach>,
-    mut cameras: Query<&mut OrbitCamera>,
+    (taken, mut cameras): (Option<Res<WheelTaken>>, Query<&mut OrbitCamera>),
 ) {
     // The escape menu covers the table: the table stays as it is behind it.
     if !crate::escape_menu::closed(menu.as_deref()) {
@@ -226,7 +232,7 @@ fn orbit_input(
         * time.delta_secs();
 
     let lines = match scroll.unit {
-        _ if pointer.is_over_ui() => 0.0,
+        _ if pointer.is_over_ui() || taken.is_some_and(|t| t.0) => 0.0,
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_LINE,
     };
