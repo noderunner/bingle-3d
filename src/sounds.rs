@@ -105,6 +105,8 @@ impl Moment {
                 .find(|c| c.to.is_none())
                 .map(|c| c.from.to_string())
                 .or_else(|| turn.in_hand().map(|piece| format!("piece {piece}")))
+                // Something taken up to put down (a fence from its bowl).
+                .or_else(|| turn.taken().map(|_| "taken".to_string()))
                 // A stack picked up, and each time the wheel changes how much of it.
                 .or_else(|| {
                     let m = turn.stack_moves().pop()?;

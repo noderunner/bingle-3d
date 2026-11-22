@@ -510,6 +510,20 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   The road goals every seat shares no longer shade the board's edges in no one's colour: that
   marking says something only where each seat has its own (Hex). Generic: any game whose seats
   keep pieces in reserve gets a supply.
+- Fendo (`assets/appearance/fendo.toml`): chess pawns of boxwood and of orange-stained maple, and
+  fences of dark walnut (`fences.py`: a slender rail 90 % of a cell's side long, so a square's
+  corners show between the fences round it). The fences are the walls the position's view gives
+  (`ext.view.walls`, pairs of neighbouring squares, as Bingle's page draws them for any game
+  whose rules are written in Go), so any game with walls in its view gets them; one that has
+  just appeared drops in. Each seat's pawns in stock stand beside the board at its right hand,
+  as Tak's stones do, counted by the view's `stock` counter (`[supply]`: the reserves do not
+  say), and a click on the player's own takes one (the `add` choice), which waits over its
+  place; a click on a square, or a square clicked at once, adds it there. The fences never run
+  out, so they are heaped in one bowl, at the first seat's left hand, that both players take
+  from: once the piece has moved (or been picked up, to stay), a click on the bowl takes a fence
+  up, the sides of the piece's square it may go on are lit, and a click on one carries it there.
+  Which action builds on which side is the look's (`[fences] sides`: the API names the actions
+  but not their sides). The panel's fence buttons still work.
 - A board's lines are as thick round the outside as between its cells: the darkened layer under
   the cells is grown by a cell's margin, since round the outside only one cell's margin made the
   line (half as thick). The cells stand only 0.3 mm proud of the lines, not 1.2 mm: the deeper

@@ -51,6 +51,11 @@ pub struct Appearance {
     /// The trays a seat keeps what it captures in (`trays.rs`), when the game counts that.
     #[serde(default)]
     pub trays: TrayLook,
+    /// The pieces a seat has left to place, when the view counts them rather than the reserves
+    /// (`supply.rs`).
+    pub supply: Option<SupplyLook>,
+    /// How the walls the view says stand between positions are drawn, and placed (`fences.rs`).
+    pub fences: Option<FenceLook>,
     /// The kind of piece what follows a move of two parts is shown as while the move is built
     /// (an arrow shot from where a piece landed), by its id in `pieces`. The server does not
     /// say what it puts down; without this it is the generic stone.
@@ -89,6 +94,32 @@ pub struct BowlLook {
     /// How big the bowl is against its model (1 when not said): smaller where a seat has a
     /// bowl for each of several colours.
     pub size: Option<f32>,
+}
+
+/// A seat's pieces left to place, counted in the view (a game whose rules are written in Go):
+/// the counter that says how many, and the choice (an action's id) that places one.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupplyLook {
+    pub counter: String,
+    pub take: String,
+}
+
+/// The walls the view says stand between positions, drawn as fences: the model and material of
+/// one, the bowl both seats take them from (its model, the heap in it, what the bowl is made of,
+/// its size against its model) and the side of a square each action that builds one puts it on,
+/// as the step to the neighbour beyond (layout units, y towards the near side).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FenceLook {
+    pub model: String,
+    pub material: String,
+    pub bowl: String,
+    pub heap: String,
+    pub bowl_material: String,
+    pub size: Option<f32>,
+    #[serde(default)]
+    pub sides: BTreeMap<String, [f32; 2]>,
 }
 
 /// The trays in front of the seats, for a game that counts what each captures (`trays.rs`):
@@ -247,6 +278,18 @@ impl Appearance {
         {
             if !self.materials.contains_key(name) {
                 out.push(format!("board: no material {name}"));
+            }
+        }
+        if let Some(f) = &self.fences {
+            for file in [&f.model, &f.bowl, &f.heap] {
+                if !assets::exists(file) {
+                    out.push(format!("fences: no model {file}"));
+                }
+            }
+            for name in [&f.material, &f.bowl_material] {
+                if !self.materials.contains_key(name) {
+                    out.push(format!("fences: no material {name}"));
+                }
             }
         }
         if let Some(name) = &self.trays.material

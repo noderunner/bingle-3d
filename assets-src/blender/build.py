@@ -29,6 +29,7 @@ STEPS = [
     "chessmen",
     "checkers",
     "tak",
+    "fences",
     "playing_cards",
     "card_faces",
     "dice",

@@ -231,12 +231,46 @@ def blooms():
     shot("blooms-close", (0.02, -0.11, 0.07), (0.02, -0.01, 0.02), lens=85)
 
 
+def fendo():
+    """Fendo's pawns and fences on a few squares (lines drawn on the stand-in board), and the bowl
+    of fences beside them."""
+    import chessmen
+    import fences
+    import tableware
+
+    stage(board=(0.30, 0.22))
+    look = previews.appearance("fendo")
+    materials(look)
+    line = previews.material("line", {"wood": "walnut", "tint": [0.12, 0.10, 0.09]}, True)
+    for k in range(-3, 4):
+        previews.box(f"Line x{k}", (0.0006, 4 * PITCH, 0.0002), ((k + 0.5) * PITCH, 0.5 * PITCH, BOARD_TOP), line)
+        previews.box(f"Line y{k}", (6 * PITCH, 0.0006, 0.0002), (0.5 * PITCH, (k + 0.5) * PITCH, BOARD_TOP), line)
+    white, orange = look["seats"]["white"]["pieces"], look["seats"]["orange"]["pieces"]
+    for gx, gy, kind in ((-1, 0, white), (1, 1, orange), (2, -1, white)):
+        obj, tall = chessmen.make("pawn")
+        stand(obj, tall, kind, gx * PITCH, gy * PITCH)
+    # Fences on squares' sides: (square, the step to the neighbour it faces).
+    for (gx, gy), (dx, dy) in (((-1, 0), (1, 0)), ((-1, 0), (0, 1)), ((1, 1), (-1, 0)), ((1, 1), (0, -1)), ((0, 1), (0, -1))):
+        obj = fences.fence()
+        stand(obj, fences.HEIGHT, "fence", (gx + dx / 2) * PITCH, (gy + dy / 2) * PITCH, yaw=math.pi / 2 if dx else 0.0)
+    bowl = tableware.bowl()
+    heap = fences.heap()
+    for obj, material in ((bowl, "bowl"), (heap, "fence")):
+        obj.data.materials.clear()
+        obj.data.materials.append(bpy.data.materials[material])
+        obj.scale = (0.62, 0.62, 0.62)
+        obj.location = (0.21, -0.02, 0.0)
+    shot("fendo", (0.06, -0.36, 0.22), (0.05, 0.0, 0.02))
+    shot("fendo-close", (-0.01, -0.12, 0.08), (-0.01, 0.01, 0.03), lens=85)
+
+
 SCENES = {
     chess: ("chess", "chess-knight", "chess-heads"),
     draughts: ("checkers", "checkers-close"),
     tak_pieces: ("tak", "tak-close"),
     cards_and_dice: ("cards-dice", "dice-close", "card-close"),
     blooms: ("blooms", "blooms-close"),
+    fendo: ("fendo", "fendo-close"),
 }
 
 

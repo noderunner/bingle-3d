@@ -905,6 +905,14 @@ impl Gesture {
         }
     }
 
+    /// A choice of the kind of piece `id`.
+    pub fn piece(id: &str) -> Self {
+        Gesture {
+            kind: "piece".into(),
+            value: id.into(),
+        }
+    }
+
     /// A click on the board, rather than a choice from a list.
     pub fn is_pos(&self) -> bool {
         self.kind == "pos"
@@ -973,6 +981,10 @@ pub struct Position {
     /// Kept as it came, since each game has its own; read with [`Position::count`].
     #[serde(default)]
     pub reserves: serde_json::Value,
+    /// A game whose rules are written in Go keeps more here, with a view of it to draw from
+    /// (`ext.view`: each seat's counters, the walls between positions). Kept as it came.
+    #[serde(default)]
+    pub ext: serde_json::Value,
 }
 
 impl Position {
@@ -983,6 +995,30 @@ impl Position {
             .and_then(|r| r.get(pool))
             .and_then(serde_json::Value::as_u64)
             .map_or(0, |n| n.min(u32::MAX as u64) as u32)
+    }
+
+    /// Seat `seat`'s counter `id` in the view, if it has one (Fendo's pieces left in stock).
+    pub fn view_counter(&self, seat: u32, id: &str) -> Option<u32> {
+        self.ext["view"]["seats"][seat.to_string()]["counters"]
+            .as_array()?
+            .iter()
+            .find(|c| c["id"] == id)?["value"]
+            .as_u64()
+            .map(|n| n.min(u32::MAX as u64) as u32)
+    }
+
+    /// The walls the view says stand between neighbouring positions (Fendo's fences), each by
+    /// its two positions.
+    pub fn walls(&self) -> Vec<(String, String)> {
+        self.ext["view"]["walls"]
+            .as_array()
+            .map(|walls| {
+                walls
+                    .iter()
+                    .filter_map(|w| Some((w[0].as_str()?.to_string(), w[1].as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -1163,6 +1199,22 @@ mod tests {
         assert_eq!(Version::parse("1.2"), None);
         assert_eq!(Version::parse("1.2.3.4"), None);
         assert_eq!(Version::parse("v1.2.3"), None);
+    }
+
+    #[test]
+    fn a_view_says_each_seats_counters_and_the_walls_between_positions() {
+        let position: Position = serde_json::from_str(
+            r#"{"cells":{},"ext":{"view":{"walls":[["d3","e3"],["a1"]],
+            "seats":{"1":{"counters":[{"id":"territory","value":0},{"id":"stock","value":6}]},
+            "2":{"counters":[{"id":"stock","value":5}]}}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(position.view_counter(1, "stock"), Some(6));
+        assert_eq!(position.view_counter(2, "stock"), Some(5));
+        assert_eq!(position.view_counter(3, "stock"), None);
+        assert_eq!(position.view_counter(2, "territory"), None);
+        assert_eq!(position.walls(), [("d3".to_string(), "e3".to_string())]);
+        assert!(Position::default().walls().is_empty());
     }
 
     #[test]

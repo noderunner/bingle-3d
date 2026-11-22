@@ -149,6 +149,10 @@ pub struct Turn {
     pub may_end: bool,
     /// Why the last attempt went wrong, for the player.
     pub problem: Option<Problem>,
+    /// Something taken in hand that a later click puts somewhere (a fence from its bowl): the
+    /// choices it may become, one of which that click makes. Not a gesture: nothing is chosen
+    /// until it is put down.
+    taken: Option<Vec<Gesture>>,
 }
 
 impl Turn {
@@ -164,6 +168,7 @@ impl Turn {
             stage: Stage::Asking,
             may_end: false,
             problem: None,
+            taken: None,
         }
     }
 
@@ -336,16 +341,78 @@ impl Turn {
         self.stage == Stage::Choosing && (self.last_click().is_some() || self.in_hand().is_some())
     }
 
-    /// The kind of piece the player has taken to place (from its bowl, say), while it waits for
-    /// where it goes: a choice of piece the player made, not one taken for them.
+    /// What the player has taken to place (from its bowl or a seat's supply), while it waits
+    /// for where it goes: the kind of piece, or the choice that places one (Fendo's `add`). A
+    /// choice the player made, not one taken for them, and before any click on the board.
     pub fn in_hand(&self) -> Option<&str> {
+        self.in_hand_choice().map(|g| g.value.as_str())
+    }
+
+    /// The choice [`Turn::in_hand`] names.
+    pub fn in_hand_choice(&self) -> Option<&Gesture> {
+        if self.stage != Stage::Choosing || self.gestures.iter().any(Gesture::is_pos) {
+            return None;
+        }
+        let i = self
+            .gestures
+            .iter()
+            .rposition(|g| g.kind == "piece" || g.kind == "action")?;
+        if i < self.forced {
+            return None;
+        }
+        // It waits for where it goes: every selection it could still become goes on to a
+        // position.
+        let mut matching = self.matching().peekable();
+        matching.peek()?;
+        matching
+            .all(|o| o.gestures[i + 1..].iter().any(Gesture::is_pos))
+            .then(|| &self.gestures[i])
+    }
+
+    /// The selections made that place something (not move it): each says where, and by its
+    /// gestures where from (a bowl's piece, a supply's choice).
+    pub fn placings(&self) -> impl Iterator<Item = &LegalSelection> {
+        self.made
+            .iter()
+            .filter(|s| s.from.is_none() && s.to.is_some())
+    }
+
+    /// Takes up something a later click puts somewhere (a fence from its bowl): one of
+    /// `choices`, while one of them may be chosen next. Taken up again, it is put back.
+    pub fn take_up(&mut self, choices: &[Gesture]) -> Outcome {
+        if self.stage != Stage::Choosing {
+            return Outcome::Ignored;
+        }
+        if self.taken.take().is_some() {
+            return Outcome::Changed;
+        }
+        let n = self.gestures.len();
+        let next = self
+            .matching()
+            .any(|o| o.gestures.get(n).is_some_and(|g| choices.contains(g)));
+        if !next {
+            return Outcome::Ignored;
+        }
+        self.taken = Some(choices.to_vec());
+        Outcome::Changed
+    }
+
+    /// What is taken up, while it is: the choices it may become that may be made next.
+    pub fn taken(&self) -> Option<Vec<&Gesture>> {
         if self.stage != Stage::Choosing {
             return None;
         }
-        let i = self.gestures.iter().rposition(|g| g.kind == "piece")?;
-        let after = &self.gestures[i + 1..];
-        (i >= self.forced && !after.iter().any(Gesture::is_pos))
-            .then(|| self.gestures[i].value.as_str())
+        let choices = self.taken.as_ref()?;
+        let n = self.gestures.len();
+        let mut next: Vec<&Gesture> = Vec::new();
+        for o in self.matching() {
+            if let Some(g) = o.gestures.get(n).filter(|g| choices.contains(g))
+                && !next.contains(&g)
+            {
+                next.push(g);
+            }
+        }
+        (!next.is_empty()).then_some(next)
     }
 
     /// What the selections made place (not move): where, and the kind of piece when they say.
@@ -479,6 +546,10 @@ impl Turn {
     /// selections made, one at a time, each to just before its last click (a piece moved and
     /// its arrow not yet shot). Nothing is sent, so nothing needs undoing on the server.
     pub fn back(&mut self) -> bool {
+        // What is taken up goes back first.
+        if self.taken.take().is_some() {
+            return true;
+        }
         match self.stage {
             Stage::Choosing if self.gestures.len() > self.forced => {
                 self.gestures
@@ -514,7 +585,9 @@ impl Turn {
     /// Whether [`Turn::back`] would take anything back.
     pub fn can_go_back(&self) -> bool {
         match self.stage {
-            Stage::Choosing => self.gestures.len() > self.forced || !self.made.is_empty(),
+            Stage::Choosing => {
+                self.taken.is_some() || self.gestures.len() > self.forced || !self.made.is_empty()
+            }
             Stage::Ready => true,
             _ => false,
         }
@@ -643,8 +716,9 @@ impl Turn {
             self.gestures.truncate(i);
             return Outcome::Changed;
         }
+        self.taken = None;
         // So does the same choice again (a stone's bowl clicked twice): the stone goes back.
-        if gesture.kind == "piece"
+        if (gesture.kind == "piece" || gesture.kind == "action")
             && self.gestures.len() > self.forced
             && self.gestures.last() == Some(gesture)
             && self.path_to(gesture).is_none()
@@ -704,6 +778,7 @@ impl Turn {
 
     /// Starts entering a selection from the options there are.
     fn start_selection(&mut self) {
+        self.taken = None;
         self.gestures.clear();
         self.take_forced();
         self.forced = self.gestures.len();
@@ -752,6 +827,11 @@ pub struct Hovering(pub Option<String>);
 /// colour).
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct Choice(pub Gesture);
+
+/// Something a click takes up to put down with a later click (a bowl of fences): one of these
+/// choices, which the later click makes.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct TakeUp(pub Vec<Gesture>);
 
 /// A position of the board, on its cell and on every piece that stands there: what a click on
 /// either means.
@@ -828,8 +908,7 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 
 fn on_click(
     click: On<PointerClick>,
-    spots: Query<&Spot>,
-    choices: Query<&Choice>,
+    (spots, choices, takes): (Query<&Spot>, Query<&Choice>, Query<&TakeUp>),
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
 ) {
@@ -842,6 +921,11 @@ fn on_click(
         gesture(&net, &mut watch, &Gesture::pos(&spot.0));
     } else if let Ok(choice) = choices.get(click.entity) {
         gesture(&net, &mut watch, &choice.0);
+    } else if let Ok(take) = takes.get(click.entity)
+        && let Some(turn) = watch.bypass_change_detection().turn.as_mut()
+        && turn.take_up(&take.0) != Outcome::Ignored
+    {
+        watch.set_changed();
     }
 }
 
@@ -1165,6 +1249,93 @@ mod tests {
         t.answered(answer(8, tak()));
         t.gesture(&g("piece", "flat"));
         assert_eq!(t.wheel(true, &HashMap::new()), Outcome::Ignored);
+    }
+
+    /// Fendo's choices: move the piece on d1 (or leave it) and fence a side of where it ends,
+    /// or add a piece.
+    fn fendo() -> Vec<LegalSelection> {
+        let fence = |from: &str, to: Option<&str>, side: &str| {
+            let mut gestures = vec![("pos", from)];
+            gestures.extend(to.map(|t| ("pos", t)));
+            gestures.push(("action", side));
+            LegalSelection {
+                from: Some(from.into()),
+                ..sel("m", Some(to.unwrap_or(from)), &gestures)
+            }
+        };
+        vec![
+            fence("d1", None, "fence-n"),
+            fence("d1", None, "fence-e"),
+            fence("d1", Some("d3"), "fence-e"),
+            fence("d1", Some("d3"), "fence-w"),
+            sel("add@a7", Some("a7"), &[("action", "add"), ("pos", "a7")]),
+            sel("add@b7", Some("b7"), &[("action", "add"), ("pos", "b7")]),
+        ]
+    }
+
+    fn sides() -> Vec<Gesture> {
+        ["fence-e", "fence-n", "fence-s", "fence-w"]
+            .map(|s| g("action", s))
+            .to_vec()
+    }
+
+    #[test]
+    fn a_choice_that_places_a_piece_is_in_hand_until_it_is_placed() {
+        let mut t = Turn::new(1);
+        t.answered(answer(2, fendo()));
+        assert_eq!(t.gesture(&g("action", "add")), Outcome::Changed);
+        assert_eq!(t.in_hand(), Some("add"));
+        assert!(t.holding(), "the squares it may go to are lit");
+        // Chosen again: put back.
+        assert_eq!(t.gesture(&g("action", "add")), Outcome::Changed);
+        assert_eq!(t.in_hand(), None);
+        t.gesture(&g("action", "add"));
+        assert_eq!(t.gesture(&g("pos", "a7")), Outcome::Ask);
+        assert_eq!(t.placings().count(), 1);
+        // A choice after a click on the board (a fence's side) is not in hand.
+        let mut t = Turn::new(1);
+        t.answered(answer(2, fendo()));
+        t.gesture(&g("pos", "d1"));
+        assert_eq!(t.in_hand(), None);
+    }
+
+    #[test]
+    fn a_fence_taken_up_waits_for_the_side_it_goes_on_and_goes_back_first() {
+        let mut t = Turn::new(1);
+        t.answered(answer(2, fendo()));
+        assert_eq!(
+            t.take_up(&sides()),
+            Outcome::Ignored,
+            "no fence may be built yet"
+        );
+        t.gesture(&g("pos", "d1"));
+        t.gesture(&g("pos", "d3"));
+        assert_eq!(t.take_up(&sides()), Outcome::Changed);
+        let taken: Vec<&str> = t
+            .taken()
+            .unwrap()
+            .iter()
+            .map(|g| g.value.as_str())
+            .collect();
+        assert_eq!(
+            taken,
+            ["fence-e", "fence-w"],
+            "the sides it may go on from d3"
+        );
+        // Back puts the fence back first; the piece stays where it was moved.
+        assert!(t.can_go_back());
+        assert!(t.back());
+        assert!(t.taken().is_none());
+        assert_eq!(t.gestures.len(), 2);
+        // Taken again, and again: put back.
+        t.take_up(&sides());
+        assert_eq!(t.take_up(&sides()), Outcome::Changed);
+        assert!(t.taken().is_none());
+        // Taken, then put on a side: the move is made, and nothing is taken any more.
+        t.take_up(&sides());
+        assert_eq!(t.gesture(&g("action", "fence-w")), Outcome::Ask);
+        assert!(t.taken().is_none());
+        assert_eq!(t.made[0].gestures.last(), Some(&g("action", "fence-w")));
     }
 
     #[test]

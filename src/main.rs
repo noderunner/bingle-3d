@@ -18,6 +18,7 @@ mod environment;
 mod environment_choice;
 mod escape_menu;
 mod families;
+mod fences;
 mod fonts;
 mod friends;
 mod game_panel;
