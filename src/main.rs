@@ -43,6 +43,7 @@ mod sounds;
 mod supply;
 mod table;
 mod textures;
+mod tints;
 mod toggles;
 mod trays;
 mod voice;

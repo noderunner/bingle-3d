@@ -51,6 +51,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `checkers` | `models/checkers/{man,king}.glb`: a wooden draughtsman, and a king, which is two | a profile turned, its edge milled |
 | `tak` | `models/tak/{flat,wall}.glb`: a square block lying flat, and the same block on its edge (Tak's capstone is the chessmen's pawn) | a box with its edges eased |
 | `fences` | `models/fence.glb`, `models/bowl_fences.glb`: a slender rail of wood 90 % of a 28 mm cell's side long, so the squares' corners show between fences (Fendo's), and a heap of them for the bowl | a box with its edges eased; the heap plain boxes dropped every way |
+| `tiles` | `models/tile_hex.glb`: a hexagonal tile of wood laid over one cell of a hexagonal board (Courtfall's terrain), a little narrower than a 28 mm cell across its flats, so the board's lines show round it; its points to the far and near sides, as the client's cells' are | a hexagonal prism with its edges eased |
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
 | `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
@@ -94,7 +95,8 @@ A game's appearance file (`assets/appearance/*.toml`) names a model for each kin
 the id the game gives it, and how it `stands`: `loose` (a stone: turned any way, leaning a
 little), `upright` (a turned piece), `square` (a block set down by hand: square to the board, a
 quarter turn any way, a little askew and a little aside of the middle, so a stack's blocks do
-not line up) or `forward` (a piece with a face). A kind it does not name is the generic stone. A seat's
+not line up), `forward` (a piece with a face) or `fitted` (a tile: true to the board, never
+turned). A kind it does not name is the generic stone. A seat's
 pieces are all of that seat's material, unless a piece has a `material` of its own.
 
 A piece is mapped in metres from every side, with the finer second set (`meshkit.box_uv(…,

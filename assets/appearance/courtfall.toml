@@ -1,0 +1,112 @@
+# How this client draws Courtfall (Bingle's ADR 0124: the server says what things are, and each
+# client decides how they look). Data only: nothing here changes the rules.
+#
+# The units are chessmen of pale and of dark wood (`chessmen.py`), by the piece each unit is in
+# the definition. The terrain the view tints a hex with is a hexagonal tile of stained wood laid
+# on it (`tiles.py`): green Overgrowth, blue Mire, red Hazard; the Eye, the centre, is a dot
+# stamped on its hex. The tiles still to draft wait beside the board, as big as the board's.
+
+games = ["courtfall-1.0.0", "courtfall-1.0.0~arena"]
+
+# The units, by the piece the definition makes each one: Warden, Outrider, Arbalest, Juggernaut,
+# Champion.
+[pieces.pawn]
+model = "models/chess/pawn.glb"
+stands = "upright"
+
+[pieces.knight]
+model = "models/chess/knight.glb"
+stands = "forward"
+
+[pieces.bishop]
+model = "models/chess/bishop.glb"
+stands = "upright"
+
+[pieces.rook]
+model = "models/chess/rook.glb"
+stands = "upright"
+
+[pieces.queen]
+model = "models/chess/queen.glb"
+stands = "upright"
+
+# The terrain tiles, by the kind a draft's selection places (`tile:green@d3`): each a tile of
+# its own stain, whoever lays it, fitted to its hex.
+[pieces.green]
+model = "models/tile_hex.glb"
+stands = "fitted"
+material = "overgrowth"
+
+[pieces.blue]
+model = "models/tile_hex.glb"
+stands = "fitted"
+material = "mire"
+
+[pieces.red]
+model = "models/tile_hex.glb"
+stands = "fitted"
+material = "hazard"
+
+# What the view's tints (a hex coloured by a key of the legend) are drawn as: a tile laid on the
+# hex, or a stamp on it. A key with no look here (a deployment zone) is not drawn.
+[tints.green]
+piece = "green"
+
+[tints.blue]
+piece = "blue"
+
+[tints.red]
+piece = "red"
+
+[tints.eye]
+stamp = "ink"
+size = 0.32
+
+# The tiles still to draft: the view's count of each kind, shown beside the board.
+[stock]
+counts = "tiles_left"
+
+[seats.white]
+pieces = "boxwood"
+colour = [0.90, 0.80, 0.62]
+
+[seats.black]
+pieces = "ebonised"
+colour = [0.13, 0.11, 0.10]
+
+[materials.boxwood]
+wood = "maple"
+tint = [1.0, 0.93, 0.78]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+[materials.ebonised]
+wood = "walnut"
+tint = [0.30, 0.26, 0.25]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# The tiles: teak stained, its figure showing through the colour; oiled, not polished.
+[materials.overgrowth]
+wood = "teak"
+tint = [0.42, 0.95, 0.36]
+clearcoat = 0.25
+clearcoat_roughness = 0.3
+
+[materials.mire]
+wood = "teak"
+tint = [0.2, 0.56, 1.4]
+clearcoat = 0.25
+clearcoat_roughness = 0.3
+
+[materials.hazard]
+wood = "teak"
+tint = [1.0, 0.5, 0.42]
+clearcoat = 0.25
+clearcoat_roughness = 0.3
+
+# The Eye's stamp: dark ink soaked into the wood, matte.
+[materials.ink]
+tint = [0.10, 0.07, 0.05]
+roughness = 0.85
+reflectance = 0.2

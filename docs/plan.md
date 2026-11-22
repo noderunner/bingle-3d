@@ -543,6 +543,23 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the pointer is beyond it, and the pointer's own arrow comes back; back over the board, it is
   the stone again. Which games have bowls is each look's: the definitions do not say which games
   are of this kind (two have their rules in Go and name no placing action).
+- Courtfall (`assets/appearance/courtfall.toml`): its units are the chessmen, by the piece each
+  is in the definition (a Warden is a pawn, an Outrider a knight, an Arbalest a bishop, a
+  Juggernaut a rook, the Champion a queen), of boxwood and ebonised walnut. Its terrain is what
+  the position's view tints each hex with (`ext.view.tints`, a key of the legend by position,
+  as Bingle's page colours them), drawn as the look's `[tints]` say (`tints.rs`): Overgrowth,
+  Mire and Hazard as hexagonal tiles of teak stained green, blue and red (`tiles.py`: a tile a
+  little narrower than a cell, so the board's lines show round it, 2.4 mm thick), laid on the
+  hex, lit with it while a click there would be taken, the units standing on them; the Eye as a
+  dot of ink stamped on its hex. A key the look does not name (the deployment zones) is not
+  drawn. During the draft the tiles still to lay (the view's `tiles_left`, `[stock]`) wait
+  beside the board to the first seat's left, a column of each colour, each tile the size of the
+  board's; a tile chosen for a hex leaves its column and shows there see-through until the
+  move is played. Laying one is still a click on the hex, then the tile's button on the panel
+  (the selection is the hex first, then the tile, so a tile cannot yet be picked up from the
+  stock and carried). Every tile is cut from the same place in the wood: one grain for all,
+  for now. Any game whose view tints positions or counts a shared stock gets the same from a
+  look of its own.
 - Commercial games are not shown, even when a server offers them, until bingle-3d has a private
   overlay build of its own (as Bingle's ADR 0127). The client may not name them, so it asked
   Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its private

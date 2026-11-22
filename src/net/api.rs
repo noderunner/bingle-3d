@@ -1011,6 +1011,36 @@ impl Position {
             .map(|n| n.min(u32::MAX as u64) as u32)
     }
 
+    /// The positions the view tints, each with the key of the game's legend it is tinted by
+    /// (Courtfall's terrain).
+    pub fn tints(&self) -> BTreeMap<String, String> {
+        self.ext["view"]["tints"]
+            .as_object()
+            .map(|tints| {
+                tints
+                    .iter()
+                    .filter_map(|(at, key)| Some((at.clone(), key.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A count the view keeps of each of several things, by its name in the view (a draft's
+    /// tiles left, by kind); empty when it has none.
+    pub fn view_counts(&self, name: &str) -> BTreeMap<String, u32> {
+        self.ext["view"][name]
+            .as_object()
+            .map(|counts| {
+                counts
+                    .iter()
+                    .filter_map(|(kind, n)| {
+                        Some((kind.clone(), n.as_u64()?.min(u32::MAX as u64) as u32))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// The walls the view says stand between neighbouring positions (Fendo's fences), each by
     /// its two positions.
     pub fn walls(&self) -> Vec<(String, String)> {
@@ -1203,6 +1233,25 @@ mod tests {
         assert_eq!(Version::parse("1.2"), None);
         assert_eq!(Version::parse("1.2.3.4"), None);
         assert_eq!(Version::parse("v1.2.3"), None);
+    }
+
+    #[test]
+    fn a_view_says_which_positions_it_tints_and_counts_what_is_left() {
+        let position: Position = serde_json::from_str(r#"{"cells":{}}"#).unwrap();
+        assert!(position.tints().is_empty());
+        assert!(position.view_counts("tiles_left").is_empty());
+        let position: Position = serde_json::from_str(
+            r#"{"cells":{},"ext":{"view":{"tints":{"d4":"eye","c3":"green","x":1},
+            "tiles_left":{"green":3,"blue":0,"red":"many"}}}}"#,
+        )
+        .unwrap();
+        let tints = position.tints();
+        assert_eq!(tints.len(), 2);
+        assert_eq!(tints["d4"], "eye");
+        assert_eq!(tints["c3"], "green");
+        let left = position.view_counts("tiles_left");
+        assert_eq!(left.len(), 2);
+        assert_eq!((left["green"], left["blue"]), (3, 0));
     }
 
     #[test]

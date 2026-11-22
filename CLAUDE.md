@@ -239,6 +239,13 @@ A game's own rules and its players' words keep their terms.
   `board::fence_aim`: a see-through fence there), and a click on the board makes the choice
   that builds it there, and it is carried there (`board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
   does not say.
+- `src/tints.rs`: the positions the view tints with a key of the game's legend
+  (`Position::tints`; Courtfall's terrain and its Eye), drawn as the look's `[tints]` say: a
+  piece of the look laid there (a tile, `Stands::Fitted`, which what stands there stands on:
+  `Kit::floor`), or a stamp of a material printed there; a key the look does not name is not
+  drawn. And what both seats have still to place, counted in the view (`[stock]`, a draft's
+  tiles: `Position::view_counts`), in a column of each kind beside the board to the first
+  seat's left. `Tinted`, `shown` and `stock` have no Bevy in them; `board::show_tints` draws them.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which

@@ -46,6 +46,7 @@ use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
+use crate::tints::{self, Tinted};
 use crate::trays;
 
 pub struct BoardPlugin;
@@ -70,6 +71,7 @@ impl Plugin for BoardPlugin {
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
+                    show_tints.run_if(resource_changed::<WatchStatus>),
                     fence_aim,
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
@@ -421,6 +423,44 @@ struct Kit {
     tray_scale: f32,
     /// How far towards the player the first seat's tray reaches, if there are trays.
     front: f32,
+    /// How each key of the view's tints is drawn, for a game whose look says (`tints.rs`).
+    tints: HashMap<String, TintKit>,
+    /// What both seats have still to place, beside the board, for a game whose look says.
+    stock: Option<StockKit>,
+}
+
+/// How the positions the view tints with one key are drawn: a piece laid there (a tile), lit
+/// as a cell is while a click there would be taken; or a stamp printed there.
+enum TintKit {
+    Laid {
+        piece: String,
+        lit: Handle<StandardMaterial>,
+    },
+    Stamp {
+        mesh: Handle<Mesh>,
+        material: Handle<StandardMaterial>,
+    },
+}
+
+/// The view's count of what both seats have still to place (`ext.view.<counts>`), and where each
+/// kind's pieces lie beside the board.
+struct StockKit {
+    counts: String,
+    slots: Vec<(String, Vec<Vec2>)>,
+}
+
+/// A tint drawn on a position: where, and its key.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct TintAt {
+    cell: String,
+    key: String,
+}
+
+/// A piece of the stock beside the board: its kind, and its place in the kind's column.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct InStock {
+    kind: String,
+    index: usize,
 }
 
 /// Fences: one's mesh and material, where its foot is below its middle (metres at the full
@@ -623,6 +663,15 @@ impl Kit {
             .iter()
             .find(|(_, c)| *c == colour)
             .map_or("", |(id, _)| id.as_str())
+    }
+
+    /// How high a position's floor is over the board, at the full pitch: the piece a tint lays
+    /// there (a tile), if any, which what stands there stands on. `tints` is the view's.
+    fn floor(&self, tints: &BTreeMap<String, String>, cell: &str) -> f32 {
+        match tints.get(cell).and_then(|key| self.tints.get(key)) {
+            Some(TintKit::Laid { piece, .. }) => self.piece(piece).height,
+            _ => 0.0,
+        }
     }
 
     /// How tall a stack of pieces is, bottom first, at the full pitch.
@@ -1076,14 +1125,16 @@ fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> Stance {
             }
         }
         Stands::Forward => upright(facing + off(6, FORWARD_OFF)),
+        Stands::Fitted => upright(0.0),
     }
 }
 
 /// Every piece of the position, bottom of each stack first.
 fn wanted_pieces(table: &Table, kit: &Kit) -> Vec<PieceAt> {
     let mut out = Vec::new();
+    let tints = table.state.state.tints();
     for (cell, stack) in &table.state.state.cells {
-        let mut under = 0.0;
+        let mut under = kit.floor(&tints, cell);
         for (layer, piece) in stack.iter().enumerate() {
             out.push(PieceAt {
                 cell: cell.clone(),
@@ -1673,6 +1724,59 @@ fn build_board(
             side_lit,
         }
     });
+    // How the view's tints are drawn: a piece of the look laid on the position, lit as a cell
+    // is while a click there would be taken; or a stamp printed on it.
+    let mut tint_kits = HashMap::new();
+    for (key, said) in tools.look.map(|l| &l.tints).into_iter().flatten() {
+        let kit = match Tinted::of(said) {
+            Some(Tinted::Laid(piece)) => {
+                let spec = tools
+                    .look
+                    .and_then(|l| l.material(l.pieces.get(&piece)?.material.as_ref()))
+                    .cloned()
+                    .unwrap_or_else(look::board);
+                TintKit::Laid {
+                    piece,
+                    lit: tools.material(&look::lit_square(&spec)),
+                }
+            }
+            Some(Tinted::Stamp { material, size }) => {
+                let Some(spec) = tools.look.and_then(|l| l.materials.get(&material)).cloned()
+                else {
+                    continue;
+                };
+                TintKit::Stamp {
+                    mesh: tools.meshes.add(
+                        Circle::new(pitch * size / 2.0)
+                            .mesh()
+                            .resolution(48)
+                            .build()
+                            .rotated_by(Quat::from_rotation_x(-FRAC_PI_2)),
+                    ),
+                    material: tools.material(&spec),
+                }
+            }
+            None => continue,
+        };
+        tint_kits.insert(key.clone(), kit);
+    }
+    // What both seats have still to place, beside the board to the first seat's left, beyond
+    // anything there: room for as many of each kind as the view counts now.
+    let stock = tools.look.and_then(|l| l.stock.as_ref()).and_then(|said| {
+        let counts = table.state.state.view_counts(&said.counts);
+        if counts.is_empty() {
+            return None;
+        }
+        let fence_bowl = fences
+            .as_ref()
+            .map_or(0.0, |f| -f.over.x + crate::bowls::BOWL_RADIUS);
+        let (slots, reach) = tints::stock(&counts, pitch, left.max(fence_bowl));
+        beside = beside.max(reach);
+        Some(StockKit {
+            counts: said.counts.clone(),
+            slots,
+        })
+    });
     let pools: HashMap<String, String> = table
         .info
         .pieces
@@ -1702,6 +1806,8 @@ fn build_board(
         counter: counter.map(|c| c.id.clone()).unwrap_or_default(),
         tray_scale: pitch / PITCH * tray_size,
         front,
+        tints: tint_kits,
+        stock,
     };
     (root, kit)
 }
@@ -2062,6 +2168,7 @@ fn show_turn(
 
     let layout = Layout::new(&table.info.board.positions);
     let cells = &table.state.state.cells;
+    let tints = table.state.state.tints();
     // The position as the move being built leaves it, so what it puts down stands on what will be
     // there: each piece it moves taken off its space, and on where it is put.
     let mut after = cells.clone();
@@ -2079,7 +2186,7 @@ fn show_turn(
                     &piece.color,
                     *centre,
                     (to, stack.len()),
-                    kit.stack_height(stack.iter()),
+                    kit.floor(&tints, to) + kit.stack_height(stack.iter()),
                 );
                 stack.push(piece);
                 (Carry::Put(put), to)
@@ -2123,7 +2230,7 @@ fn show_turn(
                     &piece.color,
                     *centre,
                     (to, stack.len()),
-                    kit.stack_height(stack.iter()),
+                    kit.floor(&tints, to) + kit.stack_height(stack.iter()),
                 );
                 stack.push(piece);
                 carried.insert(key, (Carry::Put(put), to.to_string()));
@@ -2155,7 +2262,7 @@ fn show_turn(
                         &piece.color,
                         *centre,
                         (cell, stack.len() + k),
-                        kit.stack_height(stack) + *above,
+                        kit.floor(&tints, cell) + kit.stack_height(stack) + *above,
                     );
                     at.translation.y += lift;
                     *above += kit.piece(&piece.piece).height;
@@ -2239,12 +2346,19 @@ fn show_turn(
         .and_then(|g| kit.source_for(g, colour))
         .map(|(_, piece)| piece)
         .or_else(|| turn.auto_hand().map(String::from));
+    // Nor where a click could place one of several kinds (Courtfall's tiles, chosen on the panel
+    // once the hex is clicked): which is not known yet.
+    let one_kind = |cell: &str| {
+        let mut kinds = turn.could_place(cell).filter_map(|s| s.piece.as_deref());
+        kinds.next().is_none_or(|first| kinds.all(|k| k == first))
+    };
     if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
         && turn.arriving(cell).is_some()
         && (in_hand.is_some()
-            || !turn
-                .could_place(cell)
-                .any(|s| kit.source_of_placing(s, colour).is_some()))
+            || (one_kind(cell)
+                && !turn
+                    .could_place(cell)
+                    .any(|s| kit.source_of_placing(s, colour).is_some())))
     {
         shown.push(cell);
     }
@@ -2287,7 +2401,7 @@ fn show_turn(
             colour,
             *centre,
             (cell, stack.len()),
-            kit.stack_height(stack),
+            kit.floor(&tints, cell) + kit.stack_height(stack),
         );
         let kind = kit.piece(id);
         let word = kit.colour_of(id, placing_colour(table));
@@ -2447,7 +2561,7 @@ fn bowl_stones(
             kit.colour_of(id, placing),
             *centre,
             (cell, stack.len()),
-            kit.stack_height(stack),
+            kit.floor(&table.state.state.tints(), cell) + kit.stack_height(stack),
         );
         let placed = FromBowl {
             source: source.clone(),
@@ -2609,6 +2723,127 @@ fn show_supply(
                     piece.insert((Pickable::default(), Choice(pool.take.clone())));
                 }
             }
+        }
+    }
+}
+
+/// The positions the view tints, drawn as the game's look says (a tile laid there, or a stamp),
+/// and the stock beside the board: what the view counts left of each kind, less what the move
+/// being built places.
+fn show_tints(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    roots: Query<(Entity, &Kit), With<BoardRoot>>,
+    drawn: Query<(Entity, &TintAt)>,
+    stocked: Query<(Entity, &InStock)>,
+) {
+    let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
+        return;
+    };
+    if kit.tints.is_empty() && kit.stock.is_none() {
+        return;
+    }
+    let layout = Layout::new(&table.info.board.positions);
+    let tints = table.state.state.tints();
+    let wanted: Vec<TintAt> = tints::shown(&tints, |key| kit.tints.contains_key(key))
+        .map(|(cell, key)| TintAt {
+            cell: cell.to_string(),
+            key: key.to_string(),
+        })
+        .collect();
+    let mut have = Vec::new();
+    for (entity, at) in &drawn {
+        if wanted.contains(at) {
+            have.push(at);
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+    for at in &wanted {
+        let Some(centre) = layout.centres.get(&at.cell) else {
+            continue;
+        };
+        if have.contains(&at) {
+            continue;
+        }
+        let name = Name::new(format!("{} at {}", at.key, at.cell));
+        // A click on it is a click on its position.
+        let spot = (Spot(at.cell.clone()), Pickable::default());
+        match &kit.tints[&at.key] {
+            TintKit::Laid { piece, lit } => {
+                let kind = kit.piece(piece);
+                let rest = kind.material.clone().unwrap_or_default();
+                commands.spawn((
+                    name,
+                    Mesh3d(kind.mesh.clone()),
+                    MeshMaterial3d(rest.clone()),
+                    kit.set_down(piece, "", *centre, (&at.cell, 0), 0.0),
+                    Cell {
+                        id: at.cell.clone(),
+                        rest,
+                        lit: lit.clone(),
+                    },
+                    at.clone(),
+                    spot,
+                    ChildOf(root),
+                ));
+            }
+            TintKit::Stamp { mesh, material } => {
+                commands.spawn((
+                    name,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(*centre + Vec3::Y * (kit.surface + 0.00012)),
+                    at.clone(),
+                    spot,
+                    ChildOf(root),
+                ));
+            }
+        }
+    }
+
+    let Some(stock) = &kit.stock else { return };
+    let counts = table.state.state.view_counts(&stock.counts);
+    let turn = watch.turn.as_ref();
+    let mut have: Vec<&InStock> = Vec::new();
+    for (kind, slots) in &stock.slots {
+        let placing = turn
+            .map(|t| t.placements().filter(|(_, p)| *p == Some(kind)).count())
+            .unwrap_or(0);
+        let count = (counts.get(kind).copied().unwrap_or(0) as usize)
+            .saturating_sub(placing)
+            .min(slots.len());
+        for (entity, piece) in &stocked {
+            if piece.kind == *kind {
+                if piece.index >= count {
+                    commands.entity(entity).despawn();
+                } else {
+                    have.push(piece);
+                }
+            }
+        }
+        let shown = kit.piece(kind);
+        let material = shown.material.clone().unwrap_or_default();
+        for (index, at) in slots.iter().enumerate().take(count) {
+            let there = InStock {
+                kind: kind.clone(),
+                index,
+            };
+            if have.contains(&&there) {
+                continue;
+            }
+            let centre = Vec3::new(at.x, 0.0, at.y);
+            // On the table, not the board.
+            let mut put = kit.set_down(kind, "", centre, (kind, index), 0.0);
+            put.translation.y -= kit.surface;
+            commands.spawn((
+                Name::new(format!("{kind} in the stock")),
+                Mesh3d(shown.mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                put,
+                there,
+                ChildOf(root),
+            ));
         }
     }
 }
@@ -4054,6 +4289,117 @@ mod tests {
                 at.translation.y > put.translation.y + 0.005,
                 "held above it"
             );
+        }
+
+        #[test]
+        fn tints_are_tiles_and_a_stamp_and_the_drafts_stock_waits_beside_the_board() {
+            let mut app = with_looks();
+            let mut table = grid_table(
+                "courtfall-1.0.0",
+                &[("a1", &[("queen", "white")]), ("c1", &[("queen", "black")])],
+            );
+            table.state.state.ext = serde_json::json!({"view": {
+                "tints": {"a1": "green", "b2": "eye", "c3": "zone-1"},
+                "tiles_left": {"green": 2, "blue": 1, "red": 0},
+            }});
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+            let tinted = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&TintAt, Has<Cell>)>();
+                let mut all: Vec<(String, String, bool)> = q
+                    .iter(app.world())
+                    .map(|(t, lit)| (t.cell.clone(), t.key.clone(), lit))
+                    .collect();
+                all.sort();
+                all
+            };
+            // A tile on the green hex, lit as a cell is; a stamp on the Eye; a zone, which the
+            // look does not draw, nothing.
+            assert_eq!(
+                tinted(&mut app),
+                [
+                    ("a1".to_string(), "green".to_string(), true),
+                    ("b2".to_string(), "eye".to_string(), false)
+                ]
+            );
+            // A unit on a tile stands on it.
+            let (low, high) = assets::model_span("models/tile_hex.glb").unwrap();
+            let shown = drawn(&mut app);
+            let on_tile = shown[&("a1".to_string(), 0)].1.translation.y;
+            let on_board = shown[&("c1".to_string(), 0)].1.translation.y;
+            assert!((on_tile - on_board - (high - low)).abs() < 1e-6);
+            let stock = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&InStock, &Transform)>();
+                let mut all: Vec<(String, usize, Transform)> = q
+                    .iter(app.world())
+                    .map(|(s, t)| (s.kind.clone(), s.index, *t))
+                    .collect();
+                all.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+                all
+            };
+            // The tiles still to draft, beside the board on the table, as many as are left.
+            let left = stock(&mut app);
+            let kinds: Vec<_> = left.iter().map(|(k, i, _)| (k.as_str(), *i)).collect();
+            assert_eq!(kinds, [("blue", 0), ("green", 0), ("green", 1)]);
+            assert!(left.iter().all(|(.., t)| t.translation.x < -0.05));
+            assert!(left.iter().all(|(.., t)| t.translation.y < SURFACE));
+
+            // Over a hex any of the tiles may be laid on: nothing under the pointer, since which
+            // is not chosen yet.
+            let lay = |kind: &str| {
+                let mut o = option(&[("pos", "c2"), ("action", &format!("tile-{kind}"))], None);
+                o.to = Some("c2".into());
+                o.piece = Some(kind.into());
+                o
+            };
+            app.world_mut().resource_mut::<WatchStatus>().turn =
+                Some(tak_turn(vec![lay("green"), lay("blue")]));
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c2".into());
+            app.update();
+            let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(q.iter(app.world()).count(), 0, "no stone under the pointer");
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+
+            // A tile chosen for a hex: one fewer in the stock, and a see-through tile there.
+            let mut turn = tak_turn(vec![lay("blue")]);
+            turn.gesture(&Gesture::pos("c2"));
+            turn.gesture(&Gesture {
+                kind: "action".into(),
+                value: "tile-blue".into(),
+            });
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let kinds: Vec<_> = stock(&mut app).into_iter().map(|(k, ..)| k).collect();
+            assert_eq!(kinds, ["green", "green"]);
+            let mut q = app.world_mut().query_filtered::<&Mesh3d, With<Ghost>>();
+            let ghost = q.single(app.world()).unwrap().0.clone();
+            let server = app.world().resource::<AssetServer>();
+            assert!(
+                server
+                    .get_path(ghost.id())
+                    .is_some_and(|p| p.path().ends_with("tile_hex.glb"))
+            );
+
+            // Laid: the hex is tinted, and the stock as the view now counts it.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = None;
+            let table = watch.table.as_mut().unwrap();
+            table.state.state.ext = serde_json::json!({"view": {
+                "tints": {"a1": "green", "b2": "eye", "c2": "blue"},
+                "tiles_left": {"green": 2, "blue": 0, "red": 0},
+            }});
+            app.update();
+            assert_eq!(tinted(&mut app).len(), 3);
+            assert_eq!(stock(&mut app).len(), 2);
+            // Once the draft is over the view counts nothing, and the stock is gone.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let table = watch.table.as_mut().unwrap();
+            table.state.state.ext = serde_json::json!({"view": {
+                "tints": {"a1": "green", "c2": "blue"},
+            }});
+            app.update();
+            assert!(stock(&mut app).is_empty());
+            assert_eq!(tinted(&mut app).len(), 2, "the Eye covered");
         }
 
         #[test]
