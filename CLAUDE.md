@@ -221,12 +221,22 @@ A game's own rules and its players' words keep their terms.
   stone of its colour: `play::Choice`); the stone waits over the bowl and is carried to the cell
   it is placed on (`board::bowl_stones`).
 - `src/supply.rs`: what each seat has left to place (the definition's `reserves` and each
-  piece's `pool`; the position's counts), in a line along the board's side at the seat's right
+  piece's `pool`; the position's counts; or, for a game whose rules are written in Go, the
+  view's counter its look names, `[supply]`, taken with the choice it names), in a line along the board's side at the seat's right
   hand: a flat piece on its edge, a tall one upright. `pools`, `Stance` and `line` have no Bevy
   in them. A click on the player's own takes its plain piece (`board::show_supply`); it waits
   over its place and is carried where it goes, as from a bowl (`board::bowl_stones`, whose
   sources are both). In an opening where seats place each other's pieces (`opening.owner`), the
   piece is shown in the other's colour.
+- `src/fences.rs`: the walls the view says stand between positions (`Position::walls`; Fendo's
+  fences), drawn on the side two squares share; where one stands has no Bevy in it. A game whose
+  look has `[fences]` has a bowl of them both seats take from (`play::TakeUp`: a click takes
+  one up, `Turn::take_up`; or it is taken up by itself once nothing else may follow,
+  `Turn::auto_take`). It is held under the pointer (`hand::Held`), the sides it may go on lit;
+  the side nearest the pointer, or turned to with the wheel, is aimed at (`play::SideAim`,
+  `board::fence_aim`: a see-through fence there), and a click on the board makes the choice
+  that builds it there, and it is carried there (`board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
+  does not say.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which

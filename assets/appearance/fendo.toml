@@ -1,0 +1,69 @@
+# How this client draws Fendo (Bingle's ADR 0124: the server says what things are, and each
+# client decides how they look). Data only: nothing here changes the rules.
+#
+# Turned chess pawns of pale and of orange-stained wood, and fences of dark wood (`fences.py`)
+# on the sides of the squares, a little short of each so the squares' corners show. Each seat's
+# pawns still in stock stand beside the board; the fences, which never run out, are heaped in one
+# bowl both players take from.
+
+games = ["fendo", "fendo-9", "fendo-11"]
+
+[pieces.piece]
+model = "models/chess/pawn.glb"
+stands = "upright"
+
+# The pawns a seat has left to add: the view's count of them, and the choice that adds one.
+[supply]
+counter = "stock"
+take = "add"
+
+# The fences: what one is made of, the bowl they are heaped in, and the side of its square each
+# fence-building action puts one on, as a step to the neighbour beyond it (one unit across the
+# board's layout, y towards the near side).
+[fences]
+model = "models/fence.glb"
+material = "fence"
+bowl = "models/bowl.glb"
+heap = "models/bowl_fences.glb"
+bowl_material = "bowl"
+size = 0.62
+
+[fences.sides]
+fence-n = [0, -1]
+fence-e = [1, 0]
+fence-s = [0, 1]
+fence-w = [-1, 0]
+
+[seats.white]
+pieces = "boxwood"
+colour = [0.90, 0.80, 0.62]
+
+[seats.orange]
+pieces = "orange"
+colour = [0.86, 0.45, 0.14]
+
+[materials.boxwood]
+wood = "maple"
+tint = [1.0, 0.93, 0.78]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# Maple stained a deep orange, polished as the boxwood is.
+[materials.orange]
+wood = "maple"
+tint = [0.98, 0.50, 0.16]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# Dark walnut, oiled.
+[materials.fence]
+wood = "walnut"
+tint = [0.42, 0.34, 0.30]
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+[materials.bowl]
+wood = "cherry"
+tint = [0.50, 0.40, 0.36]
+clearcoat = 0.2
+clearcoat_roughness = 0.35

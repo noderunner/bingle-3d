@@ -38,11 +38,11 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest, Route};
+use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
-use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, PieceOnBoard};
-use crate::play::{Choice, Hovering, Spot, Stage, Turn};
+use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
+use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -53,7 +53,10 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HandPlugin)
-            .configure_sets(Update, Hands.after(show_turn).after(bowl_stones))
+            .configure_sets(
+                Update,
+                Hands.after(show_turn).after(bowl_stones).after(show_fences),
+            )
             .add_message::<BoardBuilt>()
             .add_systems(
                 Update,
@@ -66,12 +69,15 @@ impl Plugin for BoardPlugin {
                     ),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
+                    show_fences.run_if(resource_changed::<WatchStatus>),
+                    fence_aim,
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
                     .chain(),
             )
             .init_resource::<BoardWood>()
+            .init_resource::<SideAim>()
             .init_resource::<ShowLegalMoves>();
     }
 }
@@ -399,6 +405,8 @@ struct Kit {
     supply: HashMap<String, Vec<SupplyPool>>,
     pools: HashMap<String, String>,
     beside: f32,
+    /// How walls between positions are drawn and put down, for a game whose look has fences.
+    fences: Option<FenceKit>,
     /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
@@ -412,6 +420,51 @@ struct Kit {
     front: f32,
 }
 
+/// Fences: one's mesh and material, where its foot is below its middle (metres at the full
+/// pitch), where one taken from the bowl waits (over its rim), the side of its square each
+/// fence-building choice puts it on (a step to the neighbour beyond), and a side a click would
+/// put one on, lit.
+struct FenceKit {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    foot: f32,
+    over: Vec3,
+    sides: HashMap<String, Vec2>,
+    side_mesh: Handle<Mesh>,
+    side_lit: Handle<StandardMaterial>,
+}
+
+impl FenceKit {
+    /// How high a fence held under the pointer is over the board: lifted, its foot clear.
+    fn held(&self, kit: &Kit) -> Held {
+        Held {
+            board: kit.surface,
+            lift: (LIFT - self.foot) * kit.scale,
+            scale: kit.scale,
+        }
+    }
+}
+
+/// The space between the bowl of fences and what stands beside the board.
+const FENCE_BOWL_GAP: f32 = 0.025;
+
+/// A see-through fence on the side a click would put the one taken on.
+#[derive(Component)]
+struct FenceGhost;
+
+/// A wall the position has, drawn as a fence, by its name (`fences::key`).
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct WallAt(String);
+
+/// A fence taken from the bowl: waiting over it, or (once a side is chosen) put on that side,
+/// named as the wall it makes.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct HeldFence(Option<String>);
+
+/// A side of a square a click would put the fence taken on, by the choice that builds there.
+#[derive(Component)]
+struct SideTarget(String);
+
 /// One pool of a seat's supply: its id, the kind of piece a click on it takes, where each of
 /// its pieces stands, and how high they stand.
 struct SupplyPool {
@@ -419,6 +472,22 @@ struct SupplyPool {
     piece: String,
     slots: Vec<Transform>,
     height: f32,
+    /// The seat's number; the view's counter that says how many it has, when the reserves do
+    /// not (`[supply]`); and the choice a click on it makes.
+    seat: u32,
+    counter: Option<String>,
+    take: Gesture,
+}
+
+impl SupplyPool {
+    /// How many the seat of colour word `colour` has in it, as the position says.
+    fn count(&self, table: &Table, colour: &str) -> usize {
+        let state = &table.state.state;
+        match &self.counter {
+            Some(id) => state.view_counter(self.seat, id).unwrap_or(0) as usize,
+            None => state.count(colour, &self.id) as usize,
+        }
+    }
 }
 
 /// A piece of a seat's supply (by its colour word), of a pool, and its place in the line.
@@ -471,16 +540,54 @@ impl Kit {
     /// Where a piece of kind `id` that this client's seat (of colour word `yours`) places is
     /// taken from, if from somewhere to see: its colour's bowl (the colour word), or its pool of
     /// the seat's supply (`colour/pool`).
-    fn source_of(&self, id: &str, yours: &str) -> Option<String> {
-        if let Some(colour) = self.bowl_of(id, yours) {
-            return Some(colour.to_string());
-        }
-        let pool = self.pools.get(id)?;
-        self.supply
-            .get(yours)?
-            .iter()
-            .any(|p| &p.id == pool)
-            .then(|| format!("{yours}/{pool}"))
+    /// Where what a choice places comes from (its colour's bowl, or `colour/pool` of the seat's
+    /// supply), and the kind of piece it is: a
+    /// choice of piece from its bowl or its pool of the seat's supply, or the choice a pool of
+    /// the supply is taken with (Fendo's `add`).
+    fn source_for(&self, choice: &Gesture, yours: &str) -> Option<(String, String)> {
+        let pools = self.supply.get(yours).map_or(&[][..], Vec::as_slice);
+        let pool = if choice.kind == "piece" {
+            if let Some(colour) = self.bowl_of(&choice.value, yours) {
+                return Some((colour.to_string(), choice.value.clone()));
+            }
+            let id = self.pools.get(&choice.value)?;
+            let pool = pools.iter().find(|p| p.counter.is_none() && &p.id == id)?;
+            return Some((format!("{yours}/{}", pool.id), choice.value.clone()));
+        } else {
+            pools.iter().find(|p| p.take == *choice)?
+        };
+        Some((format!("{yours}/{}", pool.id), pool.piece.clone()))
+    }
+
+    /// Where what a selection placing something comes from, and the kind of piece: by the first
+    /// of its gestures that names a source.
+    fn source_of_placing(&self, s: &LegalSelection, yours: &str) -> Option<(String, String)> {
+        let (source, piece) = s.gestures.iter().find_map(|g| self.source_for(g, yours))?;
+        Some((source, s.piece.clone().unwrap_or(piece)))
+    }
+
+    /// Where a fence on the side between `a` and `b` stands, if both are on the board.
+    fn fence_between(&self, layout: &Layout, a: &str, b: &str) -> Option<Transform> {
+        let fence = self.fences.as_ref()?;
+        let (middle, yaw) =
+            crate::fences::between(*layout.centres.get(a)?, *layout.centres.get(b)?);
+        Some(
+            Transform::from_translation(middle.with_y(self.surface - fence.foot * self.scale))
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(self.scale)),
+        )
+    }
+
+    /// The wall the choice `choice` (a fence-building one) puts on a side of `cell`, and where
+    /// its fence stands.
+    fn fence_on(&self, layout: &Layout, cell: &str, choice: &str) -> Option<(String, Transform)> {
+        let step = *self.fences.as_ref()?.sides.get(choice)?;
+        let centre = *layout.centres.get(cell)?;
+        let beyond = crate::fences::neighbour(&layout.centres, centre, step, layout.pitch)?;
+        Some((
+            crate::fences::key(cell, beyond),
+            self.fence_between(layout, cell, beyond)?,
+        ))
     }
 
     /// The pool of a seat's supply a source names.
@@ -1380,11 +1487,61 @@ fn build_board(
     // Each seat's supply beside the board, for a game whose seats keep pieces to place.
     let mut supply: HashMap<String, Vec<SupplyPool>> = HashMap::new();
     let mut beside = 0.0f32;
-    let kinds = crate::supply::pools(&table.info);
+    // How far to the first seat's left the supply reaches (the other seat's line, at its right).
+    let mut left = edge.iter().fold(0.0f32, |l, p| l.max(-p.x));
+    let mut kinds: Vec<(crate::supply::Pool, Option<String>, Gesture)> =
+        crate::supply::pools(&table.info)
+            .into_iter()
+            .map(|k| {
+                let take = Gesture::piece(&k.piece);
+                (k, None, take)
+            })
+            .collect();
+    // A game whose view counts each seat's pieces left to place, as its look says.
+    if kinds.is_empty()
+        && let Some(said) = tools.look.and_then(|l| l.supply.as_ref())
+        && let Some(piece) = table.info.pieces.first()
+    {
+        // Room for what each seat has left and what it has on the board, the most of any.
+        let cells = &table.state.state.cells;
+        let start = table
+            .info
+            .seats
+            .iter()
+            .map(|s| {
+                let left = table
+                    .state
+                    .state
+                    .view_counter(s.seat, &said.counter)
+                    .unwrap_or(0);
+                let on = cells
+                    .values()
+                    .flatten()
+                    .filter(|p| p.color == s.color)
+                    .count();
+                left + on as u32
+            })
+            .max()
+            .unwrap_or(0);
+        if start > 0 {
+            kinds.push((
+                crate::supply::Pool {
+                    id: said.counter.clone(),
+                    piece: piece.id.clone(),
+                    start,
+                },
+                Some(said.counter.clone()),
+                Gesture {
+                    kind: "action".into(),
+                    value: said.take.clone(),
+                },
+            ));
+        }
+    }
     if !kinds.is_empty() {
         let stances: Vec<(crate::supply::Stance, usize)> = kinds
             .iter()
-            .map(|k| {
+            .map(|(k, ..)| {
                 let model = tools
                     .look
                     .and_then(|l| l.pieces.get(&k.piece))
@@ -1400,9 +1557,14 @@ fn build_board(
         let seats = &table.info.seats;
         for (i, seat) in seats.iter().enumerate() {
             let places = crate::supply::places(i, seats.len(), &edge, &stances);
-            for ((kind, slots), (stance, _)) in kinds.iter().zip(places).zip(&stances) {
+            for (((kind, counter, take), slots), (stance, _)) in
+                kinds.iter().zip(places).zip(&stances)
+            {
                 for t in &slots {
                     beside = beside.max(t.translation.x.abs() + stance.out);
+                    if t.translation.x < 0.0 {
+                        left = left.max(-t.translation.x + stance.out / 2.0);
+                    }
                 }
                 supply
                     .entry(seat.color.clone())
@@ -1412,10 +1574,97 @@ fn build_board(
                         piece: kind.piece.clone(),
                         slots,
                         height: stance.height,
+                        seat: seat.seat,
+                        counter: counter.clone(),
+                        take: take.clone(),
                     });
             }
         }
     }
+    // The bowl of fences both seats take from, at the first seat's left hand, for a game whose
+    // look has fences.
+    let fences = tools.look.and_then(|l| l.fences.as_ref()).map(|said| {
+        let size = said.size.unwrap_or(1.0);
+        let load = |file: &str| -> Handle<Mesh> {
+            tools.server.load(
+                GltfAssetLabel::Primitive {
+                    mesh: 0,
+                    primitive: 0,
+                }
+                .from_asset(assets::path(file)),
+            )
+        };
+        let spec = |name: &str| {
+            tools
+                .look
+                .and_then(|l| l.materials.get(name))
+                .cloned()
+                .unwrap_or_else(look::groove)
+        };
+        let (wood, bowl_wood) = (spec(&said.material), spec(&said.bowl_material));
+        let (fence_material, bowl_material) = (tools.material(&wood), tools.material(&bowl_wood));
+        let radius = crate::bowls::BOWL_RADIUS * size;
+        // Shared: beside the middle of the board's side to the first seat's left, beyond any
+        // supply there.
+        let at = Vec2::new(-(left + FENCE_BOWL_GAP + radius), 0.0);
+        beside = beside.max(at.x.abs() + radius);
+        let choices: Vec<Gesture> = said
+            .sides
+            .keys()
+            .map(|id| Gesture {
+                kind: "action".into(),
+                value: id.clone(),
+            })
+            .collect();
+        commands.spawn((
+            Name::new("Bowl of fences"),
+            Mesh3d(load(&said.bowl)),
+            MeshMaterial3d(bowl_material),
+            Transform::from_xyz(at.x, 0.0, at.y).with_scale(Vec3::splat(size)),
+            Pickable::default(),
+            TakeUp(choices),
+            ChildOf(root),
+            children![(
+                Mesh3d(load(&said.heap)),
+                MeshMaterial3d(fence_material.clone()),
+                Pickable::default(),
+            )],
+        ));
+        let rim = assets::model_span(&said.bowl).map_or(0.04, |(_, high)| high) * size;
+        let (low, _) = assets::model_span(&said.model).unwrap_or((-0.003, 0.003));
+        let side_lit = tools.materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.78, 0.36),
+            emissive: LinearRgba::rgb(0.9, 0.55, 0.12),
+            ..default()
+        });
+        let mut ghost = wood.on_board(tools.wood).build(tools.server);
+        ghost.base_color = ghost.base_color.with_alpha(0.6);
+        ghost.alpha_mode = AlphaMode::Blend;
+        commands.spawn((
+            Name::new("Fence aimed"),
+            FenceGhost,
+            Mesh3d(load(&said.model)),
+            MeshMaterial3d(tools.materials.add(ghost)),
+            Transform::default(),
+            Visibility::Hidden,
+            ChildOf(root),
+        ));
+        FenceKit {
+            mesh: load(&said.model),
+            material: fence_material,
+            foot: low,
+            over: Vec3::new(at.x, rim, at.y),
+            sides: said
+                .sides
+                .iter()
+                .map(|(id, [x, y])| (id.clone(), Vec2::new(*x, *y)))
+                .collect(),
+            side_mesh: tools
+                .meshes
+                .add(Plane3d::new(Vec3::Y, Vec2::new(pitch * 0.42, pitch * 0.09))),
+            side_lit,
+        }
+    });
     let pools: HashMap<String, String> = table
         .info
         .pieces
@@ -1424,6 +1673,7 @@ fn build_board(
         .map(|p| (p.id.clone(), p.pool.clone()))
         .collect();
     let kit = Kit {
+        fences,
         supply,
         pools,
         beside,
@@ -1777,7 +2027,7 @@ fn show_turn(
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
     mut pieces: Query<(Entity, &PieceAt, &mut Spot, Option<&Carry>)>,
-    held: Query<Entity, With<Held>>,
+    held: Query<Entity, (With<Held>, Without<HeldFence>)>,
 ) {
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
@@ -1971,16 +2221,26 @@ fn show_turn(
         Stage::Choosing | Stage::Failed => Vec::new(),
     };
     // Under the pointer too, where a click would put something (not where it would pick one up).
+    // Not before anything is in hand, where what would go there comes from a bowl or the
+    // supply: it is shown once it is taken.
+    let in_hand = turn
+        .in_hand_choice()
+        .and_then(|g| kit.source_for(g, colour))
+        .map(|(_, piece)| piece);
     if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
         && turn.arriving(cell).is_some()
+        && (in_hand.is_some()
+            || !turn
+                .could_place(cell)
+                .any(|s| kit.source_of_placing(s, colour).is_some()))
     {
         shown.push(cell);
     }
     // What is placed from a bowl is carried there solid (`bowl_stones`), not shown see-through.
     let from_bowls: Vec<&str> = turn
-        .placements()
-        .filter(|(_, piece)| piece.is_some_and(|p| kit.source_of(p, colour).is_some()))
-        .map(|(cell, _)| cell)
+        .placings()
+        .filter(|s| kit.source_of_placing(s, colour).is_some())
+        .filter_map(|s| s.to.as_deref())
         .collect();
     shown.retain(|cell| !from_bowls.contains(cell));
     for cell in shown {
@@ -1996,6 +2256,8 @@ fn show_turn(
             coming
                 .piece
                 .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
+                // What is in hand, when the selections do not say (Fendo's pawn, added).
+                .or(in_hand.as_deref())
         }
         .unwrap_or_default();
         let stack = after.get(cell).map_or(&[][..], Vec::as_slice);
@@ -2069,12 +2331,18 @@ fn placing_colour(table: &Table) -> &str {
 /// hand.
 fn taken_from(turn: Option<&Turn>, kit: &Kit, yours: &str, source: &str) -> usize {
     let Some(turn) = turn else { return 0 };
-    let from = |piece: &str| kit.source_of(piece, yours).as_deref() == Some(source);
     let placed = turn
-        .placements()
-        .filter(|(_, piece)| piece.is_some_and(from))
+        .placings()
+        .filter(|s| {
+            kit.source_of_placing(s, yours)
+                .is_some_and(|(from, _)| from == source)
+        })
         .count();
-    placed + usize::from(turn.in_hand().is_some_and(from))
+    let held = turn
+        .in_hand_choice()
+        .and_then(|g| kit.source_for(g, yours))
+        .is_some_and(|(from, _)| from == source);
+    placed + usize::from(held)
 }
 
 /// The pieces the move being built takes from bowls or the supply: the one in hand waits over
@@ -2120,7 +2388,7 @@ fn bowl_stones(
         let at = match kit.supply_pool(source) {
             Some(pool) => {
                 let colour = source.split_once('/').map_or("", |(c, _)| c);
-                let have = table.state.state.count(colour, &pool.id) as usize;
+                let have = pool.count(table, colour);
                 let shown = have.saturating_sub(taken_from(Some(turn), kit, yours, source));
                 let slot = pool
                     .slots
@@ -2132,13 +2400,15 @@ fn bowl_stones(
         Transform::from_translation(at + Vec3::Y * 0.012 * kit.scale)
             .with_scale(Vec3::splat(kit.scale))
     };
-    for (cell, piece) in turn.placements() {
-        let (Some(id), Some(centre)) = (piece, layout.centres.get(cell)) else {
+    for s in turn.placings() {
+        let cell = s.to.as_deref().unwrap_or_default();
+        let Some(centre) = layout.centres.get(cell) else {
             continue;
         };
-        let Some(source) = kit.source_of(id, yours) else {
+        let Some((source, id)) = kit.source_of_placing(s, yours) else {
             continue;
         };
+        let id = id.as_str();
         if take(&|f| f.cell.as_deref() == Some(cell)).is_some() {
             continue;
         }
@@ -2178,9 +2448,8 @@ fn bowl_stones(
             }
         }
     }
-    if let Some(id) = turn.in_hand()
-        && let Some(source) = kit.source_of(id, yours)
-    {
+    if let Some((source, id)) = turn.in_hand_choice().and_then(|g| kit.source_for(g, yours)) {
+        let id = id.as_str();
         let held = FromBowl {
             source: source.clone(),
             piece: id.to_string(),
@@ -2235,7 +2504,7 @@ fn show_supply(
     let mut have: Vec<&InSupply> = Vec::new();
     for (colour, pools) in &kit.supply {
         for pool in pools {
-            let mut count = table.state.state.count(colour, &pool.id) as usize;
+            let mut count = pool.count(table, colour);
             if colour == yours {
                 let source = format!("{colour}/{}", pool.id);
                 count = count.saturating_sub(taken_from(turn, kit, yours, &source));
@@ -2274,14 +2543,285 @@ fn show_supply(
                     ChildOf(root),
                 ));
                 if colour == yours {
-                    piece.insert((
-                        Pickable::default(),
-                        Choice(Gesture {
-                            kind: "piece".into(),
-                            value: pool.piece.clone(),
-                        }),
-                    ));
+                    piece.insert((Pickable::default(), Choice(pool.take.clone())));
                 }
+            }
+        }
+    }
+}
+
+/// The walls the position has, each a fence on the side its two squares share (one that has
+/// just appeared drops in, but one the player put there); and the move being built's: a fence
+/// taken from the bowl waits over it, the sides it may go on lit, and once one is chosen it is
+/// carried there and set down.
+/// The fences `show_fences` keeps: the position's walls, the fence in hand, the sides lit.
+type FenceParts<'w, 's> = (
+    Query<'w, 's, (Entity, &'static WallAt)>,
+    Query<'w, 's, (Entity, &'static HeldFence)>,
+    Query<'w, 's, Entity, With<SideTarget>>,
+);
+
+fn show_fences(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    roots: Query<(Entity, &Kit), With<BoardRoot>>,
+    (walls, held, sides): FenceParts,
+    mut room: Local<String>,
+) {
+    for side in &sides {
+        commands.entity(side).despawn();
+    }
+    let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
+        return;
+    };
+    let Some(fence) = kit.fences.as_ref() else {
+        return;
+    };
+    let layout = Layout::new(&table.info.board.positions);
+    let turn = watch.turn.as_ref();
+    // A game just opened shows its walls as they stand, without dropping each in.
+    let opened = *room != table.room_code;
+    if opened {
+        room.clone_from(&table.room_code);
+    }
+
+    // The move being built's fence: chosen (where it goes), or taken and waiting.
+    let chosen: Option<(String, Transform)> = turn.and_then(|t| {
+        t.made.iter().find_map(|s| {
+            let cell = s.to.as_deref().or(s.from.as_deref())?;
+            s.gestures
+                .iter()
+                .find_map(|g| kit.fence_on(&layout, cell, &g.value))
+        })
+    });
+    let taken = turn.and_then(Turn::taken);
+    let mut kept = false;
+    for (entity, h) in &held {
+        match (&chosen, &h.0) {
+            (Some((key, _)), Some(k)) if k == key => kept = true,
+            // Put down: from under the pointer, carried to the side chosen.
+            (Some((key, to)), None) if !kept => {
+                commands.entity(entity).remove::<Held>().insert((
+                    HeldFence(Some(key.clone())),
+                    Rest(*to),
+                    Carry::Put(*to),
+                    Visibility::Inherited,
+                ));
+                kept = true;
+            }
+            (None, None) if taken.is_some() && !kept => kept = true,
+            _ => {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+    let waiting = Transform::from_translation(fence.over + Vec3::Y * 0.012 * kit.scale)
+        .with_scale(Vec3::splat(kit.scale));
+    if !kept {
+        let looks = (
+            Mesh3d(fence.mesh.clone()),
+            MeshMaterial3d(fence.material.clone()),
+            ChildOf(root),
+        );
+        match (&chosen, &taken) {
+            // Chosen with nothing in hand (the panel's button): from the bowl.
+            (Some((key, to)), _) => {
+                commands.spawn((
+                    Name::new("Fence put down"),
+                    HeldFence(Some(key.clone())),
+                    looks,
+                    waiting,
+                    Rest(waiting),
+                    Carry::Put(*to),
+                ));
+            }
+            // Taken: under the pointer, in place of its arrow, as an aimed piece is.
+            (None, Some(_)) => {
+                commands.spawn((
+                    Name::new("Fence in hand"),
+                    HeldFence(None),
+                    looks,
+                    fence.held(kit),
+                    Transform::from_scale(Vec3::splat(kit.scale)),
+                    Visibility::Hidden,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Where the fence taken may go: the sides of the square the piece ends on, lit.
+    if let (Some(choices), Some(turn)) = (&taken, turn) {
+        let cell = turn
+            .gestures
+            .iter()
+            .rev()
+            .find(|g| g.is_pos())
+            .map(|g| g.value.as_str());
+        for choice in choices {
+            let Some((_, at)) = cell.and_then(|c| kit.fence_on(&layout, c, &choice.value)) else {
+                continue;
+            };
+            commands.spawn((
+                Name::new(format!("Side for {}", choice.value)),
+                SideTarget(choice.value.clone()),
+                Mesh3d(fence.side_mesh.clone()),
+                MeshMaterial3d(fence.side_lit.clone()),
+                Transform::from_translation(at.translation.with_y(kit.surface + 0.0004))
+                    .with_rotation(at.rotation),
+                ChildOf(root),
+            ));
+        }
+    }
+
+    // The position's walls.
+    let wanted: Vec<(String, Transform)> = table
+        .state
+        .state
+        .walls()
+        .iter()
+        .filter_map(|(a, b)| Some((crate::fences::key(a, b), kit.fence_between(&layout, a, b)?)))
+        .collect();
+    let mut have: Vec<&str> = Vec::new();
+    for (entity, wall) in &walls {
+        if wanted.iter().any(|(k, _)| *k == wall.0) {
+            have.push(&wall.0);
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (key, at) in wanted {
+        if have.contains(&key.as_str()) {
+            continue;
+        }
+        // The player's own, just played, is where they put it already.
+        let theirs = chosen.as_ref().is_some_and(|(k, _)| *k == key);
+        let mut wall = commands.spawn((
+            Name::new(format!("Fence {key}")),
+            WallAt(key),
+            Mesh3d(fence.mesh.clone()),
+            MeshMaterial3d(fence.material.clone()),
+            ChildOf(root),
+        ));
+        if theirs || opened {
+            wall.insert((at, Rest(at)));
+        } else {
+            let mut high = at;
+            high.translation.y += DROP_HEIGHT;
+            wall.insert((
+                high,
+                Dropping {
+                    timer: Timer::new(DROP_TIME, TimerMode::Once),
+                    to: at.translation.y,
+                },
+            ));
+        }
+    }
+}
+
+/// The fence under the pointer, not the one aimed.
+type InHandFence = (With<HeldFence>, With<Held>, Without<FenceGhost>);
+
+/// How near a side the pointer must come for the fence taken to be aimed at it, against the
+/// distance between neighbours.
+const AIM_REACH: f32 = 0.7;
+
+/// While a fence is taken up: which side it would go on (`play::SideAim`) — the one the
+/// pointer is nearest, when it is near one, or the one the wheel turned to — shown by a
+/// see-through fence there, and the fence under the pointer turned to lie as it would.
+fn fence_aim(
+    watch: Res<WatchStatus>,
+    roots: Query<&Kit, With<BoardRoot>>,
+    pointer: Res<PointerOnBoard>,
+    mut aim: ResMut<SideAim>,
+    mut ghosts: Query<(&mut Transform, &mut Visibility), With<FenceGhost>>,
+    mut held: Query<&mut Transform, InHandFence>,
+    mut sides: Query<(&SideTarget, &mut Visibility), Without<FenceGhost>>,
+) {
+    let places: Vec<(Gesture, Transform)> = (|| {
+        let table = watch.table.as_ref()?;
+        let turn = watch.turn.as_ref()?;
+        let kit = roots.single().ok()?;
+        let taken = turn.taken()?;
+        let cell = turn.gestures.iter().rev().find(|g| g.is_pos())?;
+        let layout = Layout::new(&table.info.board.positions);
+        Some(
+            taken
+                .into_iter()
+                .filter_map(|g| Some((g.clone(), kit.fence_on(&layout, &cell.value, &g.value)?.1)))
+                .collect(),
+        )
+    })()
+    .unwrap_or_default();
+    if places.is_empty() {
+        if *aim != SideAim::default() {
+            *aim = SideAim::default();
+        }
+        for (_, mut vis) in &mut ghosts {
+            vis.set_if_neq(Visibility::Hidden);
+        }
+        return;
+    }
+    let kit = roots.single().expect("a board");
+    // The pointer near a side aims at it; away from them all, it leaves what the wheel chose.
+    if pointer.is_changed()
+        && let Some((hit, eye)) = pointer.0
+    {
+        let at = crate::hand::on_surface(hit, eye, kit.surface);
+        let reach = AIM_REACH * PITCH * kit.scale;
+        let nearest = places
+            .iter()
+            .map(|(g, t)| (g, t.translation.xz().distance(at.xz())))
+            .filter(|(_, d)| *d < reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(g, _)| g.clone());
+        match nearest {
+            Some(g) => {
+                let wanted = SideAim {
+                    choice: Some(g),
+                    by_wheel: false,
+                };
+                if *aim != wanted {
+                    *aim = wanted;
+                }
+            }
+            None if !aim.by_wheel && aim.choice.is_some() => *aim = SideAim::default(),
+            None => {}
+        }
+    }
+    let aimed = aim
+        .choice
+        .as_ref()
+        .and_then(|c| places.iter().find(|(g, _)| g == c));
+    if aimed.is_none() && aim.choice.is_some() {
+        *aim = SideAim::default();
+    }
+    for (mut t, mut vis) in &mut ghosts {
+        match aimed {
+            Some((_, at)) => {
+                if *t != *at {
+                    *t = *at;
+                }
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+    // The side aimed at shows the fence, not its light.
+    for (side, mut vis) in &mut sides {
+        let here = aimed.is_some_and(|(g, _)| g.value == side.0);
+        vis.set_if_neq(if here {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+    }
+    if let Some((_, at)) = aimed {
+        for mut t in &mut held {
+            if t.rotation != at.rotation {
+                t.rotation = at.rotation;
             }
         }
     }
@@ -3450,6 +3990,178 @@ mod tests {
             assert!(
                 at.translation.y > put.translation.y + 0.005,
                 "held above it"
+            );
+        }
+
+        #[test]
+        fn fendos_pawns_in_stock_its_fences_and_a_fence_taken_from_the_bowl_and_put_down() {
+            use crate::net::api::PieceDef;
+            let mut app = with_looks();
+            let mut table = grid_table("fendo", &[("b2", &[("piece", "white")])]);
+            table.info.seats[1].color = "orange".into();
+            table.info.pieces = vec![PieceDef {
+                id: "piece".into(),
+                pool: "piece".into(),
+                coverable: true,
+                ..Default::default()
+            }];
+            table.state.state.ext = serde_json::json!({"view": {
+                "walls": [["a1", "b1"]],
+                "seats": {
+                    "1": {"counters": [{"id": "stock", "value": 2}]},
+                    "2": {"counters": [{"id": "stock", "value": 1}]},
+                },
+            }});
+            table.game.seats = vec![crate::net::api::GameSeat {
+                seat: 1,
+                color: "white".into(),
+                name: "Ana".into(),
+                bot: String::new(),
+                yours: true,
+            }];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+            // Each seat's pawns in stock beside the board; a click on the player's adds one.
+            let shown = supply(&mut app);
+            let white: Vec<_> = shown.iter().filter(|s| s.0 == "white").collect();
+            assert_eq!(white.len(), 2);
+            assert!(white.iter().all(|s| s.3.as_deref() == Some("add")));
+            assert_eq!(shown.iter().filter(|s| s.0 == "orange").count(), 1);
+            // The bowl both take fences from, and the position's fence between a1 and b1.
+            let mut q = app.world_mut().query::<&TakeUp>();
+            let sides: Vec<Gesture> = q.single(app.world()).unwrap().0.clone();
+            assert_eq!(sides.len(), 4);
+            let mut q = app.world_mut().query::<(&WallAt, &Transform)>();
+            let (wall, at) = q.single(app.world()).unwrap();
+            assert_eq!(wall.0, "a1|b1");
+            let layout = Layout::new(
+                &app.world()
+                    .resource::<WatchStatus>()
+                    .table
+                    .as_ref()
+                    .unwrap()
+                    .info
+                    .board
+                    .positions,
+            );
+            let between = (layout.centres["a1"] + layout.centres["b1"]) / 2.0;
+            assert!(at.translation.xz().distance(between.xz()) < 1e-5);
+
+            // Over an empty square before a pawn is taken: nothing shown; with one in hand, a
+            // see-through pawn, not the generic stone.
+            let adds = vec![
+                option(&[("action", "add"), ("pos", "a3")], None),
+                option(&[("action", "add"), ("pos", "c3")], None),
+            ];
+            let mut adds: Vec<_> = adds
+                .into_iter()
+                .map(|mut o| {
+                    o.to = Some(o.gestures[1].value.clone());
+                    o
+                })
+                .collect();
+            // And the piece's own move, so adding is a choice, not one made for the player.
+            adds.push(option(&[("pos", "b2"), ("action", "fence-n")], Some("b2")));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(tak_turn(adds));
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a3".into());
+            app.update();
+            let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(q.iter(app.world()).count(), 0, "no stone under the pointer");
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "action".into(),
+                value: "add".into(),
+            });
+            app.update();
+            let pawn = assets::path("models/chess/pawn.glb");
+            let mut q = app.world_mut().query_filtered::<&Mesh3d, With<Ghost>>();
+            let ghost = q.single(app.world()).unwrap().0.clone();
+            let server = app.world().resource::<AssetServer>();
+            assert_eq!(
+                server.get_path(ghost.id()).map(|p| p.path().to_path_buf()),
+                server
+                    .get_path(
+                        server
+                            .load::<Mesh>(
+                                GltfAssetLabel::Primitive {
+                                    mesh: 0,
+                                    primitive: 0
+                                }
+                                .from_asset(pawn)
+                            )
+                            .id()
+                    )
+                    .map(|p| p.path().to_path_buf())
+            );
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+
+            // The piece on b2 stays, a fence taken: it waits, the sides it may go on lit.
+            let options = vec![
+                option(&[("pos", "b2"), ("action", "fence-n")], Some("b2")),
+                option(&[("pos", "b2"), ("action", "fence-e")], Some("b2")),
+            ];
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = Some(tak_turn(options));
+            let turn = watch.turn.as_mut().unwrap();
+            turn.gesture(&Gesture::pos("b2"));
+            turn.take_up(&sides);
+            app.update();
+            // Under the pointer, as an aimed piece is.
+            let mut q = app.world_mut().query_filtered::<&HeldFence, With<Held>>();
+            assert_eq!(q.single(app.world()).unwrap().0, None);
+            let mut q = app.world_mut().query_filtered::<&Name, With<SideTarget>>();
+            let mut lit: Vec<String> = q
+                .iter(app.world())
+                .map(|n| n.as_str().trim_start_matches("Side for ").to_string())
+                .collect();
+            lit.sort();
+            assert_eq!(lit, ["fence-e", "fence-n"]);
+            // The pointer near b2's east side aims there: a see-through fence on it.
+            let layout_now = layout.clone();
+            let east = (layout_now.centres["b2"] + layout_now.centres["c2"]) / 2.0;
+            let surface = Vec3::Y * SURFACE;
+            app.world_mut().resource_mut::<PointerOnBoard>().0 =
+                Some((east + surface, east + surface + Vec3::Y));
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<SideAim>()
+                    .choice
+                    .as_ref()
+                    .map(|c| c.value.as_str()),
+                Some("fence-e")
+            );
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(&Transform, &Visibility), With<FenceGhost>>();
+            let (ghost, shown) = q.single(app.world()).unwrap();
+            assert_eq!(*shown, Visibility::Inherited);
+            assert!(ghost.translation.xz().distance(east.xz()) < 1e-5);
+            // Far from every side: aimed nowhere.
+            let far = layout_now.centres["a3"] + surface;
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((far, far + Vec3::Y));
+            app.update();
+            assert_eq!(app.world().resource::<SideAim>().choice, None);
+            // Put on the east side: carried to the side b2 shares with c2.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "action".into(),
+                value: "fence-e".into(),
+            });
+            app.update();
+            let mut q = app.world_mut().query::<(&HeldFence, &Carry)>();
+            let (held, carry) = q.single(app.world()).unwrap();
+            assert_eq!(held.0.as_deref(), Some("b2|c2"));
+            let Carry::Put(to) = carry else {
+                panic!("{carry:?}")
+            };
+            let side = (layout.centres["b2"] + layout.centres["c2"]) / 2.0;
+            assert!(to.translation.xz().distance(side.xz()) < 1e-5);
+            let mut q = app.world_mut().query_filtered::<(), With<SideTarget>>();
+            assert_eq!(
+                q.iter(app.world()).count(),
+                0,
+                "nothing lit once it is down"
             );
         }
 
