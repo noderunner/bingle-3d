@@ -296,11 +296,13 @@ mod tests {
                         seat: 1,
                         color: "red".into(),
                         label: "Red".into(),
+                        colors: vec![],
                     },
                     SeatDef {
                         seat: 2,
                         color: "blue".into(),
                         label: "Blue".into(),
+                        colors: vec![],
                     },
                 ],
                 board: Board {
@@ -310,6 +312,7 @@ mod tests {
                 },
                 actions: vec![],
                 goals: vec![],
+                pieces: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),

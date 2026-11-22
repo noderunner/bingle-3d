@@ -69,7 +69,8 @@ impl Cue {
 /// What of the turn makes sounds, at one moment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Moment {
-    /// Where the piece in hand was picked up from, while one is held and not yet put anywhere.
+    /// What is in hand and not yet put anywhere: where a piece was picked up from, or the kind
+    /// of piece taken (from a bowl) to place.
     lifted: Option<String>,
     /// Where the move puts something new (a piece placed, an arrow shot).
     placed: Vec<String>,
@@ -78,17 +79,25 @@ pub struct Moment {
 }
 
 impl Moment {
-    pub fn of(turn: Option<&Turn>) -> Self {
+    /// The turn's moment. With `bowls`, a piece placed is carried from its bowl and sounds as it
+    /// lands (`hand.rs`), so placing it is silent here.
+    pub fn of(turn: Option<&Turn>, bowls: bool) -> Self {
         let Some(turn) = turn else {
             return Moment::default();
         };
+        let placements: Vec<&str> = turn.placements().map(|(cell, _)| cell).collect();
         Moment {
             lifted: turn
                 .carried()
                 .into_iter()
                 .find(|c| c.to.is_none())
-                .map(|c| c.from.to_string()),
-            placed: turn.placed().map(str::to_string).collect(),
+                .map(|c| c.from.to_string())
+                .or_else(|| turn.in_hand().map(|piece| format!("piece {piece}"))),
+            placed: turn
+                .placed()
+                .filter(|cell| !bowls || !placements.contains(cell))
+                .map(str::to_string)
+                .collect(),
             sent: turn.stage == Stage::Sending,
         }
     }
@@ -186,11 +195,17 @@ struct Loaded(HashMap<String, Handle<AudioSource>>);
 
 fn listen(
     watch: Res<WatchStatus>,
+    appearances: Res<Appearances>,
     mut before: Local<(Moment, Standing)>,
     mut cues_out: MessageWriter<Cue>,
 ) {
+    let bowls = watch
+        .table
+        .as_ref()
+        .and_then(|t| appearances.for_game(&t.info.id))
+        .is_some_and(|look| look.bowls.is_some());
     let now = (
-        Moment::of(watch.turn.as_ref()),
+        Moment::of(watch.turn.as_ref(), bowls),
         Standing::of(watch.table.as_ref()),
     );
     for cue in cues(&before.0, &now.0) {

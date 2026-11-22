@@ -1,5 +1,5 @@
 """Pictures of the pieces, rendered in Cycles, to look at before the client's own screenshots:
-the chessmen, the checkers and Tak's pieces, and the cards and dice, on a board on the table, in
+the chessmen, the checkers and Tak's pieces, Blooms' stones, and the cards and dice, on a board on the table, in
 the room's light. Each is made as its step makes it, and wears the materials its appearance file
 gives it (the card and the die their generic look, repeated here from `src/look.rs`), so a
 picture shows what the client will.
@@ -211,11 +211,32 @@ def cards_and_dice():
     shot("card-close", (0.0, -0.10, 0.06), (0.0, 0.0, 0.0), lens=50)
 
 
+def blooms():
+    """Blooms' stones of polished minerals on the board (its bowls are the client's to look at:
+    they are Go's, smaller)."""
+    import stones
+
+    stage()
+    look = previews.appearance("blooms")
+    materials(look)
+    rng = random.Random(9)
+    kinds = [look["seats"][c]["pieces"] for c in ("red", "yellow", "blue", "black")]
+    spots = [(-3, -1), (-1, -1), (1, -1), (3, -1), (-2, 0), (0, 0), (2, 0), (-1, 1), (1, 1)]
+    for i, (gx, gy) in enumerate(spots):
+        obj = stones.make_stone_object(f"Stone {i}")
+        obj.data.materials.append(bpy.data.materials[kinds[i % 4]])
+        obj.location = (gx * PITCH, gy * PITCH, BOARD_TOP + stones.HALF_THICKNESS)
+        obj.rotation_euler = (0, 0, rng.uniform(0, 6.28))
+    shot("blooms", (0.0, -0.36, 0.22), (0.0, -0.01, 0.01))
+    shot("blooms-close", (0.02, -0.11, 0.07), (0.02, -0.01, 0.02), lens=85)
+
+
 SCENES = {
     chess: ("chess", "chess-knight", "chess-heads"),
     draughts: ("checkers", "checkers-close"),
     tak_pieces: ("tak", "tak-close"),
     cards_and_dice: ("cards-dice", "dice-close", "card-close"),
+    blooms: ("blooms", "blooms-close"),
 }
 
 

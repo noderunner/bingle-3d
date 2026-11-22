@@ -191,6 +191,7 @@ mod tests {
             seat,
             color: format!("c{seat}"),
             label: format!("Seat {seat}"),
+            colors: vec![],
         };
         Table::new(Opened {
             room_code: "AB12CD".into(),
@@ -205,6 +206,7 @@ mod tests {
                 },
                 actions: vec![],
                 goals: vec![],
+                pieces: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),

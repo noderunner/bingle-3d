@@ -215,8 +215,11 @@ A game's own rules and its players' words keep their terms.
   dark. **One unit is one metre, and the table top is at y = 0 with its middle at the origin,
   whatever the environment**, so boards are their real size (this is what makes VR work later)
   and nothing on the table knows where it stands.
-- `src/bowls.rs`: a bowl of each seat's stones beside the board, for games whose appearance has
-  `[bowls]`; `places` has no Bevy in it.
+- `src/bowls.rs`: a bowl of each colour a seat plays beside the board (one at its right hand,
+  or one at each hand), for games whose appearance has `[bowls]`, placed by the board's own
+  outline; `places` and `width_at` have no Bevy in them. A click on a bowl makes its choice (a
+  stone of its colour: `play::Choice`); the stone waits over the bowl and is carried to the cell
+  it is placed on (`board::bowl_stones`).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
   `embedded://<path>`; a test checks the list against the folder. It also reads a model's
   height and its parts' names from the file's own JSON. `src/textures.rs`: mipmaps for
@@ -271,7 +274,8 @@ A game's own rules and its players' words keep their terms.
   game either.
 - `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
   escape menu's).
-  `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
+  `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it
+  (`in_hand` is a piece taken to place; `may_end` a move a one-seat game may send part of); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position

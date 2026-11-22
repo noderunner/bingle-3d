@@ -41,7 +41,7 @@ use crate::assets;
 use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
-use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
+use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, PieceOnBoard};
 use crate::play::{Hovering, Spot, Stage, Turn};
 use crate::slab::{self, Rim};
 use crate::table::Table;
@@ -51,7 +51,7 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HandPlugin)
-            .configure_sets(Update, Hands.after(show_turn))
+            .configure_sets(Update, Hands.after(show_turn).after(bowl_stones))
             .add_message::<BoardBuilt>()
             .add_systems(
                 Update,
@@ -62,6 +62,7 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<Hovering>)
                             .or_eager(resource_changed::<ShowLegalMoves>),
                     ),
+                    bowl_stones.run_if(resource_changed::<WatchStatus>),
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
@@ -378,9 +379,26 @@ struct Kit {
     surface: f32,
     /// The kind of piece what a move aims is shown as, if the game's look says.
     aimed: Option<String>,
+    /// Where a stone taken from each colour's bowl waits, by colour word.
+    bowls: HashMap<String, Vec3>,
+    /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
+    piece_colour: HashMap<String, String>,
+    /// Each colour word's see-through material.
+    ghosts: HashMap<String, Handle<StandardMaterial>>,
 }
 
 impl Kit {
+    /// The colour word a piece of kind `id` is played in: its own, or else the player's.
+    fn colour_of<'a>(&'a self, id: &str, yours: &'a str) -> &'a str {
+        self.piece_colour.get(id).map_or(yours, String::as_str)
+    }
+
+    /// Where a stone of kind `id` is taken from, if it comes from a bowl: its colour word.
+    fn bowl_of<'a>(&'a self, id: &str, yours: &'a str) -> Option<&'a str> {
+        let colour = self.colour_of(id, yours);
+        self.bowls.contains_key(colour).then_some(colour)
+    }
+
     fn piece(&self, id: &str) -> &PieceKit {
         self.pieces.get(id).unwrap_or(&self.stone)
     }
@@ -508,7 +526,7 @@ fn sync_board(
     watch: Res<WatchStatus>,
     mut drawing: Drawing,
     roots: Query<(Entity, &BoardRoot, &Kit)>,
-    (pieces, sent): (Query<Shown>, Query<&Sent>),
+    (pieces, sent, from_bowls): (Query<Shown>, Query<&Sent>, Query<&FromBowl>),
     mut marks: Query<(&mut Transform, &mut Visibility), With<LastMoveMark>>,
     mut built: MessageWriter<BoardBuilt>,
 ) {
@@ -558,6 +576,7 @@ fn sync_board(
         .filter(|(_, _, carry, _)| matches!(carry, Some(Carry::Put(_))))
         .map(|(.., spot)| spot.0.as_str())
         .chain(sent.iter().map(|s| s.0.as_str()))
+        .chain(from_bowls.iter().filter_map(|f| f.cell.as_deref()))
         .collect();
     place_pieces(&mut commands, root, kit, &layout, table, &shown, Some(&put));
     for (mut t, mut vis) in &mut marks {
@@ -1011,21 +1030,58 @@ fn build_board(
     ghost.alpha_mode = AlphaMode::Blend;
     let materials = piece_materials(table, tools);
     let ghost = tools.materials.add(ghost);
-    // A bowl of each seat's stones beside the board, for a game whose look has them.
+    // Each colour word's see-through material, for what the move being built would put down.
+    let ghosts: HashMap<String, Handle<StandardMaterial>> = materials
+        .iter()
+        .filter_map(|(word, handle)| {
+            let mut m = tools.materials.get(handle)?.clone();
+            m.base_color = m.base_color.with_alpha(0.5);
+            m.alpha_mode = AlphaMode::Blend;
+            Some((word.clone(), tools.materials.add(m)))
+        })
+        .collect();
+    let piece_colour: HashMap<String, String> = table
+        .info
+        .pieces
+        .iter()
+        .filter(|p| !p.color.is_empty())
+        .map(|p| (p.id.clone(), p.color.clone()))
+        .collect();
+    // A bowl of each colour's stones beside the board, for a game whose look has them: a click
+    // on one takes a stone of the piece in that colour.
+    let mut bowls_at = HashMap::new();
     if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
         && let Some(spec) = tools.look.and_then(|l| l.materials.get(&bowls.material))
     {
         let bowl = tools.material(&spec.clone());
-        let stones: Vec<Handle<StandardMaterial>> = table
+        let seats: Vec<Vec<crate::bowls::Filled>> = table
             .info
             .seats
             .iter()
-            .map(|s| materials.get(&s.color).cloned().unwrap_or_default())
+            .map(|s| {
+                let words = if s.colors.is_empty() {
+                    std::slice::from_ref(&s.color)
+                } else {
+                    s.colors.as_slice()
+                };
+                words
+                    .iter()
+                    .map(|word| crate::bowls::Filled {
+                        colour: word.clone(),
+                        stones: materials.get(word).cloned().unwrap_or_default(),
+                        choice: piece_colour
+                            .iter()
+                            .find(|(_, c)| *c == word)
+                            .map(|(id, _)| Gesture {
+                                kind: "piece".into(),
+                                value: id.clone(),
+                            }),
+                    })
+                    .collect()
+            })
             .collect();
-        let half = outline
-            .iter()
-            .fold(Vec2::ZERO, |half, (point, _)| half.max(point.abs()));
-        crate::bowls::spawn(commands, root, tools.server, bowls, bowl, &stones, half);
+        let edge: Vec<Vec2> = outline.iter().map(|(point, _)| *point).collect();
+        bowls_at = crate::bowls::spawn(commands, root, tools.server, bowls, bowl, seats, &edge);
     }
     let kit = Kit {
         stone,
@@ -1037,6 +1093,9 @@ fn build_board(
         woodwork: std::mem::take(&mut tools.woodwork),
         surface: surface.height(),
         aimed: tools.look.and_then(|l| l.aimed.clone()),
+        bowls: bowls_at,
+        piece_colour,
+        ghosts,
     };
     (root, kit)
 }
@@ -1492,6 +1551,13 @@ fn show_turn(
     {
         shown.push(cell);
     }
+    // What is placed from a bowl is carried there solid (`bowl_stones`), not shown see-through.
+    let from_bowls: Vec<&str> = turn
+        .placements()
+        .filter(|(_, piece)| piece.is_some_and(|p| kit.bowl_of(p, colour).is_some()))
+        .map(|(cell, _)| cell)
+        .collect();
+    shown.retain(|cell| !from_bowls.contains(cell));
     for cell in shown {
         let Some(centre) = layout.centres.get(cell) else {
             continue;
@@ -1516,15 +1582,19 @@ fn show_turn(
             kit.stack_height(stack),
         );
         let kind = kit.piece(id);
+        let word = kit.colour_of(id, colour);
         // Once the move is sent it is shown as played, solid, without waiting for the server.
         let sent = turn.stage == Stage::Sending;
         let material = if sent {
             kind.material
                 .clone()
-                .or_else(|| kit.materials.get(colour).cloned())
+                .or_else(|| kit.materials.get(word).cloned())
                 .unwrap_or_default()
         } else {
-            kind.ghost.clone().unwrap_or_else(|| kit.ghost.clone())
+            kind.ghost
+                .clone()
+                .or_else(|| kit.ghosts.get(word).cloned())
+                .unwrap_or_else(|| kit.ghost.clone())
         };
         let mut ghost = commands.spawn((
             Name::new(format!("Ghost at {cell}")),
@@ -1537,6 +1607,118 @@ fn show_turn(
         if sent {
             ghost.insert(Sent(cell.to_string()));
         }
+    }
+}
+
+/// A stone taken from a bowl: waiting over it, or carried to the cell it is placed on.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct FromBowl {
+    colour: String,
+    cell: Option<String>,
+}
+
+/// The stones the move being built takes from the bowls: the one in hand waits over its bowl,
+/// lifted and bobbing; each placed is carried from there to its cell and set down, solid. One in
+/// hand that is then placed goes on from where it waits.
+fn bowl_stones(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    roots: Query<(Entity, &Kit), With<BoardRoot>>,
+    stones: Query<(Entity, &FromBowl)>,
+) {
+    let mut left: Vec<(Entity, FromBowl)> = stones.iter().map(|(e, f)| (e, f.clone())).collect();
+    let (Some(table), Some(turn), Ok((root, kit))) =
+        (&watch.table, watch.turn.as_ref(), roots.single())
+    else {
+        for (entity, _) in left {
+            commands.entity(entity).despawn();
+        }
+        return;
+    };
+    let yours = table.yours().map_or("", |s| s.color.as_str());
+    let layout = Layout::new(&table.info.board.positions);
+    let cells = &table.state.state.cells;
+    let mut take = |found: &dyn Fn(&FromBowl) -> bool| -> Option<Entity> {
+        let i = left.iter().position(|(_, f)| found(f))?;
+        Some(left.remove(i).0)
+    };
+    let stone = |id: &str, colour: &str, at: Transform| {
+        let kind = kit.piece(id);
+        let material = kind
+            .material
+            .clone()
+            .or_else(|| kit.materials.get(colour).cloned())
+            .unwrap_or_default();
+        (
+            Mesh3d(kind.mesh.clone()),
+            MeshMaterial3d(material),
+            at,
+            Rest(at),
+            ChildOf(root),
+        )
+    };
+    // Where a stone of `colour` waits: just over its bowl's rim.
+    let over = |colour: &str| {
+        let at = kit.bowls.get(colour).copied().unwrap_or_default();
+        Transform::from_translation(at + Vec3::Y * 0.012 * kit.scale)
+            .with_scale(Vec3::splat(kit.scale))
+    };
+    for (cell, piece) in turn.placements() {
+        let (Some(id), Some(centre)) = (piece, layout.centres.get(cell)) else {
+            continue;
+        };
+        let Some(colour) = kit.bowl_of(id, yours) else {
+            continue;
+        };
+        if take(&|f| f.cell.as_deref() == Some(cell)).is_some() {
+            continue;
+        }
+        let stack = cells.get(cell).map_or(&[][..], Vec::as_slice);
+        let to = kit.set_down(
+            id,
+            colour,
+            *centre,
+            (cell, stack.len()),
+            kit.stack_height(stack),
+        );
+        let placed = FromBowl {
+            colour: colour.to_string(),
+            cell: Some(cell.to_string()),
+        };
+        match take(&|f| f.cell.is_none() && f.colour == colour) {
+            // The stone in hand goes on from where it waits.
+            Some(entity) => {
+                commands.entity(entity).insert((placed, Carry::Put(to)));
+            }
+            None => {
+                commands.spawn((
+                    Name::new(format!("Stone for {cell}")),
+                    placed,
+                    stone(id, colour, over(colour)),
+                    Carry::Put(to),
+                ));
+            }
+        }
+    }
+    if let Some(id) = turn.in_hand()
+        && let Some(colour) = kit.bowl_of(id, yours)
+        && take(&|f| f.cell.is_none() && f.colour == colour).is_none()
+    {
+        commands.spawn((
+            Name::new(format!("Stone of {colour} in hand")),
+            FromBowl {
+                colour: colour.to_string(),
+                cell: None,
+            },
+            stone(id, colour, over(colour)),
+            Carry::Held {
+                lift: LIFT * kit.scale,
+                scale: kit.scale,
+            },
+        ));
+    }
+    for (entity, _) in left {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -1714,6 +1896,7 @@ mod tests {
             seat,
             color: word.into(),
             label: word.into(),
+            colors: vec![],
         };
         info.seats = vec![seat(1, "white"), seat(2, "black")];
         let two = facings(&info);
@@ -1800,6 +1983,7 @@ mod tests {
                         seat: 1,
                         color: "red".into(),
                         label: "Red".into(),
+                        colors: vec![],
                     }],
                     board: Board {
                         kind: "hex".into(),
@@ -1808,6 +1992,7 @@ mod tests {
                     },
                     actions: vec![],
                     goals: vec![],
+                    pieces: vec![],
                 },
                 game: Game {
                     game_def_id: "g".into(),
@@ -1844,6 +2029,7 @@ mod tests {
                     seat,
                     color: word.into(),
                     label: word.into(),
+                    colors: vec![],
                 })
                 .to_vec();
             t.state = stacks(1, cells);
@@ -2046,6 +2232,7 @@ mod tests {
                 made: vec![],
                 options: vec![place("flat", "c3"), place("wall", "Sc3")],
                 complete: false,
+                may_end: false,
             });
             turn.gesture(&Gesture {
                 kind: "piece".into(),
@@ -2109,6 +2296,7 @@ mod tests {
                 made: vec![],
                 options: vec![shoot("a2", "a3"), shoot("a2", "a1"), shoot("b2", "c3")],
                 complete: false,
+                may_end: false,
             });
             let click = |app: &mut App, at: &str| {
                 let mut watch = app.world_mut().resource_mut::<WatchStatus>();
@@ -2208,12 +2396,14 @@ mod tests {
                 let turn = watch.turn.as_mut().unwrap();
                 turn.answered(Selections {
                     complete: true,
+                    may_end: false,
                     ..Selections {
                         seat: 1,
                         ply: 3,
                         made: vec![],
                         options: vec![],
                         complete: false,
+                        may_end: false,
                     }
                 });
             }
@@ -2256,6 +2446,154 @@ mod tests {
                 pieces(&mut app),
                 [("a1".to_string(), false), ("a2".to_string(), false)]
             );
+        }
+
+        #[test]
+        fn a_stone_is_taken_from_its_bowl_waits_over_it_and_is_carried_to_its_cell() {
+            use crate::net::api::{LegalSelection, PieceDef, Selections};
+            use crate::play::{Choice, Turn};
+
+            let mut app = with_looks();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ));
+            let mut table = grid_table("blooms", &[]);
+            table.info.seats = [
+                (1, "red", ["red", "yellow"]),
+                (2, "blue", ["blue", "black"]),
+            ]
+            .map(|(seat, word, colours)| SeatDef {
+                seat,
+                color: word.into(),
+                label: word.into(),
+                colors: colours.map(String::from).to_vec(),
+            })
+            .to_vec();
+            table.info.pieces = ["red", "yellow", "blue", "black"]
+                .map(|c| PieceDef {
+                    id: c.into(),
+                    color: c.into(),
+                })
+                .to_vec();
+            table.game.seats = vec![crate::net::api::GameSeat {
+                seat: 1,
+                color: "red".into(),
+                name: "Ana".into(),
+                bot: String::new(),
+                yours: true,
+            }];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+
+            // A bowl for each colour, each taking a stone of its own.
+            let mut q = app
+                .world_mut()
+                .query::<(&crate::bowls::Bowl, Option<&Choice>)>();
+            let mut bowls: Vec<(String, String)> = q
+                .iter(app.world())
+                .map(|(b, c)| {
+                    (
+                        b.0.clone(),
+                        c.map(|c| c.0.value.clone()).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            bowls.sort();
+            assert_eq!(
+                bowls,
+                [
+                    ("black", "black"),
+                    ("blue", "blue"),
+                    ("red", "red"),
+                    ("yellow", "yellow")
+                ]
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+            );
+
+            let place = |piece: &str, cell: &str| LegalSelection {
+                notation: format!("{piece}{cell}"),
+                action: "place".into(),
+                to: Some(cell.into()),
+                from: None,
+                piece: Some(piece.into()),
+                aim: None,
+                gestures: vec![
+                    Gesture {
+                        kind: "piece".into(),
+                        value: piece.into(),
+                    },
+                    Gesture::pos(cell),
+                ],
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options: vec![
+                    place("red", "a1"),
+                    place("red", "b2"),
+                    place("yellow", "a1"),
+                ],
+                complete: false,
+                may_end: false,
+            });
+            turn.gesture(&Gesture {
+                kind: "piece".into(),
+                value: "red".into(),
+            });
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &FromBowl, &Carry, &Transform)>();
+            let (held, from, carry, t) = q.single(app.world()).unwrap();
+            assert_eq!((from.colour.as_str(), from.cell.as_deref()), ("red", None));
+            assert!(matches!(carry, Carry::Held { .. }));
+            assert!(
+                t.translation.x.abs() > 0.03,
+                "beside the board, over its bowl"
+            );
+
+            // Placed: the same stone, carried to the cell, solid; nothing see-through there.
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                let turn = watch.turn.as_mut().unwrap();
+                turn.gesture(&Gesture::pos("a1"));
+                turn.answered(Selections {
+                    seat: 1,
+                    ply: 3,
+                    made: vec!["reda1".into()],
+                    options: vec![],
+                    complete: true,
+                    may_end: false,
+                });
+            }
+            app.update();
+            let mut q = app.world_mut().query::<(Entity, &FromBowl, &Carry)>();
+            let (placed, from, carry) = q.single(app.world()).unwrap();
+            assert_eq!(placed, held, "the one in hand goes on");
+            assert_eq!(from.cell.as_deref(), Some("a1"));
+            let Carry::Put(to) = *carry else {
+                panic!("not put down")
+            };
+            let layout = Layout::new(&grid_table("blooms", &[]).info.board.positions);
+            assert_eq!(to.translation.xz(), layout.centres["a1"].xz());
+            let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(ghosts.iter(app.world()).count(), 0);
+
+            // Played: the stone the server reports is where it was set down, not dropped again,
+            // and the one from the bowl is gone.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = None;
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(2, &[("a1", &[("red", "red")])]),
+            });
+            app.update();
+            assert_eq!(pieces(&mut app), [("a1".to_string(), false)]);
+            let mut q = app.world_mut().query::<&FromBowl>();
+            assert_eq!(q.iter(app.world()).count(), 0);
         }
 
         #[test]
@@ -2373,6 +2711,7 @@ mod tests {
             },
             actions: vec![],
             goals: vec![goal(1, "top", "bottom"), goal(2, "left", "right")],
+            pieces: vec![],
         }
     }
 

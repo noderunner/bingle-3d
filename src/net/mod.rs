@@ -1555,6 +1555,7 @@ mod tests {
                 },
                 actions: vec![],
                 goals: vec![],
+                pieces: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),
@@ -1619,6 +1620,7 @@ mod tests {
             made: made.iter().map(|m| m.to_string()).collect(),
             complete: options.is_empty(),
             options,
+            may_end: false,
         }
     }
 

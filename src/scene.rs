@@ -518,6 +518,7 @@ mod tests {
                         seat,
                         color: format!("c{seat}"),
                         label: String::new(),
+                        colors: vec![],
                     })
                     .collect(),
                 board: Board {
@@ -527,6 +528,7 @@ mod tests {
                 },
                 actions: vec![],
                 goals: vec![],
+                pieces: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),

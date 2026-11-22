@@ -313,6 +313,9 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     }
     let hint = match turn.stage {
         Stage::Asking => String::new(),
+        Stage::Choosing if turn.can_play() => {
+            format!("Play {} as it is (Enter), or go on.", turn.notation())
+        }
         Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
         Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
         Stage::Choosing => "There is nothing to play.".into(),
@@ -328,7 +331,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     }
     let choices = turn.choices();
     let can_go_back = turn.can_go_back();
-    if choices.is_empty() && !can_go_back && turn.stage != Stage::Failed {
+    if choices.is_empty() && !can_go_back && !turn.can_play() && turn.stage != Stage::Failed {
         return;
     }
     p.spawn(buttons()).with_children(|row| {
@@ -339,7 +342,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
                 Action::Choose(choice.clone()),
             ));
         }
-        if turn.stage == Stage::Ready {
+        if turn.can_play() {
             row.spawn(button(f, "Play", Action::Submit));
         }
         if can_go_back {
@@ -392,6 +395,7 @@ mod tests {
                 label: "Swap sides".into(),
             }],
             goals: vec![],
+            pieces: vec![],
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),

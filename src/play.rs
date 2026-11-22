@@ -103,8 +103,9 @@ pub struct Turn {
     pub ply: Option<u64>,
     /// The selections made so far, in order.
     pub made: Vec<LegalSelection>,
-    /// What could be selected before each of those, to go back to.
-    before: Vec<Vec<LegalSelection>>,
+    /// What could be selected before each of those, and whether the move could end there, to go
+    /// back to.
+    before: Vec<(Vec<LegalSelection>, bool)>,
     /// What may be selected now.
     pub options: Vec<LegalSelection>,
     /// The gestures made towards the next selection.
@@ -113,6 +114,8 @@ pub struct Turn {
     /// back does not take them off.
     forced: usize,
     pub stage: Stage,
+    /// Whether the selections made may be sent as they are while more may still be chosen.
+    pub may_end: bool,
     /// Why the last attempt went wrong, for the player.
     pub problem: Option<Problem>,
 }
@@ -128,6 +131,7 @@ impl Turn {
             gestures: Vec::new(),
             forced: 0,
             stage: Stage::Asking,
+            may_end: false,
             problem: None,
         }
     }
@@ -189,7 +193,27 @@ impl Turn {
     /// Whether the player has clicked towards the selection being entered: a piece picked up,
     /// say, whose moves the board then lights.
     pub fn holding(&self) -> bool {
-        self.stage == Stage::Choosing && self.last_click().is_some()
+        self.stage == Stage::Choosing && (self.last_click().is_some() || self.in_hand().is_some())
+    }
+
+    /// The kind of piece the player has taken to place (from its bowl, say), while it waits for
+    /// where it goes: a choice of piece the player made, not one taken for them.
+    pub fn in_hand(&self) -> Option<&str> {
+        if self.stage != Stage::Choosing {
+            return None;
+        }
+        let i = self.gestures.iter().rposition(|g| g.kind == "piece")?;
+        let after = &self.gestures[i + 1..];
+        (i >= self.forced && !after.iter().any(Gesture::is_pos))
+            .then(|| self.gestures[i].value.as_str())
+    }
+
+    /// What the selections made place (not move): where, and the kind of piece when they say.
+    pub fn placements(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.made
+            .iter()
+            .filter(|s| s.from.is_none())
+            .filter_map(|s| Some((s.to.as_deref()?, s.piece.as_deref())))
     }
 
     /// Whether the next click is where what follows a move goes (an arrow shot from where the
@@ -256,6 +280,7 @@ impl Turn {
         }
         self.ply = Some(selections.ply);
         self.problem = None;
+        self.may_end = selections.may_end && !selections.made.is_empty();
         if selections.complete {
             self.stage = Stage::Ready;
             return Outcome::Changed;
@@ -321,7 +346,8 @@ impl Turn {
                 true
             }
             Stage::Choosing | Stage::Ready | Stage::Asking => match self.before.pop() {
-                Some(options) => {
+                Some((options, may_end)) => {
+                    self.may_end = may_end;
                     let undone = self.made.pop();
                     self.options = options;
                     self.stage = Stage::Choosing;
@@ -354,12 +380,23 @@ impl Turn {
         }
     }
 
+    /// Whether the move may be sent now: it is whole, or it may end where it is (what is half
+    /// entered towards another selection is let go).
+    pub fn can_play(&self) -> bool {
+        match self.stage {
+            Stage::Ready => true,
+            Stage::Choosing => self.may_end && !self.made.is_empty(),
+            _ => false,
+        }
+    }
+
     /// The player confirms the move: what to send, and the ply it was made at.
     pub fn submit(&mut self) -> Option<(String, u64)> {
         let ply = self.ply?;
-        if self.stage != Stage::Ready {
+        if !self.can_play() {
             return None;
         }
+        self.gestures.clear();
         self.stage = Stage::Sending;
         Some((self.notation(), ply))
     }
@@ -466,6 +503,15 @@ impl Turn {
             self.gestures.truncate(i);
             return Outcome::Changed;
         }
+        // So does the same choice again (a stone's bowl clicked twice): the stone goes back.
+        if gesture.kind == "piece"
+            && self.gestures.len() > self.forced
+            && self.gestures.last() == Some(gesture)
+            && self.path_to(gesture).is_none()
+        {
+            self.gestures.pop();
+            return Outcome::Changed;
+        }
         let path = match self.path_to(gesture) {
             Some(path) => path,
             // A click that does not follow on from the gestures made may start afresh (another
@@ -521,7 +567,8 @@ impl Turn {
                 _ => return Outcome::Changed,
             }
         };
-        self.before.push(std::mem::take(&mut self.options));
+        self.before
+            .push((std::mem::take(&mut self.options), self.may_end));
         self.made.push(chosen);
         self.gestures.clear();
         self.stage = Stage::Asking;
@@ -532,6 +579,11 @@ impl Turn {
 /// The position the pointer is over, if it is one on the board.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Hovering(pub Option<String>);
+
+/// A choice a click on something other than the board makes (a stone's bowl: a stone of its
+/// colour).
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct Choice(pub Gesture);
 
 /// A position of the board, on its cell and on every piece that stands there: what a click on
 /// either means.
@@ -609,15 +661,19 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 fn on_click(
     click: On<PointerClick>,
     spots: Query<&Spot>,
+    choices: Query<&Choice>,
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
 ) {
     if click.button != PointerButton::Primary {
         return;
     }
-    // Clicks bubble up to the board; only the cell or piece itself is a position.
+    // Clicks bubble up to the board; only the cell or piece itself is a position. A bowl's
+    // choice is the bowl's, whether the bowl or the stones in it were clicked.
     if let Ok(spot) = spots.get(click.entity) {
         gesture(&net, &mut watch, &Gesture::pos(&spot.0));
+    } else if let Ok(choice) = choices.get(click.entity) {
+        gesture(&net, &mut watch, &choice.0);
     }
 }
 
@@ -862,6 +918,72 @@ mod tests {
         assert_eq!(t.gestures, [Gesture::pos("a1")]);
     }
 
+    #[test]
+    fn a_move_that_may_end_after_one_selection_can_be_played_or_go_on() {
+        let mut t = Turn::new(1);
+        let red = |cell: &str| sel(cell, Some(cell), &[("piece", "red"), ("pos", cell)]);
+        let yellow = |cell: &str| sel(cell, Some(cell), &[("piece", "yellow"), ("pos", cell)]);
+        t.answered(answer(
+            5,
+            vec![red("a1"), red("b1"), yellow("a1"), yellow("b1")],
+        ));
+        assert!(!t.can_play(), "nothing placed yet");
+        assert_eq!(t.gesture(&g("piece", "red")), Outcome::Changed);
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Ask);
+        // One stone placed: a second may follow, or the move may go as it is.
+        t.answered(Selections {
+            may_end: true,
+            made: vec!["a1".into()],
+            ..answer(5, vec![yellow("b1")])
+        });
+        assert_eq!(t.stage, Stage::Choosing);
+        assert!(t.can_play());
+        // Back to before the stone: not a move yet.
+        let mut taken_back = t.clone();
+        assert!(taken_back.back());
+        assert!(!taken_back.can_play());
+        // Half way to a second stone, the first alone is sent.
+        t.gesture(&g("piece", "yellow"));
+        assert_eq!(t.submit(), Some(("a1".to_string(), 5)));
+        assert_eq!(t.stage, Stage::Sending);
+        assert!(t.gestures.is_empty());
+    }
+
+    #[test]
+    fn a_stone_taken_from_its_bowl_is_in_hand_until_placed_or_put_back() {
+        let mut t = Turn::new(1);
+        let stone =
+            |piece: &str, cell: &str| sel(cell, Some(cell), &[("piece", piece), ("pos", cell)]);
+        t.answered(answer(
+            5,
+            vec![
+                stone("red", "a1"),
+                stone("red", "b1"),
+                stone("yellow", "a1"),
+            ],
+        ));
+        assert_eq!(t.in_hand(), None);
+        assert!(!t.holding());
+        t.gesture(&g("piece", "red"));
+        assert_eq!(t.in_hand(), Some("red"));
+        assert!(t.holding(), "where it may go is lit");
+        // The same bowl again: back in it.
+        assert_eq!(t.gesture(&g("piece", "red")), Outcome::Changed);
+        assert_eq!(t.in_hand(), None);
+        // The other bowl instead, then placed.
+        t.gesture(&g("piece", "red"));
+        t.gesture(&g("piece", "yellow"));
+        assert_eq!(t.in_hand(), Some("yellow"));
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Ask);
+        assert_eq!(t.in_hand(), None);
+        assert_eq!(t.placements().collect::<Vec<_>>(), [("a1", Some("yellow"))]);
+
+        // A choice taken for the player is not in hand: there was nothing to click.
+        let mut t = Turn::new(1);
+        t.answered(answer(5, vec![place("a1"), place("b1")]));
+        assert_eq!(t.in_hand(), None);
+    }
+
     fn swap() -> LegalSelection {
         sel("swap", None, &[("action", "swap")])
     }
@@ -873,12 +995,14 @@ mod tests {
             made: vec![],
             options,
             complete: false,
+            may_end: false,
         }
     }
 
     fn complete(ply: u64) -> Selections {
         Selections {
             complete: true,
+            may_end: false,
             ..answer(ply, vec![])
         }
     }

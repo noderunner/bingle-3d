@@ -81,6 +81,9 @@ pub struct BowlLook {
     pub stones: String,
     /// What the bowl is made of. The stones are their seat's.
     pub material: String,
+    /// How big the bowl is against its model (1 when not said): smaller where a seat has a
+    /// bowl for each of several colours.
+    pub size: Option<f32>,
 }
 
 /// How a game shows on its card in the list of games to start.

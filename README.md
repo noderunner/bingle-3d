@@ -164,7 +164,9 @@ clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on th
 the board's lines cross, each player's in a wooden bowl beside the board. Tak has its blocks,
 walls and capstones, stacked as they are played; draughts wooden checkers; Breakthrough,
 Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
-wood with a dark border, and red checkers for arrows. The client needs a Bingle whose API is 1.6 or newer.
+wood with a dark border, and red checkers for arrows. Blooms' stones are polished minerals (red
+jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden
+bowl beside the board: click a bowl to take a stone, then click where it goes. The client needs a Bingle whose API is 1.6 or newer.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,

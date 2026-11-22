@@ -18,6 +18,7 @@ macro_rules! files {
 
 files![
     "appearance/amazons.toml",
+    "appearance/blooms.toml",
     "appearance/chessmen.toml",
     "appearance/draughts.toml",
     "appearance/fist.toml",
@@ -143,8 +144,12 @@ files![
     "textures/garden/tatami_normal.jpg",
     "textures/garden/treeline_albedo.png",
     "textures/garden/water_normal.jpg",
+    "textures/stone/black_slate_albedo.jpg",
+    "textures/stone/jasper_albedo.jpg",
+    "textures/stone/lapis_albedo.jpg",
     "textures/stone/shell_albedo.jpg",
     "textures/stone/slate_albedo.jpg",
+    "textures/stone/tiger_eye_albedo.jpg",
     "textures/wood/cherry_albedo.jpg",
     "textures/wood/cherry_arm.jpg",
     "textures/wood/cherry_normal.jpg",
