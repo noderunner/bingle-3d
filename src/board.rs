@@ -38,7 +38,7 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{Carry, HandPlugin, Held, LIFT, Rest};
+use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
@@ -51,6 +51,7 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HandPlugin)
+            .configure_sets(Update, Hands.after(show_turn))
             .add_message::<BoardBuilt>()
             .add_systems(
                 Update,
@@ -313,6 +314,11 @@ struct Cell {
 #[derive(Component)]
 struct Ghost;
 
+/// A piece of a move sent and not yet played, shown solid where it goes: what arrives there when
+/// it is played is not dropped in again.
+#[derive(Component)]
+struct Sent(String);
+
 /// The mark on the cell of the last move.
 #[derive(Component)]
 struct LastMoveMark;
@@ -488,12 +494,21 @@ struct Drawing<'w> {
     wood: Res<'w, BoardWood>,
 }
 
+/// A piece the scene shows: what and where it is, whether the move being built holds it, and
+/// where a click on it is taken.
+type Shown = (
+    Entity,
+    &'static PieceAt,
+    Option<&'static Carry>,
+    &'static Spot,
+);
+
 fn sync_board(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     mut drawing: Drawing,
     roots: Query<(Entity, &BoardRoot, &Kit)>,
-    pieces: Query<(Entity, &PieceAt, Option<&Carry>, &Spot)>,
+    (pieces, sent): (Query<Shown>, Query<&Sent>),
     mut marks: Query<(&mut Transform, &mut Visibility), With<LastMoveMark>>,
     mut built: MessageWriter<BoardBuilt>,
 ) {
@@ -542,6 +557,7 @@ fn sync_board(
         .iter()
         .filter(|(_, _, carry, _)| matches!(carry, Some(Carry::Put(_))))
         .map(|(.., spot)| spot.0.as_str())
+        .chain(sent.iter().map(|s| s.0.as_str()))
         .collect();
     place_pieces(&mut commands, root, kit, &layout, table, &shown, Some(&put));
     for (mut t, mut vis) in &mut marks {
@@ -1351,7 +1367,7 @@ fn show_turn(
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
-    mut pieces: Query<(Entity, &PieceAt, &mut Spot, &mut Pickable, Has<Carry>)>,
+    mut pieces: Query<(Entity, &PieceAt, &mut Spot, Option<&Carry>)>,
     held: Query<Entity, With<Held>>,
 ) {
     for ghost in &ghosts {
@@ -1405,7 +1421,6 @@ fn show_turn(
                     Carry::Held {
                         lift,
                         scale: kit.scale,
-                        board: kit.surface,
                     },
                     c.from,
                 )
@@ -1413,30 +1428,20 @@ fn show_turn(
         };
         carried.insert((c.from.to_string(), layer), (carry, at.to_string()));
     }
-    for (entity, at, mut spot, mut pickable, has) in &mut pieces {
-        // A piece in the hand is under the pointer: the pointer looks through it at the board.
-        let in_hand = matches!(
-            carried.get(&(at.cell.clone(), at.layer)),
-            Some((Carry::Held { .. }, _))
-        );
-        let wanted = if in_hand {
-            Pickable::IGNORE
-        } else {
-            Pickable::default()
-        };
-        if *pickable != wanted {
-            *pickable = wanted;
-        }
+    for (entity, at, mut spot, now) in &mut pieces {
         match carried.get(&(at.cell.clone(), at.layer)) {
             Some((carry, cell)) => {
-                commands.entity(entity).insert(*carry);
+                // Only when it changes: a piece put down is carried there once.
+                if now != Some(carry) {
+                    commands.entity(entity).insert(*carry);
+                }
                 // A click on a piece put down is a click on where it is now.
                 if spot.0 != *cell {
                     spot.0 = cell.clone();
                 }
             }
             None => {
-                if has {
+                if now.is_some() {
                     commands.entity(entity).remove::<Carry>();
                 }
                 if spot.0 != at.cell {
@@ -1511,14 +1516,27 @@ fn show_turn(
             kit.stack_height(stack),
         );
         let kind = kit.piece(id);
-        commands.spawn((
+        // Once the move is sent it is shown as played, solid, without waiting for the server.
+        let sent = turn.stage == Stage::Sending;
+        let material = if sent {
+            kind.material
+                .clone()
+                .or_else(|| kit.materials.get(colour).cloned())
+                .unwrap_or_default()
+        } else {
+            kind.ghost.clone().unwrap_or_else(|| kit.ghost.clone())
+        };
+        let mut ghost = commands.spawn((
             Name::new(format!("Ghost at {cell}")),
             Ghost,
             Mesh3d(kind.mesh.clone()),
-            MeshMaterial3d(kind.ghost.clone().unwrap_or_else(|| kit.ghost.clone())),
+            MeshMaterial3d(material),
             at,
             ChildOf(root),
         ));
+        if sent {
+            ghost.insert(Sent(cell.to_string()));
+        }
     }
 }
 
@@ -2068,6 +2086,9 @@ mod tests {
             use crate::play::Turn;
 
             let mut app = with_looks();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ));
             let cells: &[(&str, &[(&str, &str)])] = &[("a1", &[("queen", "white")])];
             app.world_mut().resource_mut::<WatchStatus>().table =
                 Some(grid_table("amazons", cells));
@@ -2126,9 +2147,6 @@ mod tests {
             click(&mut app, "a1");
             assert!(matches!(queen(&mut app).0, Some(Carry::Held { .. })));
             assert_eq!(lit(&mut app), ["a2", "b2"]);
-            let mut q = app.world_mut().query::<(&PieceAt, &Pickable)>();
-            let (_, pickable) = q.single(app.world()).unwrap();
-            assert_eq!(*pickable, Pickable::IGNORE, "the pointer looks through it");
 
             // Put down: standing where it goes, a click on it a click there, and what it may
             // shoot at lit, the space it left among them.
@@ -2140,13 +2158,23 @@ mod tests {
             };
             assert_eq!(put.translation.xz(), layout.centres["a2"].xz());
             assert_eq!(spot, "a2");
-            let mut q = app.world_mut().query::<(&PieceAt, &Pickable)>();
-            let (_, pickable) = q.single(app.world()).unwrap();
-            assert_eq!(
-                *pickable,
-                Pickable::default(),
-                "put down, it may be clicked again"
-            );
+            // Carried there once: a change elsewhere (the pointer moving) does not set it off
+            // again.
+            let mut q = app.world_mut().query::<(&PieceAt, &crate::hand::Travel)>();
+            assert_eq!(q.iter(app.world()).count(), 1, "on its way");
+            for _ in 0..30 {
+                app.update();
+            }
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a3".into());
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&PieceAt, &crate::hand::Travel, &Transform)>();
+            let (_, trip, t) = q.single(app.world()).unwrap();
+            assert!(trip.secs > crate::hand::ACROSS + crate::hand::LOWER);
+            assert_eq!(*t, put, "and there it stays");
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            app.update();
             assert_eq!(lit(&mut app), ["a1", "a3"]);
 
             // The arrow is held for the pointer, in its own red; over a space it may land on,
@@ -2196,7 +2224,24 @@ mod tests {
             assert_eq!(ghosts.iter(app.world()).count(), 1);
             assert!(matches!(queen(&mut app).0, Some(Carry::Put(_))));
 
-            // Played: the queen is where it was shown, not dropped there again; the arrow drops.
+            // Sent: the arrow is shown solid at once, in its own red, without waiting for the
+            // server.
+            let sent = app
+                .world_mut()
+                .resource_mut::<WatchStatus>()
+                .turn
+                .as_mut()
+                .unwrap()
+                .submit();
+            assert!(sent.is_some());
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<Sent>>();
+            let solid = q.single(app.world()).unwrap();
+            assert_eq!(Some(&solid.0), arrow.material.as_ref());
+
+            // Played: each piece is where it was shown, neither dropped in again.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             watch.turn = None;
             watch.table.as_mut().unwrap().apply(&Event::Move {
@@ -2209,7 +2254,7 @@ mod tests {
             app.update();
             assert_eq!(
                 pieces(&mut app),
-                [("a1".to_string(), true), ("a2".to_string(), false)]
+                [("a1".to_string(), false), ("a2".to_string(), false)]
             );
         }
 

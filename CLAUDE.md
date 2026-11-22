@@ -250,10 +250,10 @@ A game's own rules and its players' words keep their terms.
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
   lights the cells a click would be taken on (always while a piece is in hand) and shows the
-  move being built: what it places as see-through pieces, a piece it moves held under the
-  pointer or put where it goes, and what it aims held under the pointer. `src/hand.rs` moves
-  them there every frame (a piece held bobs) and hides the pointer's arrow while a held piece
-  takes its place.
+  move being built: what it places as see-through pieces (solid once the move is sent), a piece
+  it moves held over its space or carried to where it goes, and what it aims held under the
+  pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
+  then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
 - `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
   name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its

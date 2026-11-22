@@ -92,8 +92,8 @@ strongest bot the others. When it is your move, a see-through stone follows the 
 click would be taken (L, or *Legal moves*, also lights every such place): click one, and the
 stone is shown there; click it again, press Enter or choose *Play* to play it, or right-click
 or press Backspace (or *Back*) to take it back, one click at a time. A piece that moves is
-picked up with a click and follows the pointer, the places it may go lit, until a click puts it
-down; in Amazons the arrow is then held the same way. A choice that is not a cell, such as
+picked up with a click and hovers over its space, the places it may go lit; a click on one
+carries it there and sets it down. In Amazons the arrow is then held under the pointer. A choice that is not a cell, such as
 swapping sides in Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
 again.

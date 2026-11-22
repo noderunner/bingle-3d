@@ -1,7 +1,7 @@
-//! What the player holds while a move is built: a piece picked up, lifted and bobbing gently
-//! under the pointer (over its own space while the pointer is off the board); a piece put down
-//! where it was moved, before the move is sent; and what the move aims (an arrow), held under
-//! the pointer in the same way. The pointer's own arrow is hidden while either takes its place.
+//! What the player holds while a move is built: a piece picked up, lifted over its space and
+//! bobbing gently; a piece put down where it was moved, carried there over the board and lowered
+//! onto it, quickly but plainly, before the move is sent; and what the move aims (an arrow), held
+//! under the pointer, bobbing too, the pointer's own arrow hidden while it takes its place.
 //!
 //! The board (`board.rs`) says which piece is held or put where; this moves them there smoothly,
 //! every frame. The pointer's place on the board comes from picking, so a ray pointer in a
@@ -18,13 +18,20 @@ use crate::play::Spot;
 
 pub struct HandPlugin;
 
+/// The hand's systems, which the board orders after it says what is held.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Hands;
+
 impl Plugin for HandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerOnBoard>()
             .add_observer(on_move)
             .add_observer(on_over)
             .add_observer(on_out)
-            .add_systems(Update, (carry, hold, show_cursor));
+            .add_systems(
+                Update,
+                ((set_off, carry).chain(), hold, show_cursor).in_set(Hands),
+            );
     }
 }
 
@@ -36,6 +43,42 @@ pub const BOB_PERIOD: f32 = 1.6;
 /// How quickly a piece goes where it is wanted: the share of the way left it goes in a second is
 /// `1 - e^-RATE`.
 const RATE: f32 = 14.0;
+/// A piece put down goes across the board at the height it is held, then is lowered onto it:
+/// how long each takes, in seconds.
+pub const ACROSS: f32 = 0.2;
+pub const LOWER: f32 = 0.12;
+
+/// Where a piece put down is `secs` after it set off from `from` for `to`: across at the height
+/// it was held (or a lift over where it goes, if it was not held), easing in and out, then
+/// lowered, faster as it goes, as a hand sets a piece down. `None` once it is there.
+pub fn travel(from: Transform, to: Transform, secs: f32) -> Option<Transform> {
+    if secs >= ACROSS + LOWER {
+        return None;
+    }
+    let high = from.translation.y.max(to.translation.y + LIFT * to.scale.y);
+    let mut at = to;
+    if secs < ACROSS {
+        let f = secs / ACROSS;
+        let eased = f * f * (3.0 - 2.0 * f);
+        let over = to.translation.with_y(high);
+        at.translation = from.translation.lerp(over, eased);
+        // Up to the height first, if it was not held there.
+        at.translation.y = from.translation.y + (high - from.translation.y) * eased.sqrt();
+        at.rotation = from.rotation.slerp(to.rotation, eased);
+        at.scale = from.scale.lerp(to.scale, eased);
+    } else {
+        let f = (secs - ACROSS) / LOWER;
+        at.translation.y = high + (to.translation.y - high) * f * f;
+    }
+    Some(at)
+}
+
+/// A piece put down on its way there: where it set off from, and how long ago.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Travel {
+    pub from: Transform,
+    pub secs: f32,
+}
 
 /// How far above its held height a held piece is, `secs` into the game.
 pub fn bob(secs: f32) -> f32 {
@@ -55,9 +98,9 @@ pub struct Rest(pub Transform);
 /// A piece of the board the move being built holds.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub enum Carry {
-    /// Picked up: held `lift` metres over where it rests, bobbing (`scale` is the board's), and
-    /// following the pointer over the board, whose surface is at `board`.
-    Held { lift: f32, scale: f32, board: f32 },
+    /// Picked up: held `lift` metres over where it rests, bobbing (scaled by `scale`, the
+    /// board's).
+    Held { lift: f32, scale: f32 },
     /// Put down where it is moved to, as it will stand there.
     Put(Transform),
 }
@@ -132,38 +175,62 @@ fn on_out(out: On<PointerOut>, spots: Query<(), With<Spot>>, mut on: ResMut<Poin
     }
 }
 
+/// A piece just put down sets off from where it is; one taken back from where it was put goes
+/// back by itself.
+fn set_off(
+    mut commands: Commands,
+    pieces: Query<(Entity, &Carry, &Transform), Changed<Carry>>,
+    mut gone: RemovedComponents<Carry>,
+) {
+    for (entity, carry, t) in &pieces {
+        match carry {
+            Carry::Put(_) => commands.entity(entity).insert(Travel {
+                from: *t,
+                secs: 0.0,
+            }),
+            Carry::Held { .. } => commands.entity(entity).remove::<Travel>(),
+        };
+    }
+    for entity in gone.read() {
+        if let Ok(mut e) = commands.get_entity(entity) {
+            e.remove::<Travel>();
+        }
+    }
+}
+
 /// Moves each piece of the board towards where it is wanted: where it rests, held over it, or
-/// put where it is moved to.
+/// carried to where it is put.
 fn carry(
     time: Res<Time>,
-    on: Res<PointerOnBoard>,
-    mut pieces: Query<(&Rest, Option<&Carry>, &mut Transform)>,
+    mut pieces: Query<(&Rest, Option<&Carry>, Option<&mut Travel>, &mut Transform)>,
 ) {
+    let k = approach(time.delta_secs());
     let secs = time.elapsed_secs();
-    for (rest, carry, mut t) in &mut pieces {
-        let mut k = approach(time.delta_secs());
+    for (rest, carry, trip, mut t) in &mut pieces {
         let wanted = match carry {
             None => rest.0,
-            Some(Carry::Held { lift, scale, board }) => {
+            Some(Carry::Held { lift, scale }) => {
                 let mut up = rest.0;
                 up.translation.y += lift + bob(secs) * scale;
-                if let Some((hit, eye)) = on.0 {
-                    // In the hand, as the pointer is: quicker than a piece finding its place.
-                    let at = on_surface(hit, eye, *board);
-                    up.translation.x = at.x;
-                    up.translation.z = at.z;
-                    k = (k * 2.0).min(1.0);
-                }
                 up
             }
-            Some(Carry::Put(to)) => *to,
+            Some(Carry::Put(to)) => {
+                // Not set off yet: it waits where it is.
+                let Some(mut trip) = trip else { continue };
+                trip.secs += time.delta_secs();
+                if let Some(at) = travel(trip.from, *to, trip.secs) {
+                    *t = at;
+                    continue;
+                }
+                *to
+            }
         };
         if *t == wanted {
             continue;
         }
         let near = t.translation.distance_squared(wanted.translation) < 1e-10
             && t.rotation.angle_between(wanted.rotation) < 1e-4;
-        if near && carry.is_none() {
+        if near || matches!(carry, Some(Carry::Put(_))) {
             *t = wanted;
             continue;
         }
@@ -198,16 +265,13 @@ fn hold(
     }
 }
 
-/// The pointer's own arrow is hidden while a piece picked up, or what the move aims, is held in
-/// its place.
+/// The pointer's own arrow is hidden while what the move aims is held in its place.
 fn show_cursor(
     on: Res<PointerOnBoard>,
     held: Query<(), With<Held>>,
-    carried: Query<&Carry>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    let holding = !held.is_empty() || carried.iter().any(|c| matches!(c, Carry::Held { .. }));
-    let visible = on.0.is_none() || !holding;
+    let visible = on.0.is_none() || held.is_empty();
     for mut cursor in &mut windows {
         if cursor.visible != visible {
             cursor.visible = visible;
@@ -255,6 +319,38 @@ mod tests {
     }
 
     #[test]
+    fn a_piece_put_down_goes_across_at_its_height_and_is_then_lowered() {
+        let from = Transform::from_xyz(0.1, 0.05, 0.2);
+        let to = Transform::from_xyz(-0.1, 0.03, 0.0);
+        let at = |secs: f32| travel(from, to, secs).expect("on its way");
+        assert_eq!(
+            at(0.0).translation,
+            from.translation,
+            "it sets off from where it is"
+        );
+        // Across, at the height it was held: not down at the board on the way.
+        let half = at(ACROSS / 2.0).translation;
+        assert!((half.y - 0.05).abs() < 1e-6);
+        assert!(half.x < 0.1 && half.x > -0.1);
+        let over = at(ACROSS).translation;
+        assert!(
+            over.xz().distance(to.translation.xz()) < 1e-6,
+            "over where it goes"
+        );
+        assert!((over.y - 0.05).abs() < 1e-6, "still held up");
+        // Then lowered, faster as it goes, and there.
+        let first = 0.05 - at(ACROSS + LOWER / 2.0).translation.y;
+        assert!(first > 0.0 && first < 0.01, "slowly at first: {first}");
+        assert_eq!(travel(from, to, ACROSS + LOWER), None);
+        const { assert!(ACROSS + LOWER < 0.4, "quick") };
+
+        // One that was not held is lifted over where it goes first, and not through the board.
+        let low = Transform::from_xyz(0.1, 0.03, 0.2);
+        let over = travel(low, to, ACROSS).unwrap().translation;
+        assert!((over.y - (0.03 + LIFT)).abs() < 1e-6);
+    }
+
+    #[test]
     fn a_piece_is_lifted_put_where_it_moves_and_set_back_down() {
         let mut app = app();
         let rest = Transform::from_xyz(0.1, 0.03, 0.2);
@@ -264,7 +360,6 @@ mod tests {
         app.world_mut().entity_mut(piece).insert(Carry::Held {
             lift: LIFT,
             scale: 1.0,
-            board: 0.031,
         });
         for _ in 0..120 {
             app.update();
@@ -278,47 +373,34 @@ mod tests {
                 .distance(rest.translation.xz())
                 < 1e-5
         );
-
-        // The pointer over the board: in the hand under it, as high, the cursor's arrow hidden.
-        let window = app
-            .world_mut()
-            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
-            .id();
-        let pointer = Vec3::new(-0.05, 0.031, 0.1);
-        app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((pointer, pointer + Vec3::Y));
-        for _ in 0..60 {
-            app.update();
-        }
         let held = at(&mut app).translation;
-        assert!(held.xz().distance(pointer.xz()) < 1e-4, "{held}");
-        assert!((held.y - rest.translation.y - LIFT).abs() <= BOB * 1.01);
-        assert!(!app.world().get::<CursorOptions>(window).unwrap().visible);
-        // Off the board: back over its own space.
-        app.world_mut().resource_mut::<PointerOnBoard>().0 = None;
-        for _ in 0..120 {
-            app.update();
-        }
-        assert!(
-            at(&mut app)
-                .translation
-                .xz()
-                .distance(rest.translation.xz())
-                < 1e-4
-        );
-        assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
 
+        // Put: carried across at its height, then lowered, in a third of a second.
         let to = Transform::from_xyz(-0.1, 0.03, 0.0);
         app.world_mut().entity_mut(piece).insert(Carry::Put(to));
-        for _ in 0..120 {
+        for _ in 0..7 {
             app.update();
         }
-        assert!(at(&mut app).translation.distance(to.translation) < 1e-4);
+        let across = at(&mut app).translation;
+        assert!(
+            across.x < held.x && across.x > to.translation.x,
+            "on its way: {across}"
+        );
+        assert!(
+            across.y > to.translation.y + LIFT / 2.0,
+            "held up as it goes: {across}"
+        );
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(at(&mut app), to, "there");
 
         app.world_mut().entity_mut(piece).remove::<Carry>();
         for _ in 0..240 {
             app.update();
         }
         assert_eq!(at(&mut app), rest, "set down exactly where it rests");
+        assert!(app.world().get::<Travel>(piece).is_none());
     }
 
     #[test]

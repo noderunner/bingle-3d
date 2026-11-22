@@ -448,11 +448,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - Lighting the legal moves is off by default (at the start of most games every position is one,
   and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
   stone under the pointer still shows where a click would play. Once a piece is picked up, the
-  places it may go are lit whatever the setting, as a chess program shows them; it is lifted,
-  bobbing, and follows the pointer over the board in place of its arrow (over its own space
-  while the pointer is off the board), and a click on its space puts it down. The pointer looks
-  through it, so it never catches the click meant for the space under it. Once put, it stands
-  there before the move is sent. Backspace, or a right-click (the right button pressed and let
+  places it may go are lit whatever the setting, as a chess program shows them; it is lifted and
+  bobs over its own space (following the pointer instead was tried, and set aside), and a click
+  on it again puts it down. A click on where it goes carries it there: across the board at the
+  height it was held, then lowered onto it (a third of a second in all), and it stands there
+  before the move is sent. Once the move is sent, what it puts down (Amazons' arrow) is shown
+  solid at once, without waiting for the server, and is not dropped in again when the server's
+  position arrives. Backspace, or a right-click (the right button pressed and let
   go with the pointer all but still, so a right-drag still turns the camera), goes back one
   click at a time. What a move
   then aims (Amazons' arrow) is held under the pointer in place of its arrow, with a see-through
