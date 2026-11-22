@@ -174,40 +174,6 @@ DIE = {"tint": [0.93, 0.90, 0.82], "roughness": 0.3, "clearcoat": 0.5, "clearcoa
 PIPS = {"tint": [0.05, 0.05, 0.06], "roughness": 0.5}
 
 
-def sample_face(path):
-    """A picture to try on a card's face: the seven of hearts, plainly drawn. A seven is not the
-    same in a mirror or upside down, so a side mapped the wrong way shows."""
-    import numpy as np
-
-    w, h = 500, 700
-    x, y = np.meshgrid((np.arange(w) + 0.5) / w * 100.0, (np.arange(h) + 0.5) / h * 140.0)
-    red = np.zeros((h, w))
-
-    def heart(cx, cy, size, flip=False):
-        u = (x - cx) / (size * 0.42)
-        v = (cy - y) / (size * 0.42) * (-1.0 if flip else 1.0) + 0.25
-        return np.clip(-((u * u + v * v - 1.0) ** 3 - u * u * v**3) * 60.0, 0.0, 1.0)
-
-    def stroke(a, b, width):
-        ax, ay, bx, by = *a, *b
-        t = np.clip(((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2), 0.0, 1.0)
-        d = np.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay))
-        return np.clip((width / 2 - d) * 5.0 + 0.5, 0.0, 1.0)
-
-    for cx, cy in ((30, 34), (70, 34), (50, 52), (30, 70), (70, 70)):
-        red = np.maximum(red, heart(cx, cy, 17))
-    for cx, cy in ((30, 106), (70, 106)):
-        red = np.maximum(red, heart(cx, cy, 17, flip=True))
-    # The index in two corners: a 7 and a small heart, the lower one upside down.
-    for sx, sy, sign in ((7.0, 8.0, 1.0), (93.0, 132.0, -1.0)):
-        p = lambda dx, dy: (sx + sign * dx, sy + sign * dy)
-        red = np.maximum(red, stroke(p(0, 0), p(6.5, 0), 1.7))
-        red = np.maximum(red, stroke(p(6.5, 0), p(2.2, 11), 1.7))
-        red = np.maximum(red, heart(sx + sign * 3.2, sy + sign * 18.5, 7.5, flip=sign < 0))
-    paper, ink = np.array([0.955, 0.945, 0.915]), np.array([0.72, 0.08, 0.10])
-    common.write_png(path, paper * (1.0 - red[..., None]) + ink * red[..., None])
-
-
 def cards_and_dice():
     import dice
     import playing_cards
@@ -215,24 +181,23 @@ def cards_and_dice():
     stage(board=None)
     for name, spec in (("back", CARD_BACK), ("edge", PAPER), ("body", DIE), ("pips", PIPS)):
         matlib.build(name, spec)
-    face_file = os.path.join(common.PREVIEWS, "card-face-sample.png")
-    sample_face(face_file)
-    face = matlib.build("face", PAPER)
-    picture = face.node_tree.nodes.new("ShaderNodeTexImage")
-    picture.image = bpy.data.images.load(face_file)
-    bsdf = next(n for n in face.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
-    face.node_tree.links.new(picture.outputs["Color"], bsdf.inputs["Base Color"])
+    matlib.build("face", PAPER)
 
-    def lay(x, y, yaw, up=True, on=0.0):
+    def lay(x, y, yaw, up=True, on=0.0, face=None):
         obj = playing_cards.card()
+        if face:
+            # One of the usual deck's faces (`card_faces.py`), as the client prints it.
+            file = f"textures/cards/faces/{face}_albedo.png"
+            obj.data.materials[0] = matlib.build(f"face {face}", {**CARD_BACK, "albedo": file})
         obj.location = (x, y, on + playing_cards.THICKNESS / 2)
         # Turned over about its long axis, as a card is.
         obj.rotation_euler = (0, 0 if up else math.pi, yaw)
         return obj
 
-    lay(-0.075, 0.0, 0.10)
+    # A seven is not the same in a mirror or upside down, so a side mapped the wrong way shows.
+    lay(-0.075, 0.0, 0.10, face="hearts_7")
     lay(0.0, 0.004, -0.06, up=False)
-    lay(0.075, -0.002, 0.04)
+    lay(0.075, -0.002, 0.04, face="spades_k")
     rng = random.Random(2)
     for i in range(12):
         lay(0.17 + rng.uniform(-0.0006, 0.0006), 0.01 + rng.uniform(-0.0006, 0.0006), rng.uniform(-0.03, 0.03), up=False, on=i * playing_cards.THICKNESS)

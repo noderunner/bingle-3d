@@ -51,11 +51,12 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `checkers` | `models/checkers/{man,king}.glb`: a wooden draughtsman, and a king, which is two | a profile turned, its edge milled |
 | `tak` | `models/tak/{flat,wall}.glb`: a square block lying flat, and the same block on its edge (Tak's capstone is the chessmen's pawn) | a box with its edges eased |
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
+| `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
 | `garden_light` | `environment/garden_{diffuse,specular,sky}.ktx2`: the garden's light, and its sky | Cycles renders the garden from just above the table, all the way round, under the sun and sky that `assets/environments/garden.toml` gives the client; that panorama is filtered as the room's photograph is. The sky is a photograph (pure sky, no ground), turned to put its sun where the garden's is, with the sun itself clipped out |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
-| `piece_previews` | `target/asset-previews/{chess,checkers,tak,cards-dice,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card and the die in their generic look, `src/look.rs`); `PIECE_VIEWS=chess,tak` renders only those |
+| `piece_previews` | `target/asset-previews/{chess,checkers,tak,cards-dice,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card and the die in their generic look, `src/look.rs`, with two of the usual deck's faces); `PIECE_VIEWS=chess,tak` renders only those |
 | `garden_previews` | `target/asset-previews/garden-*.png`, not shipped | Cycles, the garden from the client's camera at a few places, and from high above (`GARDEN_VIEWS=garden-seat,garden-plan` renders only those) |
 
 How the client reads them:
@@ -103,6 +104,12 @@ the file would differ from run to run.
   the card is turned over about its long axis (`props::card_lies`). The client reads no SVG: one
   is made a PNG or a JPEG first (Blender's own SVG import reads filled shapes, but no text and
   no strokes, so it will not do for a card in general).
+- **The usual deck's faces** (`card_faces.py`) are such pictures, one for each of its 52 cards:
+  the card's paper with the face printed on it. The client finds one by the suit's symbol and
+  the rank's label, as the server gives them (`props::standard_face`); a card of any other deck
+  has no picture here. The step also lays the whole deck on one sheet to look at,
+  `target/asset-previews/card-faces.png`. A PNG, since a JPEG rings round flat ink on flat
+  paper; the 52 are 1 MB together. There are no jokers: no game deals one yet.
 - **The die** has 1 up and 6 down, 2 towards the player and 5 away, 3 to the right and 4 to
   the left, as dice are made; `props::die_showing` turns it to show a number.
 - Their generic looks are in `src/look.rs` (`paper`, `card_side`, `die`, `pips`), which
@@ -116,7 +123,8 @@ cargo run -- --showcase --card-face my-face.png --view 0,62,0.22,0,0.11   # a pi
 ```
 
 `--showcase` lays every piece model the appearance files name on the table, in each material it
-is given, with the dice and a few cards; `--view`'s last two numbers aim the camera at a place
+is given, with the dice and a few cards (four of the usual deck face up, one face down and a
+pile); `--view`'s last two numbers aim the camera at a place
 on the table.
 
 ## An environment
