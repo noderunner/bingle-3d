@@ -38,6 +38,7 @@ mod scene;
 mod showcase;
 mod sign_in;
 mod slab;
+mod sounds;
 mod table;
 mod textures;
 mod toggles;
@@ -93,6 +94,12 @@ fn main() -> AppExit {
         }),
         ..default()
     });
+    // Bevy's audio opens the speaker as it starts: not in a run that keeps the devices off.
+    let plugins = if opts.no_audio_devices {
+        plugins.disable::<bevy::audio::AudioPlugin>()
+    } else {
+        plugins
+    };
     // In a headset: when asked, or when one is waiting (its runtime already running).
     #[cfg(feature = "vr")]
     let in_headset = opts.vr
@@ -179,6 +186,9 @@ fn main() -> AppExit {
             // Tab moves between the fields of a form.
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             board::BoardPlugin,
+            sounds::SoundsPlugin {
+                on: !opts.no_audio_devices,
+            },
             escape_menu::EscapeMenuPlugin,
             play::PlayPlugin,
             game_panel::GamePanelPlugin {

@@ -467,6 +467,14 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   material as the wood round them. The coordinates are smaller, half way across the margin
   between the outermost spaces or lines and the rim, on every board; a column is named only
   where it ends on the first or last row.
+- Sounds as a seat is played, for a game whose appearance gives them (`[sounds]`, `sounds.rs`):
+  a piece picked up, a piece set down (when a carried piece touches the board, or as one is
+  placed or an arrow shot), and the move sent. Amazons' are wood: a light tap, a clack, and two
+  marimba notes a fifth apart. Only the player's own; the opponent's moves are silent for now.
+  With `--no-audio-devices` Bevy's audio plugin is left out, so such a run (an agent's, a
+  screenshot's) opens no speaker; before this Bevy opened the default output at every start.
+  This way of picking up and moving pieces is the desktop client's for every game; the headset
+  may want another.
 - Texture resolution, judged on the GPU: walnut at 4K against 2K was not worth four times the
   memory, so the woods stay at 2K. Oak was tried and left out: its open grain caught too much
   glare.
@@ -753,8 +761,10 @@ Settled 2026-11-20, with the maintainer:
 8. **Assets are made by scripts, from CC0 sources.** Blender (pinned to 5.3) runs headless on
    Python scripts in `assets-src/`; textures and light are scanned CC0 material (Poly Haven),
    fetched by URL and SHA-256, never committed as sources; models and procedural textures are
-   made by the scripts. What they make is committed in `assets/` and compiled into the binary
-   (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
+   made by the scripts. Sounds are synthesised by a script of their own
+   (`assets-src/sounds/sounds.py`: Python's standard library, then ffmpeg for Ogg Vorbis, which
+   Bevy's default audio already reads, so no crate is added), nothing recorded. What they make is
+   committed in `assets/` and compiled into the binary (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
    board of the player's choosing, each side's goal edges coloured to match its stones.
 9. **Where the table stands is the client's, and each player's.** An environment is chosen on
    this client and kept in its config; the server is not told and the game does not depend on

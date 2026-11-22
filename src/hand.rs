@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::play::Spot;
+use crate::sounds::Cue;
 
 pub struct HandPlugin;
 
@@ -25,6 +26,7 @@ pub struct Hands;
 impl Plugin for HandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerOnBoard>()
+            .add_message::<Cue>()
             .add_observer(on_move)
             .add_observer(on_over)
             .add_observer(on_out)
@@ -203,6 +205,7 @@ fn set_off(
 fn carry(
     time: Res<Time>,
     mut pieces: Query<(&Rest, Option<&Carry>, Option<&mut Travel>, &mut Transform)>,
+    mut cues: MessageWriter<Cue>,
 ) {
     let k = approach(time.delta_secs());
     let secs = time.elapsed_secs();
@@ -217,7 +220,12 @@ fn carry(
             Some(Carry::Put(to)) => {
                 // Not set off yet: it waits where it is.
                 let Some(mut trip) = trip else { continue };
+                let landing = trip.secs < ACROSS + LOWER;
                 trip.secs += time.delta_secs();
+                // It touches the board: the sound of it set down.
+                if landing && trip.secs >= ACROSS + LOWER {
+                    cues.write(Cue::Put);
+                }
                 if let Some(at) = travel(trip.from, *to, trip.secs) {
                     *t = at;
                     continue;
@@ -309,9 +317,19 @@ mod tests {
         assert!(fast < 1e-5, "there within a second");
     }
 
+    /// Every cue written, in order.
+    #[derive(Resource, Default)]
+    struct Heard(Vec<Cue>);
+
+    fn hear(mut cues: MessageReader<Cue>, mut heard: ResMut<Heard>) {
+        heard.0.extend(cues.read().copied());
+    }
+
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, HandPlugin));
+        app.add_plugins((MinimalPlugins, HandPlugin))
+            .init_resource::<Heard>()
+            .add_systems(Update, hear.after(Hands));
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
             16,
         )));
@@ -390,10 +408,19 @@ mod tests {
             across.y > to.translation.y + LIFT / 2.0,
             "held up as it goes: {across}"
         );
+        assert!(
+            app.world().resource::<Heard>().0.is_empty(),
+            "silent until it lands"
+        );
         for _ in 0..20 {
             app.update();
         }
         assert_eq!(at(&mut app), to, "there");
+        assert_eq!(
+            app.world().resource::<Heard>().0,
+            [Cue::Put],
+            "it sounded once, as it touched the board"
+        );
 
         app.world_mut().entity_mut(piece).remove::<Carry>();
         for _ in 0..240 {
