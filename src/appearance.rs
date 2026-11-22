@@ -87,6 +87,8 @@ pub struct BoardLook {
     /// The cells in two materials by turns, as a chessboard's: the first for the corner nearest
     /// the player on the left and every other cell from there, the second for the rest.
     pub squares: Option<[String; 2]>,
+    /// A border inlaid round the cells, as a chessboard's, in this material.
+    pub border: Option<String>,
 }
 
 impl BoardLook {
@@ -198,9 +200,15 @@ impl Appearance {
                 out.push(format!("bowls: no material {}", bowls.material));
             }
         }
-        for name in self.board.squares.iter().flatten() {
+        for name in self
+            .board
+            .squares
+            .iter()
+            .flatten()
+            .chain(&self.board.border)
+        {
             if !self.materials.contains_key(name) {
-                out.push(format!("board's squares: no material {name}"));
+                out.push(format!("board: no material {name}"));
             }
         }
         if let Some(id) = &self.aimed
@@ -405,7 +413,7 @@ mod tests {
         let look = all.for_game("amazons").unwrap();
         assert!(look.material(arrow.material.as_ref()).is_some());
         // A board may be checkered, and what a move aims at shown as a piece of its own.
-        assert!(look.board.squares.is_some());
+        assert!(look.board.squares.is_some() && look.board.border.is_some());
         assert_eq!(look.aimed.as_deref(), Some("arrow"));
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
     }
@@ -424,10 +432,11 @@ mod tests {
             other = "pictures/none.jpg"
             [board]
             squares = ["light", "dark"]
+            border = "inlay"
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 7, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 8, "{:?}", a.problems());
         let a = Appearance::parse("games = [\"g\"]\naimed = \"arrow\"").unwrap();
         assert_eq!(a.problems(), ["aimed: no piece arrow"]);
         assert!(

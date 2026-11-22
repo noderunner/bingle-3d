@@ -1,7 +1,7 @@
-//! What the player holds while a move is built: a piece picked up, lifted over its space and
-//! bobbing gently; a piece put down where it was moved, before the move is sent; and what the
-//! move aims (an arrow) held under the pointer, bobbing too, the pointer's own arrow hidden
-//! while it is over the board.
+//! What the player holds while a move is built: a piece picked up, lifted and bobbing gently
+//! under the pointer (over its own space while the pointer is off the board); a piece put down
+//! where it was moved, before the move is sent; and what the move aims (an arrow), held under
+//! the pointer in the same way. The pointer's own arrow is hidden while either takes its place.
 //!
 //! The board (`board.rs`) says which piece is held or put where; this moves them there smoothly,
 //! every frame. The pointer's place on the board comes from picking, so a ray pointer in a
@@ -55,9 +55,9 @@ pub struct Rest(pub Transform);
 /// A piece of the board the move being built holds.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub enum Carry {
-    /// Picked up: held `lift` metres over where it rests, bobbing (scaled by `bob`, the board's
-    /// scale).
-    Held { lift: f32, scale: f32 },
+    /// Picked up: held `lift` metres over where it rests, bobbing (`scale` is the board's), and
+    /// following the pointer over the board, whose surface is at `board`.
+    Held { lift: f32, scale: f32, board: f32 },
     /// Put down where it is moved to, as it will stand there.
     Put(Transform),
 }
@@ -134,15 +134,26 @@ fn on_out(out: On<PointerOut>, spots: Query<(), With<Spot>>, mut on: ResMut<Poin
 
 /// Moves each piece of the board towards where it is wanted: where it rests, held over it, or
 /// put where it is moved to.
-fn carry(time: Res<Time>, mut pieces: Query<(&Rest, Option<&Carry>, &mut Transform)>) {
-    let k = approach(time.delta_secs());
+fn carry(
+    time: Res<Time>,
+    on: Res<PointerOnBoard>,
+    mut pieces: Query<(&Rest, Option<&Carry>, &mut Transform)>,
+) {
     let secs = time.elapsed_secs();
     for (rest, carry, mut t) in &mut pieces {
+        let mut k = approach(time.delta_secs());
         let wanted = match carry {
             None => rest.0,
-            Some(Carry::Held { lift, scale }) => {
+            Some(Carry::Held { lift, scale, board }) => {
                 let mut up = rest.0;
                 up.translation.y += lift + bob(secs) * scale;
+                if let Some((hit, eye)) = on.0 {
+                    // In the hand, as the pointer is: quicker than a piece finding its place.
+                    let at = on_surface(hit, eye, *board);
+                    up.translation.x = at.x;
+                    up.translation.z = at.z;
+                    k = (k * 2.0).min(1.0);
+                }
                 up
             }
             Some(Carry::Put(to)) => *to,
@@ -187,13 +198,16 @@ fn hold(
     }
 }
 
-/// The pointer's own arrow is hidden while what the move aims is held in its place.
+/// The pointer's own arrow is hidden while a piece picked up, or what the move aims, is held in
+/// its place.
 fn show_cursor(
     on: Res<PointerOnBoard>,
     held: Query<(), With<Held>>,
+    carried: Query<&Carry>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    let visible = on.0.is_none() || held.is_empty();
+    let holding = !held.is_empty() || carried.iter().any(|c| matches!(c, Carry::Held { .. }));
+    let visible = on.0.is_none() || !holding;
     for mut cursor in &mut windows {
         if cursor.visible != visible {
             cursor.visible = visible;
@@ -250,12 +264,48 @@ mod tests {
         app.world_mut().entity_mut(piece).insert(Carry::Held {
             lift: LIFT,
             scale: 1.0,
+            board: 0.031,
         });
         for _ in 0..120 {
             app.update();
         }
         let up = at(&mut app).translation.y - rest.translation.y;
         assert!((up - LIFT).abs() <= BOB * 1.01, "held over it: {up}");
+        assert!(
+            at(&mut app)
+                .translation
+                .xz()
+                .distance(rest.translation.xz())
+                < 1e-5
+        );
+
+        // The pointer over the board: in the hand under it, as high, the cursor's arrow hidden.
+        let window = app
+            .world_mut()
+            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
+            .id();
+        let pointer = Vec3::new(-0.05, 0.031, 0.1);
+        app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((pointer, pointer + Vec3::Y));
+        for _ in 0..60 {
+            app.update();
+        }
+        let held = at(&mut app).translation;
+        assert!(held.xz().distance(pointer.xz()) < 1e-4, "{held}");
+        assert!((held.y - rest.translation.y - LIFT).abs() <= BOB * 1.01);
+        assert!(!app.world().get::<CursorOptions>(window).unwrap().visible);
+        // Off the board: back over its own space.
+        app.world_mut().resource_mut::<PointerOnBoard>().0 = None;
+        for _ in 0..120 {
+            app.update();
+        }
+        assert!(
+            at(&mut app)
+                .translation
+                .xz()
+                .distance(rest.translation.xz())
+                < 1e-4
+        );
+        assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
 
         let to = Transform::from_xyz(-0.1, 0.03, 0.0);
         app.world_mut().entity_mut(piece).insert(Carry::Put(to));

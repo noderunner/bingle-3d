@@ -1,9 +1,10 @@
 # How this client draws Amazons (Bingle's ADR 0124: the server says what things are, and each
 # client decides how they look). Data only: nothing here changes the rules.
 #
-# A chessboard of pale and dark wood in a frame of the board's own, turned chessmen of pale and
-# of dark wood for the amazons (`assets-src/blender/chessmen.py`), and a red checker
-# (`assets-src/blender/checkers.py`) for each arrow, whoever shot it.
+# A chessboard of pale and dark wood, with a dark border inlaid round it, in a frame of the
+# board's own wood; turned chessmen of pale and of dark wood for the amazons
+# (`assets-src/blender/chessmen.py`); and a red checker (`assets-src/blender/checkers.py`) for
+# each arrow, whoever shot it.
 
 games = ["amazons", "amazons-6"]
 
@@ -12,6 +13,7 @@ aimed = "arrow"
 
 [board]
 squares = ["dark_square", "light_square"]
+border = "inlay"
 
 # An amazon moves as a queen does.
 [pieces.queen]
@@ -60,5 +62,13 @@ clearcoat_roughness = 0.25
 [materials.light_square]
 wood = "maple"
 tint = [0.96, 0.84, 0.64]
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+# The border round the squares: walnut stained darker than the dark squares, so it reads as an
+# inlay of its own.
+[materials.inlay]
+wood = "walnut"
+tint = [0.55, 0.5, 0.48]
 clearcoat = 0.3
 clearcoat_roughness = 0.25

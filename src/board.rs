@@ -92,6 +92,10 @@ const RIM_RADIUS: f32 = 0.005;
 const SHADE_STRENGTH: f32 = 0.75;
 const SHADE_FADE: f32 = CELL_SCALE / 3.0;
 
+/// A border round the cells (a chessboard's): where it starts and ends beyond them, in pitches,
+/// short of the coordinates in the margin.
+const BORDER: (f32, f32) = (0.07, 0.2);
+
 /// The wood beyond the outermost lines of a board played on its points, in pitches: room for a
 /// stone on the edge and the coordinates beyond it.
 const POINTS_MARGIN: f32 = 1.2;
@@ -847,6 +851,30 @@ fn build_board(
                     ChildOf(root),
                 ));
             }
+            // A border inlaid round the cells, if the game's look has one.
+            let border = tools
+                .look
+                .and_then(|l| l.materials.get(l.board.border.as_ref()?))
+                .cloned();
+            if let Some(spec) = border {
+                let points: Vec<Vec2> = centres
+                    .iter()
+                    .flat_map(|c| corners.iter().map(move |k| *c + *k))
+                    .collect();
+                let band = slab::band(
+                    &slab::hull(&points),
+                    pitch * BORDER.0,
+                    pitch * BORDER.1,
+                    BOARD_HEIGHT + 0.0002,
+                );
+                let material = tools.material(&spec);
+                commands.spawn((
+                    Name::new("Border"),
+                    Mesh3d(tools.meshes.add(look::world_uvs(band, Vec3::ZERO))),
+                    MeshMaterial3d(material),
+                    ChildOf(root),
+                ));
+            }
         }
         Surface::Points => {
             // The lines, cut into the board between neighbouring points.
@@ -1323,7 +1351,7 @@ fn show_turn(
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
     ghosts: Query<Entity, With<Ghost>>,
-    mut pieces: Query<(Entity, &PieceAt, &mut Spot, Has<Carry>)>,
+    mut pieces: Query<(Entity, &PieceAt, &mut Spot, &mut Pickable, Has<Carry>)>,
     held: Query<Entity, With<Held>>,
 ) {
     for ghost in &ghosts {
@@ -1377,6 +1405,7 @@ fn show_turn(
                     Carry::Held {
                         lift,
                         scale: kit.scale,
+                        board: kit.surface,
                     },
                     c.from,
                 )
@@ -1384,7 +1413,20 @@ fn show_turn(
         };
         carried.insert((c.from.to_string(), layer), (carry, at.to_string()));
     }
-    for (entity, at, mut spot, has) in &mut pieces {
+    for (entity, at, mut spot, mut pickable, has) in &mut pieces {
+        // A piece in the hand is under the pointer: the pointer looks through it at the board.
+        let in_hand = matches!(
+            carried.get(&(at.cell.clone(), at.layer)),
+            Some((Carry::Held { .. }, _))
+        );
+        let wanted = if in_hand {
+            Pickable::IGNORE
+        } else {
+            Pickable::default()
+        };
+        if *pickable != wanted {
+            *pickable = wanted;
+        }
         match carried.get(&(at.cell.clone(), at.layer)) {
             Some((carry, cell)) => {
                 commands.entity(entity).insert(*carry);
@@ -2084,6 +2126,9 @@ mod tests {
             click(&mut app, "a1");
             assert!(matches!(queen(&mut app).0, Some(Carry::Held { .. })));
             assert_eq!(lit(&mut app), ["a2", "b2"]);
+            let mut q = app.world_mut().query::<(&PieceAt, &Pickable)>();
+            let (_, pickable) = q.single(app.world()).unwrap();
+            assert_eq!(*pickable, Pickable::IGNORE, "the pointer looks through it");
 
             // Put down: standing where it goes, a click on it a click there, and what it may
             // shoot at lit, the space it left among them.
@@ -2095,6 +2140,13 @@ mod tests {
             };
             assert_eq!(put.translation.xz(), layout.centres["a2"].xz());
             assert_eq!(spot, "a2");
+            let mut q = app.world_mut().query::<(&PieceAt, &Pickable)>();
+            let (_, pickable) = q.single(app.world()).unwrap();
+            assert_eq!(
+                *pickable,
+                Pickable::default(),
+                "put down, it may be clicked again"
+            );
             assert_eq!(lit(&mut app), ["a1", "a3"]);
 
             // The arrow is held for the pointer, in its own red; over a space it may land on,
@@ -2177,6 +2229,8 @@ mod tests {
             assert_eq!(rest["a1"], rest["c1"]);
             assert_ne!(rest["a1"], rest["a2"]);
             assert_ne!(rest["a1"], rest["b1"]);
+            let mut borders = app.world_mut().query::<&Name>();
+            assert!(borders.iter(app.world()).any(|n| n.as_str() == "Border"));
 
             // Any other game's cells are all the board's wood.
             let mut app = with_looks();
@@ -2187,6 +2241,8 @@ mod tests {
             let materials: std::collections::HashSet<_> =
                 q.iter(app.world()).map(|c| c.rest.clone()).collect();
             assert_eq!(materials.len(), 1);
+            let mut borders = app.world_mut().query::<&Name>();
+            assert!(!borders.iter(app.world()).any(|n| n.as_str() == "Border"));
         }
 
         fn pieces(app: &mut App) -> Vec<(String, bool)> {

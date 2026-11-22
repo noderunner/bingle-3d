@@ -7,6 +7,9 @@
 //! a window. The systems at the end turn clicks on the board, keys and the panel's buttons into
 //! gestures and commands on it, and send what it asks for to the network thread.
 //!
+//! A right-click (a press and release of the right button with the pointer all but still, so a
+//! right-drag still turns the camera) goes back, as Backspace does.
+//!
 //! A click on a position stands for the choices that must come before it when only one way to
 //! get there is legal: in a game where a stone is placed by choosing the stone and then the cell,
 //! a click on the cell is enough (the web page takes such forced choices by itself too). The
@@ -14,11 +17,13 @@
 
 use std::collections::BTreeSet;
 
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input_focus::InputFocus;
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
+use crate::camera::PointerOverUi;
 use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Selections};
 use crate::net::session::Problem;
@@ -34,7 +39,11 @@ impl Plugin for PlayPlugin {
             .add_observer(on_out)
             .add_systems(
                 Update,
-                (start_turn.run_if(resource_changed::<WatchStatus>), keys),
+                (
+                    start_turn.run_if(resource_changed::<WatchStatus>),
+                    keys,
+                    right_click,
+                ),
             );
     }
 }
@@ -648,6 +657,35 @@ fn keys(
     }
 }
 
+/// How far the pointer may move, in pixels, between pressing the right button and letting it go
+/// for that to be a click (back) rather than a drag (the camera turning).
+const CLICK_SLOP: f32 = 6.0;
+
+/// A right-click over the table goes back, as Backspace does; not over a panel, nor while the
+/// escape menu is open. `pressed` is how far the pointer has moved since the button went down
+/// over the table.
+fn right_click(
+    buttons: Res<ButtonInput<MouseButton>>,
+    motion: Res<AccumulatedMouseMotion>,
+    pointer: PointerOverUi,
+    menu: Option<Res<EscapeMenu>>,
+    mut pressed: Local<Option<f32>>,
+    mut watch: ResMut<WatchStatus>,
+) {
+    if buttons.just_pressed(MouseButton::Right) {
+        *pressed = (!pointer.is_over_ui() && escape_menu::closed(menu.as_deref())).then_some(0.0);
+    }
+    if let Some(moved) = pressed.as_mut() {
+        *moved += motion.delta.length();
+    }
+    if buttons.just_released(MouseButton::Right)
+        && let Some(moved) = pressed.take()
+        && moved < CLICK_SLOP
+    {
+        back(&mut watch);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1051,5 +1089,56 @@ mod tests {
         assert_eq!(t.stage, Stage::Failed);
         assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Ignored);
         assert!(!t.back());
+    }
+
+    #[test]
+    fn a_right_click_goes_back_and_a_right_drag_does_not() {
+        use bevy::picking::hover::HoverMap;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<HoverMap>()
+            .init_resource::<WatchStatus>()
+            .add_systems(Update, right_click);
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![step("a1", "a2"), step("a1", "b2")]));
+        t.gesture(&Gesture::pos("a1"));
+        app.world_mut().resource_mut::<WatchStatus>().turn = Some(t);
+        let gestures = |app: &App| {
+            app.world()
+                .resource::<WatchStatus>()
+                .turn
+                .as_ref()
+                .unwrap()
+                .gestures
+                .len()
+        };
+        let button = |app: &mut App, down: bool, moved: f32| {
+            app.world_mut()
+                .resource_mut::<AccumulatedMouseMotion>()
+                .delta = Vec2::new(moved, 0.0);
+            let mut buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            buttons.clear();
+            if down {
+                buttons.press(MouseButton::Right);
+            } else {
+                buttons.release(MouseButton::Right);
+            }
+            app.update();
+        };
+
+        // A drag turns the camera: the piece stays in hand.
+        button(&mut app, true, 0.0);
+        button(&mut app, true, 25.0);
+        button(&mut app, false, 0.0);
+        assert_eq!(gestures(&app), 1);
+
+        // A click, the pointer hardly moving: the piece is put down.
+        button(&mut app, true, 0.0);
+        button(&mut app, true, 1.5);
+        button(&mut app, false, 0.0);
+        assert_eq!(gestures(&app), 0);
     }
 }
