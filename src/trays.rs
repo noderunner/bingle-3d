@@ -24,6 +24,8 @@ use crate::slab::{self, Rim};
 pub const HEIGHT: f32 = 0.007;
 pub const GAP: f32 = 0.02;
 const MARGIN: f32 = 0.45;
+/// A square's wood against its space: what is left between is its lines.
+const SQUARE: f32 = 0.9;
 const ONE_ROW: usize = 10;
 /// The tray's pieces are this much smaller than the board's, unless the game's look says.
 pub const SIZE: f32 = 0.75;
@@ -158,7 +160,9 @@ pub fn spawn(
     seat: usize,
 ) -> Vec<Vec3> {
     let centres = squares(n, side);
-    let corners = slab::cell_corners(CellShape::Square, side);
+    // The lines: each square darkened, under a smaller one of the wood, and grown by a margin
+    // so the lines round the outside are as thick as those between squares.
+    let corners = slab::cell_corners(CellShape::Square, side * (2.0 - SQUARE));
     let half = half_size(n, side) - Vec2::splat(MARGIN * side);
     let box_corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
         .map(|(x, z)| Vec2::new(x * half.x, z * half.y));
@@ -186,14 +190,13 @@ pub fn spawn(
         MeshMaterial3d(wood.clone()),
         ChildOf(tray),
     ));
-    // The lines between the squares: each square darkened, under a smaller one of the wood.
     commands.spawn((
         Name::new("Tray's lines"),
         Mesh3d(meshes.add(uv(slab::flat_cells(&centres, &corners, HEIGHT + 0.0001)))),
         MeshMaterial3d(lines),
         ChildOf(tray),
     ));
-    let inner = slab::cell_corners(CellShape::Square, side * 0.9);
+    let inner = slab::cell_corners(CellShape::Square, side * SQUARE);
     commands.spawn((
         Name::new("Tray's squares"),
         Mesh3d(meshes.add(uv(slab::flat_cells(&centres, &inner, HEIGHT + 0.0002)))),
