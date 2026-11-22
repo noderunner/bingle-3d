@@ -252,7 +252,9 @@ A game's own rules and its players' words keep their terms.
 - `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
   name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
-  rank's label (`standard_face`; the 52 are the pipeline's, `card_faces.py`).
+  rank's label (`standard_face`; the 52 are the pipeline's, `card_faces.py`), or of a themed
+  set (`CARD_SETS`, `set_face`, `set_back`; `card_sets.py`), found by the set's id, the place of
+  the card's suit among its game's suits and its rank's label.
   No game's cards or dice are drawn with them yet. `src/showcase.rs`: `--showcase`, every
   piece model the appearance files name, with cards and dice, laid out to look at; it names no
   game either.

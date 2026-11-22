@@ -176,8 +176,8 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 your side), degrees above it, and metres from its middle. Two more numbers, `,X,Z`, aim it at a
 place on the table instead: metres to the right of the middle, and towards you.
 
-`--showcase` lays every piece's model on the table, with the dice and a few playing cards of the
-usual deck, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
+`--showcase` lays every piece's model on the table, with the dice, a few playing cards of the
+usual deck and a row of each themed set of cards, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
 a PNG, 5 to 7) on the cards' sides.
 
 ```sh

@@ -51,7 +51,8 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `checkers` | `models/checkers/{man,king}.glb`: a wooden draughtsman, and a king, which is two | a profile turned, its edge milled |
 | `tak` | `models/tak/{flat,wall}.glb`: a square block lying flat, and the same block on its edge (Tak's capstone is the chessmen's pawn) | a box with its edges eased |
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
-| `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
+| `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy (`cardkit.py`): a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
+| `card_sets` | `textures/cards/sets/<set>/<suit>_<rank>_albedo.png` and `back_albedo.png`: themed sets of cards, each eight suits in every rank a game may ask for, and a back. One so far: Ancient Empires (`empires`) | drawn as the usual deck is: each suit a picture in layers (its own ink, a second ink, and the paper's, which cuts into what is under it) |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
 | `garden_light` | `environment/garden_{diffuse,specular,sky}.ktx2`: the garden's light, and its sky | Cycles renders the garden from just above the table, all the way round, under the sun and sky that `assets/environments/garden.toml` gives the client; that panorama is filtered as the room's photograph is. The sky is a photograph (pure sky, no ground), turned to put its sun where the garden's is, with the sun itself clipped out |
@@ -109,7 +110,22 @@ the file would differ from run to run.
   the rank's label, as the server gives them (`props::standard_face`); a card of any other deck
   has no picture here. The step also lays the whole deck on one sheet to look at,
   `target/asset-previews/card-faces.png`. A PNG, since a JPEG rings round flat ink on flat
-  paper; the 52 are 1 MB together. There are no jokers: no game deals one yet.
+  paper, and one with a palette (`common.write_png_flat`), since a face has few colours: the 52
+  are 0.4 MB together. There are no jokers: no game deals one yet.
+- **A themed set** (`card_sets.py`) gives a deck of plain suits and ranks another look, as
+  Bingle's own sets do (its ADR 0085): eight suits and a back. A game's suits wear the set's by
+  place, in the game's own order, so a game of four suits wears the first four; the ranks are
+  the game's own, so each suit has an ace by either name (`a`, `1`), 2 to 10, and the court
+  cards by their letters (`j`, `q`, `k`) or counted on past ten (`11`, `12`, `13`). The client
+  finds a face by the set's id, the suit's place and the rank's label (`props::set_face`), and
+  the back by the set's id (`props::set_back`). **Ancient Empires** (`empires`) is Greece (a
+  temple), Egypt (the eye of Horus), Rome (a laurel wreath), China (a pagoda), the Aztecs (the
+  stone of the sun), the Zulu (a shield, a spear and a club), Persia (the winged disc) and
+  Japan (a cherry blossom): 137 pictures, 1.7 MB. The first and third suits are warm colours
+  and the second and fourth cool ones, so a patience's red and black can still be told. To
+  look at: `target/asset-previews/card-set-empires.png`, and `…-aces.png` for the suits large.
+  A new set is an entry in `SETS` there and in `props::CARD_SETS`; a test holds the two to the
+  files.
 - **The die** has 1 up and 6 down, 2 towards the player and 5 away, 3 to the right and 4 to
   the left, as dice are made; `props::die_showing` turns it to show a number.
 - Their generic looks are in `src/look.rs` (`paper`, `card_side`, `die`, `pips`), which
@@ -124,7 +140,7 @@ cargo run -- --showcase --card-face my-face.png --view 0,62,0.22,0,0.11   # a pi
 
 `--showcase` lays every piece model the appearance files name on the table, in each material it
 is given, with the dice and a few cards (four of the usual deck face up, one face down and a
-pile); `--view`'s last two numbers aim the camera at a place
+pile, and a row for each themed set: a card of each suit, and its back); `--view`'s last two numbers aim the camera at a place
 on the table.
 
 ## An environment
