@@ -228,7 +228,8 @@ A game's own rules and its players' words keep their terms.
   from both in Cycles: only the client's screenshot shows a card or a fence wound the wrong way.
 - `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): each
   kind of piece's model, how it stands (`Stands`: a stone lies loose, a block square to the
-  board, a piece with a face looks across it) and a material of its own if it has one; what a
+  board but never quite, a piece with a face looks across it) and a material of its own if it
+  has one; what a
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen. A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.

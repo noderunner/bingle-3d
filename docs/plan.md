@@ -465,7 +465,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   out: they are behind an experimental feature, noisy and costly; TAA's filtering does enough.
 - A model for each kind of piece (2026-11-21). An appearance file names a model for each piece
   id, how it `stands` (a stone lies loose; a turned piece upright; a block square to the board,
-  a quarter turn any way; a piece with a face looks across the board from its seat's side) and,
+  a quarter turn any way, and as a hand sets it down, up to 5° askew and 1.3 mm aside of the
+  middle each way, so the blocks of a stack do not line up; a piece with a face looks across
+  the board from its seat's side) and,
   for a piece that is nobody's, a material of its own. A kind it does not name is the generic
   stone. A piece is stood by its model's foot, and what is on it in a stack is raised by its
   model's height, both read from the model's file, so a stack may be of several kinds: Tak's
@@ -481,8 +483,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of green copper) are
     played with them.
   - **Checkers**: a wooden draughtsman with a milled edge, stained red or black; a king is two.
-  - **Tak**: a square block (a flat stone), the same block on its edge, corner to corner (a
-    wall), and a turned capstone, in pale and dark wood.
+  - **Tak**: a square block (a flat stone) and the same block on its edge, corner to corner (a
+    wall), in pale and dark wood. Its capstone is the chessmen's pawn, in the same wood (the
+    maintainer's choice, over a capstone of Tak's own that was made and dropped).
   - **A playing card**: a blank one of the usual size with a place on each side for a picture
     (a JPEG or a PNG of 5 to 7), and a back to give it until a game brings its own.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).

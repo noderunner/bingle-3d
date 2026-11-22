@@ -49,7 +49,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `tableware` | `models/bowl.glb`, `models/bowl_stones.glb`: a turned bowl, and the heap of stones in it | the bowl's profile, turned; the board's stone with few triangles, three dozen of them heaped |
 | `chessmen` | `models/chess/{king,queen,bishop,knight,rook,pawn}.glb`: a set of chessmen of the usual pattern, the king 46 mm tall | five turned from profiles written in `chessmen.py`, with what a lathe cannot do added after (the rook's battlements, the queen's coronet, the cut in the bishop's mitre, the king's cross); the knight's head from an outline of its side, given a carved head's thickness, with a mane, an eye and a mouth cut in |
 | `checkers` | `models/checkers/{man,king}.glb`: a wooden draughtsman, and a king, which is two | a profile turned, its edge milled |
-| `tak` | `models/tak/{flat,wall,cap}.glb`: a square block lying flat, the same block on its edge, and a capstone | a box with its edges eased; a profile turned |
+| `tak` | `models/tak/{flat,wall}.glb`: a square block lying flat, and the same block on its edge (Tak's capstone is the chessmen's pawn) | a box with its edges eased |
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
@@ -84,8 +84,9 @@ How the client reads them:
 
 A game's appearance file (`assets/appearance/*.toml`) names a model for each kind of piece, by
 the id the game gives it, and how it `stands`: `loose` (a stone: turned any way, leaning a
-little), `upright` (a turned piece), `square` (a block: square to the board, a quarter turn any
-way) or `forward` (a piece with a face). A kind it does not name is the generic stone. A seat's
+little), `upright` (a turned piece), `square` (a block set down by hand: square to the board, a
+quarter turn any way, a little askew and a little aside of the middle, so a stack's blocks do
+not line up) or `forward` (a piece with a face). A kind it does not name is the generic stone. A seat's
 pieces are all of that seat's material, unless a piece has a `material` of its own.
 
 A piece is mapped in metres from every side, with the finer second set (`meshkit.box_uv(…,

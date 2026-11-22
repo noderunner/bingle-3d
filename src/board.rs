@@ -288,9 +288,13 @@ struct LastMoveMark;
 /// How thick the generic piece is (`assets-src/blender/stones.py`), at the full pitch, should
 /// its model not say.
 const STONE_THICKNESS: f32 = 0.0088;
-/// How far from true a block set down square to the board may be, and a piece looking across
-/// it, either way.
-const SQUARE_OFF: f32 = 0.05;
+/// A block set down square to the board by hand: how far from true it may be turned, either
+/// way, and how far from its position's middle it may lie, each way across the board (metres at
+/// the full pitch). Enough that the blocks of a stack do not line up; too little for one to
+/// leave its space.
+const SQUARE_OFF: f32 = 0.08;
+const SQUARE_ASIDE: f32 = 0.0013;
+/// How far from true a piece looking across the board may be turned, either way.
 const FORWARD_OFF: f32 = 0.09;
 
 /// A piece on its way down to where it was played.
@@ -360,11 +364,12 @@ impl Kit {
     ) -> Transform {
         let kind = self.piece(id);
         let facing = self.facing.get(colour).copied().unwrap_or(0.0);
-        let (turn, size) = stance(kind.stands, cell, layer, facing);
-        let y = self.surface + (under - kind.foot * size) * self.scale;
-        Transform::from_translation(Vec3::new(centre.x, y, centre.z))
-            .with_rotation(turn)
-            .with_scale(Vec3::splat(self.scale * size))
+        let stance = stance(kind.stands, cell, layer, facing);
+        let y = self.surface + (under - kind.foot * stance.size) * self.scale;
+        let aside = stance.aside * self.scale;
+        Transform::from_translation(Vec3::new(centre.x + aside.x, y, centre.z + aside.y))
+            .with_rotation(stance.turn)
+            .with_scale(Vec3::splat(self.scale * stance.size))
     }
 }
 
@@ -599,20 +604,42 @@ fn size(cell: &str, layer: usize) -> f32 {
     1.0 + (chance(cell, layer, 3) - 0.5) * 0.04
 }
 
-/// How a piece is turned and how big it is against its model, by the way its kind is set down:
-/// the same for the same place, and different from place to place. `facing` is the way its seat
-/// looks across the board, a turn about the vertical.
-fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> (Quat, f32) {
+/// How a piece is set down on its position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stance {
+    turn: Quat,
+    /// How big it is against its model.
+    size: f32,
+    /// How far from the position's middle it is, across the board (x, z), in metres at the
+    /// full pitch.
+    aside: Vec2,
+}
+
+/// How a piece is set down, by the way its kind is: the same for the same place, and different
+/// from place to place, so each piece of a stack has its own. `facing` is the way its seat looks
+/// across the board, a turn about the vertical.
+fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> Stance {
     let off = |what: u8, by: f32| (chance(cell, layer, what) - 0.5) * 2.0 * by;
+    let upright = |turn: f32| Stance {
+        turn: Quat::from_rotation_y(turn),
+        size: 1.0,
+        aside: Vec2::ZERO,
+    };
     match stands {
-        Stands::Loose => (lie(cell, layer), size(cell, layer)),
-        Stands::Upright => (Quat::from_rotation_y(yaw(cell, layer)), 1.0),
+        Stands::Loose => Stance {
+            turn: lie(cell, layer),
+            size: size(cell, layer),
+            aside: Vec2::ZERO,
+        },
+        Stands::Upright => upright(yaw(cell, layer)),
         Stands::Square => {
             let quarters = (chance(cell, layer, 4) * 4.0).floor();
-            let turn = quarters * FRAC_PI_2 + off(5, SQUARE_OFF);
-            (Quat::from_rotation_y(turn), 1.0)
+            Stance {
+                aside: Vec2::new(off(7, SQUARE_ASIDE), off(8, SQUARE_ASIDE)),
+                ..upright(quarters * FRAC_PI_2 + off(5, SQUARE_OFF))
+            }
         }
-        Stands::Forward => (Quat::from_rotation_y(facing + off(6, FORWARD_OFF)), 1.0),
+        Stands::Forward => upright(facing + off(6, FORWARD_OFF)),
     }
 }
 
@@ -1365,17 +1392,22 @@ mod tests {
     #[test]
     fn a_piece_is_set_down_as_its_kind_is() {
         let up = |turn: Quat| (turn * Vec3::Y).distance(Vec3::Y);
-        // A stone, as before: turned any way, leaning a little, never quite one size.
-        let (turn, size) = stance(Stands::Loose, "c4", 0, 0.0);
-        assert_eq!((turn, size), (lie("c4", 0), super::size("c4", 0)));
-        assert!(up(turn) > 0.0 && up(turn) < 0.03);
+        // A stone, as before: turned any way, leaning a little, never quite one size, in the
+        // middle of its position.
+        let stone = stance(Stands::Loose, "c4", 0, 0.0);
+        assert_eq!(
+            (stone.turn, stone.size),
+            (lie("c4", 0), super::size("c4", 0))
+        );
+        assert!(up(stone.turn) > 0.0 && up(stone.turn) < 0.03);
+        assert_eq!(stone.aside, Vec2::ZERO);
         // The others stand upright, the model's own size.
         for stands in [Stands::Upright, Stands::Square, Stands::Forward] {
             for cell in ["a1", "c4", "h8"] {
-                let (turn, size) = stance(stands, cell, 1, 2.0);
-                assert!(up(turn) < 1e-6, "{stands:?} at {cell}");
-                assert_eq!(size, 1.0);
-                assert_eq!(stance(stands, cell, 1, 2.0), (turn, size), "the same again");
+                let set = stance(stands, cell, 1, 2.0);
+                assert!(up(set.turn) < 1e-6, "{stands:?} at {cell}");
+                assert_eq!(set.size, 1.0);
+                assert_eq!(stance(stands, cell, 1, 2.0), set, "the same again");
             }
         }
         let yaw = |turn: Quat| turn.to_euler(EulerRot::YXZ).0;
@@ -1383,7 +1415,7 @@ mod tests {
         // A block is square to the board, give or take; not every one the same quarter turn.
         let mut quarters = Vec::new();
         for cell in cells {
-            let turn = yaw(stance(Stands::Square, cell, 0, 0.0).0);
+            let turn = yaw(stance(Stands::Square, cell, 0, 0.0).turn);
             let quarter = (turn / FRAC_PI_2).round();
             assert!((turn - quarter * FRAC_PI_2).abs() <= SQUARE_OFF + 1e-5);
             quarters.push(quarter.rem_euclid(4.0) as i32);
@@ -1391,16 +1423,56 @@ mod tests {
         quarters.dedup();
         assert!(quarters.len() > 1, "{quarters:?}");
         // A piece with a face looks the way its seat does, give or take; a turned one any way.
+        // Both stand in the middle of their positions.
         for cell in cells {
             for facing in [0.0, FRAC_PI_2, 3.0] {
-                let turn = stance(Stands::Forward, cell, 0, facing).0;
-                let off = (turn * Quat::from_rotation_y(-facing)).to_axis_angle().1;
+                let set = stance(Stands::Forward, cell, 0, facing);
+                let off = (set.turn * Quat::from_rotation_y(-facing))
+                    .to_axis_angle()
+                    .1;
                 assert!(off <= FORWARD_OFF + 1e-5, "{off}");
+                assert_eq!(set.aside, Vec2::ZERO);
+            }
+            assert_eq!(stance(Stands::Upright, cell, 0, 0.0).aside, Vec2::ZERO);
+        }
+        let a = yaw(stance(Stands::Upright, "a1", 0, 0.0).turn);
+        let b = yaw(stance(Stands::Upright, "h8", 0, 0.0).turn);
+        assert!((a - b).abs() > 0.01);
+    }
+
+    #[test]
+    fn the_blocks_of_a_stack_do_not_line_up() {
+        // Ten blocks on one position, as a hand sets them down: each a little aside of the
+        // middle and a little askew, no two alike, none far enough to leave its space.
+        let stack: Vec<Stance> = (0..10)
+            .map(|layer| stance(Stands::Square, "c3", layer, 0.0))
+            .collect();
+        let askew = |s: &Stance| {
+            let turn = s.turn.to_euler(EulerRot::YXZ).0;
+            turn - (turn / FRAC_PI_2).round() * FRAC_PI_2
+        };
+        for (i, a) in stack.iter().enumerate() {
+            assert!(a.aside.abs().max_element() <= SQUARE_ASIDE, "{}", a.aside);
+            for b in &stack[i + 1..] {
+                assert!(a.aside.distance(b.aside) > 1e-5, "two in one place");
+                assert!((askew(a) - askew(b)).abs() > 1e-4, "two turned alike");
             }
         }
-        let a = yaw(stance(Stands::Upright, "a1", 0, 0.0).0);
-        let b = yaw(stance(Stands::Upright, "h8", 0, 0.0).0);
-        assert!((a - b).abs() > 0.01);
+        // Plainly so, not by a hair: among ten, some lie more than half a millimetre apart
+        // and some are turned more than two degrees apart.
+        let spread = |f: &dyn Fn(&Stance) -> f32| {
+            let all: Vec<f32> = stack.iter().map(f).collect();
+            all.iter().cloned().fold(f32::MIN, f32::max)
+                - all.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&|s| s.aside.x) > 0.0005 && spread(&|s| s.aside.y) > 0.0005);
+        assert!(spread(&askew) > 2f32.to_radians());
+        // A block 18.5 mm square, as far aside and askew as it may be, is inside its cell.
+        let half = 0.0185 / 2.0 * (SQUARE_OFF.cos() + SQUARE_OFF.sin()) + SQUARE_ASIDE;
+        assert!(half < PITCH * CELL_SCALE / 2.0, "{half}");
+        // The same block in the same place lies the same way, whenever it is drawn.
+        assert_eq!(stance(Stands::Square, "c3", 4, 0.0), stack[4]);
+        assert_ne!(stance(Stands::Square, "d3", 4, 0.0), stack[4]);
     }
 
     #[test]
@@ -1598,7 +1670,8 @@ mod tests {
             let mut app = with_looks();
             let flat = assets::model_span("models/tak/flat.glb").unwrap();
             let wall = assets::model_span("models/tak/wall.glb").unwrap();
-            let cap = assets::model_span("models/tak/cap.glb").unwrap();
+            // Tak's capstone is a pawn.
+            let cap = assets::model_span("models/chess/pawn.glb").unwrap();
             let (flat, wall, cap) = (flat.1 - flat.0, wall.1 - wall.0, cap.1 - cap.0);
             let cells: &[(&str, &[(&str, &str)])] = &[
                 (
@@ -1632,6 +1705,20 @@ mod tests {
                 assert!((transform.rotation * Vec3::Y).distance(Vec3::Y) < 1e-5);
                 assert_eq!(transform.scale, Vec3::ONE, "a block is its model's size");
             }
+            // The blocks of a stack do not line up: each is a little aside of its position's
+            // middle, its own way. The capstone, a turned piece, stands in the middle.
+            let layout = Layout::new(&grid_table("tak-5x5", cells).info.board.positions);
+            let aside = |cell: &str, layer: usize| {
+                let off = at(cell, layer).1.translation - layout.centres[cell];
+                Vec2::new(off.x, off.z)
+            };
+            for layer in 0..3 {
+                let off = aside("a1", layer);
+                assert!(off.length() > 1e-6 && off.abs().max_element() <= SQUARE_ASIDE);
+            }
+            assert!(aside("a1", 0).distance(aside("a1", 1)) > 1e-5);
+            assert!(aside("a1", 1).distance(aside("a1", 2)) > 1e-5);
+            assert_eq!(aside("b2", 1), Vec2::ZERO);
 
             // What is under a piece changes height: the piece is put down again, on it.
             let before = at("b2", 1).4;

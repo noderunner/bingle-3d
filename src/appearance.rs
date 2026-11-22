@@ -120,7 +120,8 @@ pub enum Stands {
     Loose,
     /// Upright, turned any way: a turned piece, which looks the same from every side.
     Upright,
-    /// Upright and square to the board, a quarter turn any way and never quite true: a block.
+    /// Upright and square to the board, as a block is set down by hand: a quarter turn any way,
+    /// never quite true and never quite in the middle, so the blocks of a stack do not line up.
     Square,
     /// Upright, looking across the board from its seat's side: a piece with a face.
     Forward,
@@ -363,6 +364,11 @@ mod tests {
         assert_eq!(piece("hex-11", "stone").stands, Stands::Loose);
         assert_eq!(piece("tak-5x5", "flat").stands, Stands::Square);
         assert_eq!(piece("tak-5x5", "cap").stands, Stands::Upright);
+        // Tak's capstone is a pawn, as a game of pawns' is.
+        assert_eq!(
+            piece("tak-5x5", "cap").model,
+            piece("breakthrough", "pawn").model
+        );
         assert_eq!(piece("fist", "ace").stands, Stands::Forward);
         assert_ne!(
             piece("tak-5x5", "flat").model,

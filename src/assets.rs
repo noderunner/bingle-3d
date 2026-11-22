@@ -44,7 +44,6 @@ files![
     "models/chess/rook.glb",
     "models/die.glb",
     "models/stone.glb",
-    "models/tak/cap.glb",
     "models/tak/flat.glb",
     "models/tak/wall.glb",
     "pictures/cards/points.jpg",

@@ -125,6 +125,7 @@ def draughts():
 
 
 def tak_pieces():
+    import chessmen
     import tak
 
     stage()
@@ -135,12 +136,22 @@ def tak_pieces():
 
     def pile(gx, gy, kinds, top=None):
         on = BOARD_TOP
+        # Set down by hand, as the client sets a block down (`board::stance`): never quite in
+        # the middle, never quite square.
+        aside = lambda: rng.uniform(-0.0013, 0.0013)
+        askew = lambda: rng.uniform(-0.09, 0.09)
         for kind in kinds:
             obj, tall = tak.make("flat")
-            on = stand(obj, tall, kind, gx * PITCH, gy * PITCH, on, rng.choice((0, 1, 2, 3)) * math.pi / 2 + rng.uniform(-0.05, 0.05))
-        if top:
+            turn = rng.choice((0, 1, 2, 3)) * math.pi / 2 + askew()
+            on = stand(obj, tall, kind, gx * PITCH + aside(), gy * PITCH + aside(), on, turn)
+        if top and top[0] == "cap":
+            # The capstone is a pawn.
+            obj, tall = chessmen.make("pawn")
+            stand(obj, tall, top[1], gx * PITCH, gy * PITCH, on)
+        elif top:
             obj, tall = tak.make(top[0])
-            stand(obj, tall, top[1], gx * PITCH, gy * PITCH, on, rng.choice((0, 1)) * math.pi / 2 + rng.uniform(-0.05, 0.05))
+            turn = rng.choice((0, 1)) * math.pi / 2 + askew()
+            stand(obj, tall, top[1], gx * PITCH + aside(), gy * PITCH + aside(), on, turn)
 
     pile(-3, 0, [pale])
     pile(-2, 0, [dark, pale, dark])
