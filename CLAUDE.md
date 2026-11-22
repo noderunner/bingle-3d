@@ -320,7 +320,9 @@ A game's own rules and its players' words keep their terms.
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it
   (`in_hand` is a piece taken to place; `may_end` a move a one-seat game may send part of;
   `stack_moves` a stack picked up, by its gestures: a position, a count, a position for each
-  piece dropped; a stack clicked is taken whole); its systems turn clicks on a `Spot` (a board cell or a
+  piece dropped; a stack clicked is taken whole; `lifted` the piece every click moves, where
+  its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
+  it and held under the pointer); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh

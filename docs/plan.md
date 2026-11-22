@@ -564,6 +564,16 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the panel), it is carried there from its column. Every tile is cut from the same place in the wood: one grain for all,
   for now. Any game whose view tints positions or counts a shared stock gets the same from a
   look of its own.
+- A piece whose moves do not have it clicked (Courtfall's unit, once activated: each of its
+  selections says it moves from its hex, and is a click on where it goes, then what it does
+  there) is picked up by a click on it (`Turn::unclicked_from`, `Turn::lifted`): it floats
+  under the pointer in place of its arrow, with the sound of a piece picked up, the hexes it
+  may go to or act on are lit, and over an empty one it may go to a see-through copy of it
+  stands there (none over a unit it would strike or shove: it does not go there). A click on
+  one of them moves it, carried from under the pointer; a click on it again, or Back, puts it
+  down; a click where it may not go leaves it in hand. Its second action starts from where
+  the first put it: the board follows the piece the move being built has moved
+  (`show_turn`'s `origin`), so it is picked up there and carried on from there.
 - The game's panel says what the seat on impulse is asked in the server's words, for any game
   whose view says it (`ext.view.impulse`, else `prompt`: Courtfall's "Choose where to lay a
   tile (Overgrowth 4, Mire 3, Hazard 3 left).", "Choose a Court."), as Bingle's page does:

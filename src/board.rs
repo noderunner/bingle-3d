@@ -2158,8 +2158,19 @@ type AimedHeld<'w, 's> = Query<
         Without<HeldFence>,
         Without<FromBowl>,
         Without<FromStock>,
+        Without<PieceAt>,
     ),
 >;
+
+/// A piece as `show_turn` sees it: where it is, where a click on it is taken, how the move
+/// being built carries it, and whether it is held under the pointer.
+type TurnPiece = (
+    Entity,
+    &'static PieceAt,
+    &'static mut Spot,
+    Option<&'static Carry>,
+    Has<Held>,
+);
 
 fn show_turn(
     mut commands: Commands,
@@ -2167,7 +2178,7 @@ fn show_turn(
     (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
-    mut pieces: Query<(Entity, &PieceAt, &mut Spot, Option<&Carry>)>,
+    mut pieces: Query<TurnPiece>,
     (ghosts, held, in_flight): (Query<Entity, With<Ghost>>, AimedHeld, Query<&FromBowl>),
 ) {
     for ghost in &ghosts {
@@ -2202,11 +2213,18 @@ fn show_turn(
     // there: each piece it moves taken off its space, and on where it is put.
     let mut after = cells.clone();
     let mut carried: HashMap<(String, usize), (Carry, String)> = HashMap::new();
+    // Which piece of the position stands where the move being built has put it (by its place in
+    // the position), so one moved again in the same impulse (a unit's second action) is the
+    // same piece, carried on.
+    let mut origin: HashMap<(String, usize), (String, usize)> = HashMap::new();
     for c in turn.map(Turn::carried).unwrap_or_default() {
         let Some(piece) = after.get_mut(c.from).and_then(Vec::pop) else {
             continue;
         };
         let layer = after[c.from].len();
+        let key = origin
+            .remove(&(c.from.to_string(), layer))
+            .unwrap_or_else(|| (c.from.to_string(), layer));
         let (carry, at) = match c.to.and_then(|to| Some((to, layout.centres.get(to)?))) {
             Some((to, centre)) => {
                 let stack = after.entry(to.to_string()).or_default();
@@ -2217,11 +2235,13 @@ fn show_turn(
                     (to, stack.len()),
                     kit.floor(&tints, to) + kit.stack_height(stack.iter()),
                 );
+                origin.insert((to.to_string(), stack.len()), key.clone());
                 stack.push(piece);
                 (Carry::Put(put), to)
             }
             None => {
                 after.get_mut(c.from).expect("taken from it").push(piece);
+                origin.insert((c.from.to_string(), layer), key.clone());
                 let lift = LIFT * kit.scale;
                 (
                     Carry::Held {
@@ -2232,7 +2252,7 @@ fn show_turn(
                 )
             }
         };
-        carried.insert((c.from.to_string(), layer), (carry, at.to_string()));
+        carried.insert(key, (carry, at.to_string()));
     }
     // A stack moved: as many of its top pieces as are carried, lifted over it; each dropped
     // carried to where it was dropped, bottom first; what is left held over the last of those.
@@ -2309,11 +2329,42 @@ fn show_turn(
             }
         }
     }
-    for (entity, at, mut spot, now) in &mut pieces {
+    // The piece picked up to be moved (its selections do not have it clicked): under the
+    // pointer, in place of its arrow, and not in the way of a click on where it goes.
+    // Where the move being built has put it, if it has moved it already.
+    let lifted = turn.and_then(Turn::lifted).and_then(|from| {
+        let top = (from.to_string(), after.get(from)?.len().checked_sub(1)?);
+        Some(origin.get(&top).cloned().unwrap_or(top))
+    });
+    for (entity, at, mut spot, now, in_hand) in &mut pieces {
+        let up = lifted
+            .as_ref()
+            .is_some_and(|(cell, layer)| *cell == at.cell && *layer == at.layer);
+        if up {
+            if !in_hand {
+                let kind = kit.piece(&at.piece.piece);
+                commands.entity(entity).remove::<Carry>().insert((
+                    Held {
+                        board: kit.surface,
+                        lift: (LIFT - kind.foot) * kit.scale,
+                        scale: kit.scale,
+                    },
+                    Pickable::IGNORE,
+                ));
+            }
+            continue;
+        }
+        if in_hand {
+            commands
+                .entity(entity)
+                .remove::<Held>()
+                .insert(Pickable::default());
+        }
         match carried.get(&(at.cell.clone(), at.layer)) {
             Some((carry, cell)) => {
-                // Only when it changes: a piece put down is carried there once.
-                if now != Some(carry) {
+                // Only when it changes: a piece put down is carried there once (from under
+                // the pointer, if it was held there).
+                if now != Some(carry) || in_hand {
                     commands.entity(entity).insert(*carry);
                 }
                 // A click on a piece put down is a click on where it is now.
@@ -2381,7 +2432,13 @@ fn show_turn(
         let mut kinds = turn.could_place(cell).filter_map(|s| s.piece.as_deref());
         kinds.next().is_none_or(|first| kinds.all(|k| k == first))
     };
+    // Where the piece every click moves would go, but not where a click acts on another piece
+    // (Courtfall's strike, shove or shot at a unit): it does not go there.
+    let acts_on = |cell: &str| {
+        turn.unclicked_from().is_some() && cells.get(cell).is_some_and(|s| !s.is_empty())
+    };
     if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
+        && !acts_on(cell)
         && turn.arriving(cell).is_some()
         && (in_hand.is_some()
             || (one_kind(cell)
@@ -4483,6 +4540,120 @@ mod tests {
                 at.translation.y > put.translation.y + 0.005,
                 "held above it"
             );
+        }
+
+        #[test]
+        fn a_unit_whose_moves_do_not_click_it_is_picked_up_held_and_carried() {
+            let mut app = with_looks();
+            let mut table = grid_table(
+                "courtfall-1.0.0",
+                &[("a1", &[("queen", "white")]), ("c3", &[("queen", "black")])],
+            );
+            table.game.seats = vec![crate::net::api::GameSeat {
+                seat: 1,
+                color: "white".into(),
+                name: "Ana".into(),
+                bot: String::new(),
+                yours: true,
+            }];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            let act = |hex: &str, action: &str| {
+                let mut o = option(&[("pos", hex), ("action", action)], Some("a1"));
+                o.to = Some(hex.into());
+                o.piece = Some("queen".into());
+                o
+            };
+            let mut turn = tak_turn(vec![
+                act("b1", "move"),
+                act("b2", "move"),
+                act("c3", "strike"),
+            ]);
+            turn.gesture(&Gesture::pos("a1"));
+            assert_eq!(turn.lifted(), Some("a1"));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let queen = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&PieceAt, Has<Held>, Option<&Carry>, &Pickable)>();
+                q.iter(app.world())
+                    .find(|(at, ..)| at.cell == "a1")
+                    .map(|(_, held, carry, pick)| (held, carry.copied(), *pick == Pickable::IGNORE))
+                    .unwrap()
+            };
+            // Under the pointer, and not in the way of a click on where it goes.
+            assert_eq!(queen(&mut app), (true, None, true));
+            let ghosts = |app: &mut App| {
+                let mut q = app.world_mut().query_filtered::<&Transform, With<Ghost>>();
+                q.iter(app.world())
+                    .map(|t| t.translation)
+                    .collect::<Vec<_>>()
+            };
+            // Over an empty hex it may go to, a see-through queen there; over the unit it would
+            // strike, none.
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b2".into());
+            app.update();
+            assert_eq!(ghosts(&mut app).len(), 1);
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c3".into());
+            app.update();
+            assert!(ghosts(&mut app).is_empty());
+            // Still under the pointer as it moves.
+            assert_eq!(queen(&mut app), (true, None, true));
+            // Moved: carried from under the pointer to where it goes, and clickable again.
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture::pos("b2"));
+            app.update();
+            let (held, carry, ignored) = queen(&mut app);
+            assert!(!held && !ignored);
+            assert!(matches!(carry, Some(Carry::Put(_))));
+
+            // Its second action, from where the first put it: picked up there, the same piece,
+            // and carried on from there.
+            let then = |hex: &str| {
+                let mut o = option(&[("pos", hex), ("action", "move")], Some("b2"));
+                o.to = Some(hex.into());
+                o.piece = Some("queen".into());
+                o
+            };
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            let made = turn.made.iter().map(|s| s.notation.clone()).collect();
+            turn.answered(crate::net::api::Selections {
+                seat: 1,
+                ply: 4,
+                made,
+                options: vec![then("c2"), then("c1")],
+                complete: false,
+                may_end: true,
+            });
+            turn.gesture(&Gesture::pos("b2"));
+            assert_eq!(turn.lifted(), Some("b2"));
+            app.update();
+            assert_eq!(
+                queen(&mut app),
+                (true, None, true),
+                "the piece on a1, now on b2"
+            );
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture::pos("c2"));
+            app.update();
+            let layout = Layout::new(
+                &app.world()
+                    .resource::<WatchStatus>()
+                    .table
+                    .as_ref()
+                    .unwrap()
+                    .info
+                    .board
+                    .positions,
+            );
+            match queen(&mut app) {
+                (false, Some(Carry::Put(to)), false) => {
+                    assert!(to.translation.xz().distance(layout.centres["c2"].xz()) < 1e-6);
+                }
+                other => panic!("{other:?}"),
+            }
         }
 
         #[test]

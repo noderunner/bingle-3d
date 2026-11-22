@@ -157,6 +157,8 @@ pub struct Turn {
     /// Whether what is taken is put down by a click on the board, which its choice follows (a
     /// tile from the stock, laid on a hex), rather than chosen next (a fence, put on a side).
     to_place: bool,
+    /// Whether the piece every click moves is picked up (`Turn::lifted`).
+    lifted: bool,
     /// Choices that are taken up by themselves once they are all that may be chosen next (the
     /// fences, once the piece has moved: the game's look's).
     pub auto_take: Vec<Gesture>,
@@ -177,6 +179,7 @@ impl Turn {
             problem: None,
             taken: None,
             to_place: false,
+            lifted: false,
             auto_take: Vec::new(),
         }
     }
@@ -352,7 +355,44 @@ impl Turn {
     /// say, whose moves the board then lights.
     pub fn holding(&self) -> bool {
         self.stage == Stage::Choosing
-            && (self.last_click().is_some() || self.in_hand().is_some() || self.taken.is_some())
+            && (self.last_click().is_some()
+                || self.in_hand().is_some()
+                || self.taken.is_some()
+                || self.lifted().is_some())
+    }
+
+    /// The position of the piece every click on the board would move, where the selections do
+    /// not have it clicked: each says it moves from there, and none of their gestures is a click
+    /// on it (Courtfall's unit, once activated: a click on where it goes, then what it does).
+    /// Only before anything is chosen towards the selection.
+    pub fn unclicked_from(&self) -> Option<&str> {
+        if self.stage != Stage::Choosing || self.gestures.len() != self.forced {
+            return None;
+        }
+        let n = self.gestures.len();
+        let mut from: Option<&str> = None;
+        for o in self.matching() {
+            if !o.gestures[n..].iter().any(Gesture::is_pos) {
+                continue;
+            }
+            // What a move aims (an arrow from where a piece landed) is not the piece moved.
+            if o.aim.is_some() {
+                return None;
+            }
+            let here = o.from.as_deref()?;
+            if from.is_some_and(|f| f != here) || o.gestures.contains(&Gesture::pos(here)) {
+                return None;
+            }
+            from = Some(here);
+        }
+        from
+    }
+
+    /// The piece picked up to move, by its position, while it is: a click on the piece
+    /// [`Turn::unclicked_from`] names picks it up (and again puts it down), so it is held while
+    /// the player chooses where it goes.
+    pub fn lifted(&self) -> Option<&str> {
+        self.unclicked_from().filter(|_| self.lifted)
     }
 
     /// What the player has taken to place (from its bowl or a seat's supply), while it waits
@@ -632,8 +672,12 @@ impl Turn {
     /// selections made, one at a time, each to just before its last click (a piece moved and
     /// its arrow not yet shot). Nothing is sent, so nothing needs undoing on the server.
     pub fn back(&mut self) -> bool {
-        // What is taken up goes back first.
+        // What is taken up, or picked up, goes back first.
         if self.taken.take().is_some() {
+            return true;
+        }
+        if self.lifted().is_some() {
+            self.lifted = false;
             return true;
         }
         match self.stage {
@@ -672,7 +716,10 @@ impl Turn {
     pub fn can_go_back(&self) -> bool {
         match self.stage {
             Stage::Choosing => {
-                self.taken.is_some() || self.gestures.len() > self.forced || !self.made.is_empty()
+                self.taken.is_some()
+                    || self.lifted().is_some()
+                    || self.gestures.len() > self.forced
+                    || !self.made.is_empty()
             }
             Stage::Ready => true,
             _ => false,
@@ -802,6 +849,19 @@ impl Turn {
     }
 
     fn enter(&mut self, gesture: &Gesture) -> Outcome {
+        // The piece every click moves, clicked: picked up, or put down again.
+        if let Some(from) = self.unclicked_from()
+            && *gesture == Gesture::pos(from)
+            && self.path_to(gesture).is_none()
+        {
+            self.lifted = !self.lifted;
+            return Outcome::Changed;
+        }
+        // Picked up, a click where it may not go leaves it in hand.
+        if self.lifted().is_some() && gesture.is_pos() && self.path_to(gesture).is_none() {
+            return Outcome::Ignored;
+        }
+        self.lifted = false;
         // A click again on the position last clicked, where it means nothing more, takes that
         // click back: a piece picked up is put down again.
         if let Some(i) = self.last_click()
@@ -916,6 +976,7 @@ impl Turn {
     /// Starts entering a selection from the options there are.
     fn start_selection(&mut self) {
         self.taken = None;
+        self.lifted = false;
         self.gestures.clear();
         self.take_forced();
         self.forced = self.gestures.len();
@@ -1516,6 +1577,66 @@ mod tests {
         t.answered(answer(2, fendo()));
         t.gesture(&g("pos", "d1"));
         assert_eq!(t.in_hand(), None);
+    }
+
+    #[test]
+    fn a_piece_whose_moves_do_not_click_it_is_picked_up_by_a_click_on_it() {
+        // Courtfall's activated unit on e6: a click on where it goes, then what it does there.
+        let act = |hex: &str, action: &str| LegalSelection {
+            from: Some("e6".into()),
+            piece: Some("queen".into()),
+            ..sel(
+                &format!("Q{action}{hex}"),
+                Some(hex),
+                &[("pos", hex), ("action", action)],
+            )
+        };
+        let end = sel("end", None, &[("action", "end")]);
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            5,
+            vec![
+                act("e3", "move"),
+                act("f3", "move"),
+                act("d5", "strike"),
+                act("d5", "shove"),
+                end,
+            ],
+        ));
+        assert_eq!(t.unclicked_from(), Some("e6"));
+        assert_eq!(t.lifted(), None);
+        assert!(!t.holding(), "nothing lit before it is picked up");
+        // Picked up by a click on it, put down by another, or by Back.
+        assert_eq!(t.gesture(&g("pos", "e6")), Outcome::Changed);
+        assert_eq!(t.lifted(), Some("e6"));
+        assert!(t.holding() && t.can_go_back());
+        assert_eq!(t.gesture(&g("pos", "e6")), Outcome::Changed);
+        assert_eq!(t.lifted(), None);
+        t.gesture(&g("pos", "e6"));
+        assert!(t.back());
+        assert_eq!(t.lifted(), None);
+        assert!(!t.can_go_back());
+        // Held, a click where it may not go leaves it in hand; on where it may, it goes.
+        t.gesture(&g("pos", "e6"));
+        assert_eq!(t.gesture(&g("pos", "a1")), Outcome::Ignored);
+        assert_eq!(t.lifted(), Some("e6"));
+        assert_eq!(t.gesture(&g("pos", "f3")), Outcome::Ask);
+        assert_eq!(t.made[0].notation, "Qmovef3");
+        assert_eq!(t.lifted(), None);
+        // A click on a unit it acts on: what it does is chosen next, and it is put down.
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            5,
+            vec![act("e3", "move"), act("d5", "strike"), act("d5", "shove")],
+        ));
+        t.gesture(&g("pos", "e6"));
+        assert_eq!(t.gesture(&g("pos", "d5")), Outcome::Changed);
+        assert_eq!(t.lifted(), None);
+        assert_eq!(t.choices().len(), 2);
+        // A piece whose moves click it first is not this: it is picked up by its own click.
+        let mut t = Turn::new(1);
+        t.answered(answer(1, vec![step("a1", "a2"), step("b1", "a2")]));
+        assert_eq!(t.unclicked_from(), None);
     }
 
     #[test]
