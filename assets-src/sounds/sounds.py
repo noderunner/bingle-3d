@@ -95,6 +95,20 @@ def key():
     return normalised(out, -12.0)
 
 
+def tock():
+    """A piece captured, set into its captor's tray: a polished stone laid in a wooden square.
+    Rounded and soft, lower than the pick-up's tap and duller, with nothing left ringing: a few
+    of these come one after another, so it is quieter than a piece set down, and short. The
+    faintest second touch as the stone settles."""
+    out = silence(0.11)
+    strike(out, 0.0, 0.004, 0.6, 0.18)
+    ring(out, 0.0, [(610, 0.016, 1.0), (1340, 0.007, 0.32), (2280, 0.003, 0.1)])
+    # Settling: a touch, a fifth as loud, a moment later.
+    strike(out, 0.022, 0.002, 0.12, 0.15)
+    ring(out, 0.022, [(660, 0.006, 0.16)])
+    return normalised(out, -15.0)
+
+
 class Resonator:
     """A two-pole band-pass filter: a formant of a voice, at `freq` Hz, `width` Hz wide."""
 
@@ -238,7 +252,10 @@ def write(name, samples):
 
 
 if __name__ == "__main__":
-    for name, make in [("tick", tick), ("thump", thump), ("key", key), ("cheer", cheer), ("groan", groan)]:
+    for name, make in [
+        ("tick", tick), ("thump", thump), ("key", key), ("tock", tock),
+        ("cheer", cheer), ("groan", groan),
+    ]:
         # Each its own noise, the same every time.
         random.seed(name)
         write(name, make())

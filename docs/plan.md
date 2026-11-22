@@ -481,6 +481,27 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   `may_end` (a move sent part way) is read too, though only a one-seat game sets it. The lit
   cells of a plain board are stained amber as well as glowing, as a chessboard's are: the glow
   alone barely showed on teak.
+- Captures in trays (`trays.rs`): a small tray in front of each seat, between the board and its
+  player, of the board's own wood (it changes with the board's), with a square for each capture
+  its win wants (`counters[].max`: 15, 20, 25, 40 and 50 on Blooms' five boards). Wide and
+  shallow: one row of up to ten, otherwise two rows (8 by 2, 10 by 2, 13 by 2, 20 by 2, 25 by 2;
+  first tried in full rows of up to ten, which made the bigger boards' trays deep). The counts are the position's `reserves` (by the seat's colour word, then the
+  counter's id). The server does not say which stones were taken (a move's `captured` names one
+  cell), so the board sees it: what leaves the board as a seat's count goes up, not of a colour
+  it plays, is its capture, carried from where it stood (straight up clear of its neighbours,
+  across, and set into the next empty square, one after another), each with a soft wooden
+  "tock", a little higher or lower each time, so several in a row do not grate. A game opened
+  with captures made has its trays filled at once in the other seat's colours by turns; a count
+  past the squares (the last turn may take more) stacks on the first. Any game whose definition
+  has a counter with a count wanted gets them, with no look of its own; `[trays]` may give a
+  material and a size. The camera frames the board with the player's tray in front of it. No
+  number is shown: the squares are the score.
+- A board's lines are as thick round the outside as between its cells: the darkened layer under
+  the cells is grown by a cell's margin, since round the outside only one cell's margin made the
+  line (half as thick). The cells stand only 0.3 mm proud of the lines, not 1.2 mm: the deeper
+  trenches between cells were darkened by shadow and ambient occlusion, so the lines round the
+  outside, walled on one side only, still looked thinner. A points board's thicker edge lines are
+  a Go board's, on purpose.
 - Sounds as a seat is played (`sounds.rs`), the same for every game by default (made for
   Amazons first, and the default for now); a game's appearance may give any of them another
   (`[sounds]`): a piece picked up, a piece set down (when a carried piece touches the board, or
@@ -492,7 +513,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   seat too); a draw is silent. The crowd is synthesised as the rest are: a score of voices of
   their own pitch and start, each a glottal buzz through a vowel's three formants, gliding
   ("eh" to "ah", rising, for the cheer; "aw" to "oh", falling, for the groan). Only the
-  player's own; the opponent's moves are silent for now.
+  player's own; the opponent's moves are silent for now, but for what they capture.
   With `--no-audio-devices` Bevy's audio plugin is left out, so such a run (an agent's, a
   screenshot's) opens no speaker; before this Bevy opened the default output at every start.
   This way of picking up and moving pieces is the desktop client's for every game; the headset

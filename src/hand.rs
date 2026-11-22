@@ -49,18 +49,86 @@ const RATE: f32 = 14.0;
 /// how long each takes, in seconds.
 pub const ACROSS: f32 = 0.2;
 pub const LOWER: f32 = 0.12;
+/// How long a piece taken up off the board first rises straight up, clear of its neighbours,
+/// when its route goes over them.
+pub const RISE: f32 = 0.1;
+
+/// How a piece put down gets there, when that is not the way a move's piece does: after a
+/// wait, raised `over` metres higher than it would be (first straight up), taking `across`
+/// seconds over, and sounding as `lands` when it is set down. A captured stone goes so to its
+/// captor's tray.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Route {
+    pub delay: f32,
+    pub over: f32,
+    pub across: f32,
+    pub lands: Cue,
+}
+
+impl Default for Route {
+    fn default() -> Self {
+        Route {
+            delay: 0.0,
+            over: 0.0,
+            across: ACROSS,
+            lands: Cue::Put,
+        }
+    }
+}
+
+impl Route {
+    fn rise(&self) -> f32 {
+        if self.over > 0.0 { RISE } else { 0.0 }
+    }
+
+    /// How long it takes once it sets off.
+    pub fn takes(&self) -> f32 {
+        self.rise() + self.across + LOWER
+    }
+}
 
 /// Where a piece put down is `secs` after it set off from `from` for `to`: across at the height
 /// it was held (or a lift over where it goes, if it was not held), easing in and out, then
 /// lowered, faster as it goes, as a hand sets a piece down. `None` once it is there.
+#[cfg(test)]
 pub fn travel(from: Transform, to: Transform, secs: f32) -> Option<Transform> {
-    if secs >= ACROSS + LOWER {
+    travel_by(from, to, secs, &Route::default())
+}
+
+/// Where a piece put down is `secs` after it set off, going by `route`: before it sets off
+/// (`secs` below 0) where it was.
+pub fn travel_by(from: Transform, to: Transform, secs: f32, route: &Route) -> Option<Transform> {
+    if secs >= route.takes() {
         return None;
     }
-    let high = from.translation.y.max(to.translation.y + LIFT * to.scale.y);
+    if secs < 0.0 {
+        return Some(from);
+    }
+    let high = from.translation.y.max(to.translation.y + LIFT * to.scale.y) + route.over;
+    let rise = route.rise();
+    if secs < rise {
+        // Straight up, slowing as it gets there.
+        let f = secs / rise;
+        let mut at = from;
+        at.translation.y += (high - from.translation.y) * f * (2.0 - f);
+        return Some(at);
+    }
+    let (from, secs) = if rise > 0.0 {
+        (
+            from.with_translation(from.translation.with_y(high)),
+            secs - rise,
+        )
+    } else {
+        (from, secs)
+    };
+    Some(over_and_down(from, to, secs, high, route.across))
+}
+
+/// Across to over `to` at `high` in `across` seconds, then lowered onto it.
+fn over_and_down(from: Transform, to: Transform, secs: f32, high: f32, across: f32) -> Transform {
     let mut at = to;
-    if secs < ACROSS {
-        let f = secs / ACROSS;
+    if secs < across {
+        let f = secs / across;
         let eased = f * f * (3.0 - 2.0 * f);
         let over = to.translation.with_y(high);
         at.translation = from.translation.lerp(over, eased);
@@ -69,10 +137,10 @@ pub fn travel(from: Transform, to: Transform, secs: f32) -> Option<Transform> {
         at.rotation = from.rotation.slerp(to.rotation, eased);
         at.scale = from.scale.lerp(to.scale, eased);
     } else {
-        let f = (secs - ACROSS) / LOWER;
+        let f = ((secs - across) / LOWER).min(1.0);
         at.translation.y = high + (to.translation.y - high) * f * f;
     }
-    Some(at)
+    at
 }
 
 /// A piece put down on its way there: where it set off from, and how long ago.
@@ -80,6 +148,7 @@ pub fn travel(from: Transform, to: Transform, secs: f32) -> Option<Transform> {
 pub struct Travel {
     pub from: Transform,
     pub secs: f32,
+    pub route: Route,
 }
 
 /// How far above its held height a held piece is, `secs` into the game.
@@ -181,14 +250,16 @@ fn on_out(out: On<PointerOut>, spots: Query<(), With<Spot>>, mut on: ResMut<Poin
 /// back by itself.
 fn set_off(
     mut commands: Commands,
-    pieces: Query<(Entity, &Carry, &Transform), Changed<Carry>>,
+    pieces: Query<(Entity, &Carry, &Transform, Option<&Route>), Changed<Carry>>,
     mut gone: RemovedComponents<Carry>,
 ) {
-    for (entity, carry, t) in &pieces {
+    for (entity, carry, t, route) in &pieces {
+        let route = route.copied().unwrap_or_default();
         match carry {
             Carry::Put(_) => commands.entity(entity).insert(Travel {
                 from: *t,
-                secs: 0.0,
+                secs: -route.delay,
+                route,
             }),
             Carry::Held { .. } => commands.entity(entity).remove::<Travel>(),
         };
@@ -220,13 +291,14 @@ fn carry(
             Some(Carry::Put(to)) => {
                 // Not set off yet: it waits where it is.
                 let Some(mut trip) = trip else { continue };
-                let landing = trip.secs < ACROSS + LOWER;
+                let takes = trip.route.takes();
+                let landing = trip.secs < takes;
                 trip.secs += time.delta_secs();
                 // It touches the board: the sound of it set down.
-                if landing && trip.secs >= ACROSS + LOWER {
-                    cues.write(Cue::Put);
+                if landing && trip.secs >= takes {
+                    cues.write(trip.route.lands);
                 }
-                if let Some(at) = travel(trip.from, *to, trip.secs) {
+                if let Some(at) = travel_by(trip.from, *to, trip.secs, &trip.route) {
                     *t = at;
                     continue;
                 }
@@ -366,6 +438,68 @@ mod tests {
         let low = Transform::from_xyz(0.1, 0.03, 0.2);
         let over = travel(low, to, ACROSS).unwrap().translation;
         assert!((over.y - (0.03 + LIFT)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_piece_going_by_a_route_waits_rises_clear_crosses_and_is_lowered() {
+        let from = Transform::from_xyz(0.05, 0.035, 0.0);
+        let to = Transform::from_xyz(0.0, 0.012, 0.3);
+        let route = Route {
+            delay: 0.2,
+            over: 0.02,
+            across: 0.3,
+            lands: Cue::Capture,
+        };
+        let at = |secs: f32| travel_by(from, to, secs, &route).expect("on its way");
+        assert_eq!(at(-0.1), from, "waiting where it is");
+        // Straight up first, clear of its neighbours, before it moves across.
+        let rising = at(RISE / 2.0).translation;
+        assert_eq!(rising.xz(), from.translation.xz());
+        assert!(rising.y > from.translation.y);
+        let high = from.translation.y + route.over;
+        let up = at(RISE).translation;
+        assert!((up.y - high).abs() < 1e-6 && up.xz() == from.translation.xz());
+        // Across at that height, then down onto where it goes.
+        let half = at(RISE + route.across / 2.0).translation;
+        assert!((half.y - high).abs() < 1e-6, "{half}");
+        let over = at(RISE + route.across).translation;
+        assert!(over.xz().distance(to.translation.xz()) < 1e-6);
+        assert_eq!(route.takes(), RISE + 0.3 + LOWER);
+        assert_eq!(travel_by(from, to, route.takes(), &route), None);
+        // The default route is a move's piece's.
+        assert_eq!(Route::default().takes(), ACROSS + LOWER);
+    }
+
+    #[test]
+    fn a_piece_on_a_route_waits_before_setting_off_and_lands_with_its_sound() {
+        let mut app = app();
+        let to = Transform::from_xyz(0.0, 0.01, 0.2);
+        let from = Transform::from_xyz(0.0, 0.03, 0.0);
+        let stone = app
+            .world_mut()
+            .spawn((
+                Rest(to),
+                from,
+                Route {
+                    delay: 0.1,
+                    over: 0.01,
+                    across: 0.2,
+                    lands: Cue::Capture,
+                },
+                Carry::Put(to),
+            ))
+            .id();
+        for _ in 0..4 {
+            app.update();
+        }
+        let t = *app.world().get::<Transform>(stone).unwrap();
+        assert_eq!(t, from, "still waiting");
+        for _ in 0..40 {
+            app.update();
+        }
+        let t = *app.world().get::<Transform>(stone).unwrap();
+        assert_eq!(t, to, "there");
+        assert_eq!(app.world().resource::<Heard>().0, [Cue::Capture]);
     }
 
     #[test]

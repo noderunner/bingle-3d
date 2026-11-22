@@ -42,6 +42,7 @@ mod sounds;
 mod table;
 mod textures;
 mod toggles;
+mod trays;
 mod voice;
 mod voice_chat;
 mod vr;

@@ -31,10 +31,20 @@ pub enum Cue {
     Win,
     /// The game over, this client's seat having lost.
     Lose,
+    /// A piece captured, set down where its captor keeps what it took (a tray beside the
+    /// board): several may follow one another, so it is softer still.
+    Capture,
 }
 
 impl Cue {
-    const ALL: [Cue; 5] = [Cue::Lift, Cue::Put, Cue::Play, Cue::Win, Cue::Lose];
+    const ALL: [Cue; 6] = [
+        Cue::Lift,
+        Cue::Put,
+        Cue::Play,
+        Cue::Win,
+        Cue::Lose,
+        Cue::Capture,
+    ];
 
     /// The sound every game makes for it, unless its look gives another: synthesised by
     /// `assets-src/sounds/sounds.py`.
@@ -45,6 +55,7 @@ impl Cue {
             Cue::Play => "sounds/key.ogg",
             Cue::Win => "sounds/cheer.ogg",
             Cue::Lose => "sounds/groan.ogg",
+            Cue::Capture => "sounds/tock.ogg",
         }
     }
 
@@ -62,6 +73,7 @@ impl Cue {
             Cue::Play => sounds.play.as_deref(),
             Cue::Win => sounds.win.as_deref(),
             Cue::Lose => sounds.lose.as_deref(),
+            Cue::Capture => sounds.capture.as_deref(),
         }
     }
 }
@@ -243,22 +255,34 @@ fn load(
     }
 }
 
+/// How fast the `n`th sound of `cue` is played: a capture a little higher or lower each time,
+/// so several in a row are not one sound repeated; the others as they are.
+pub fn speed(cue: Cue, n: u32) -> f32 {
+    const CAPTURES: [f32; 5] = [1.0, 1.05, 0.96, 1.03, 0.98];
+    match cue {
+        Cue::Capture => CAPTURES[n as usize % CAPTURES.len()],
+        _ => 1.0,
+    }
+}
+
 fn play(
     mut commands: Commands,
     mut cues_in: MessageReader<Cue>,
     watch: Res<WatchStatus>,
     appearances: Res<Appearances>,
     loaded: Res<Loaded>,
+    mut played: Local<u32>,
 ) {
     let sounds = sounds_of(&watch, &appearances);
     for cue in cues_in.read() {
         let Some(handle) = loaded.0.get(cue.file(sounds)) else {
             continue;
         };
+        *played = played.wrapping_add(1);
         commands.spawn((
             Name::new(format!("Sound of {cue:?}")),
             AudioPlayer::new(handle.clone()),
-            PlaybackSettings::DESPAWN,
+            PlaybackSettings::DESPAWN.with_speed(speed(*cue, *played)),
         ));
     }
 }
@@ -326,6 +350,18 @@ mod tests {
     }
 
     #[test]
+    fn captures_in_a_row_each_sound_a_little_different_and_nothing_else_does() {
+        let five: Vec<f32> = (0..5).map(|n| speed(Cue::Capture, n)).collect();
+        for (i, a) in five.iter().enumerate() {
+            assert!((0.9..=1.1).contains(a), "only a little: {a}");
+            assert!(five[i + 1..].iter().all(|b| b != a), "{five:?}");
+        }
+        for cue in [Cue::Lift, Cue::Put, Cue::Play, Cue::Win, Cue::Lose] {
+            assert_eq!(speed(cue, 3), 1.0);
+        }
+    }
+
+    #[test]
     fn the_sounds_decode_as_the_client_plays_them_short_and_unclipped() {
         use bevy::audio::{Decodable, Source};
 
@@ -335,6 +371,7 @@ mod tests {
             (Cue::Play, 0.7),
             (Cue::Win, 2.0),
             (Cue::Lose, 2.0),
+            (Cue::Capture, 0.2),
         ] {
             let file = cue.default_file();
             let source = AudioSource {

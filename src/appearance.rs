@@ -48,6 +48,9 @@ pub struct Appearance {
     pub card: CardLook,
     /// A bowl of its stones for each seat, beside the board.
     pub bowls: Option<BowlLook>,
+    /// The trays a seat keeps what it captures in (`trays.rs`), when the game counts that.
+    #[serde(default)]
+    pub trays: TrayLook,
     /// The kind of piece what follows a move of two parts is shown as while the move is built
     /// (an arrow shot from where a piece landed), by its id in `pieces`. The server does not
     /// say what it puts down; without this it is the generic stone.
@@ -70,6 +73,8 @@ pub struct SoundLook {
     /// The game over, the player having won, or lost.
     pub win: Option<String>,
     pub lose: Option<String>,
+    /// A piece captured, set down in its captor's tray.
+    pub capture: Option<String>,
 }
 
 /// The bowls the seats keep their stones in (`bowls.rs`).
@@ -83,6 +88,18 @@ pub struct BowlLook {
     pub material: String,
     /// How big the bowl is against its model (1 when not said): smaller where a seat has a
     /// bowl for each of several colours.
+    pub size: Option<f32>,
+}
+
+/// The trays in front of the seats, for a game that counts what each captures (`trays.rs`):
+/// every such game has them; this says how they look.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrayLook {
+    /// What a tray is made of: a material of this file's. The board's wood when not said.
+    pub material: Option<String>,
+    /// How big its pieces, and so its squares, are against the board's (`trays::SIZE` when not
+    /// said).
     pub size: Option<f32>,
 }
 
@@ -232,6 +249,14 @@ impl Appearance {
                 out.push(format!("board: no material {name}"));
             }
         }
+        if let Some(name) = &self.trays.material
+            && !self.materials.contains_key(name)
+        {
+            out.push(format!("trays: no material {name}"));
+        }
+        if self.trays.size.is_some_and(|s| !(0.2..=1.5).contains(&s)) {
+            out.push("trays: a size from 0.2 to 1.5".into());
+        }
         let sounds = &self.sounds;
         for file in [
             &sounds.lift,
@@ -239,6 +264,7 @@ impl Appearance {
             &sounds.play,
             &sounds.win,
             &sounds.lose,
+            &sounds.capture,
         ]
         .into_iter()
         .flatten()

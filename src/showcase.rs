@@ -219,6 +219,7 @@ fn lay_out(
     let widest = ROW.min(pieces.len()) as f32 * ACROSS;
     built.write(BoardBuilt {
         size: Vec2::new(widest.max(count as f32 * step), depth + front),
+        middle: Vec2::ZERO,
     });
 }
 

@@ -504,6 +504,21 @@ pub struct GameInfo {
     /// The kinds of piece, and the colour word of each that has one.
     #[serde(default, deserialize_with = "null_as_default")]
     pub pieces: Vec<PieceDef>,
+    /// Numbers each seat keeps that hold no pieces (Blooms' captured stones), and the count a win
+    /// rule wants of each.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub counters: Vec<Counter>,
+}
+
+/// A number each seat keeps in a reserve pool of that `id`, holding no pieces.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Counter {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    /// The count a win rule wants (Blooms' captures), 0 for none.
+    #[serde(default)]
+    pub max: u32,
 }
 
 /// A kind of piece of a game definition.
@@ -925,6 +940,21 @@ pub struct GameState {
 pub struct Position {
     #[serde(default, deserialize_with = "null_as_default")]
     pub cells: BTreeMap<String, Vec<PieceOnBoard>>,
+    /// What each seat holds off the board, by the seat's colour word: a number for each pool.
+    /// Kept as it came, since each game has its own; read with [`Position::count`].
+    #[serde(default)]
+    pub reserves: serde_json::Value,
+}
+
+impl Position {
+    /// How many the seat of colour word `seat` has in its pool `pool`; 0 when it has none.
+    pub fn count(&self, seat: &str, pool: &str) -> u32 {
+        self.reserves
+            .get(seat)
+            .and_then(|r| r.get(pool))
+            .and_then(serde_json::Value::as_u64)
+            .map_or(0, |n| n.min(u32::MAX as u64) as u32)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

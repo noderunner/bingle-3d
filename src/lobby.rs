@@ -207,6 +207,7 @@ mod tests {
                 actions: vec![],
                 goals: vec![],
                 pieces: vec![],
+                counters: vec![],
             },
             game: Game {
                 game_def_id: "g".into(),

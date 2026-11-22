@@ -369,6 +369,7 @@ mod tests {
                 actions: vec![],
                 goals: vec![],
                 pieces: vec![],
+                counters: vec![],
             },
             vec![BotInfo {
                 id: "mcts".into(),
