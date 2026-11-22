@@ -1,0 +1,77 @@
+# How this client draws Blooms (Bingle's ADR 0124: the server says what things are, and each
+# client decides how they look). Data only: nothing here changes the rules.
+#
+# Stones of polished minerals (`assets-src/blender/minerals.py`): red jasper and tiger's eye for
+# Warm, lapis lazuli and black slate for Cool. Each colour is kept in a small wooden bowl beside
+# the board, the seat's two at its two hands; a stone is taken from its bowl with a click.
+
+games = ["blooms", "blooms-4", "blooms-6", "blooms-8", "blooms-10"]
+
+[pieces.red]
+model = "models/stone.glb"
+
+[pieces.yellow]
+model = "models/stone.glb"
+
+[pieces.blue]
+model = "models/stone.glb"
+
+[pieces.black]
+model = "models/stone.glb"
+
+# A bowl for each colour a seat plays, smaller than Go's.
+[bowls]
+model = "models/bowl.glb"
+stones = "models/bowl_stones.glb"
+material = "bowl"
+size = 0.62
+
+# Each colour word: what its stones are made of, and its colour in the panels.
+[seats.red]
+pieces = "jasper"
+colour = [0.66, 0.20, 0.12]
+
+[seats.yellow]
+pieces = "tiger_eye"
+colour = [0.78, 0.55, 0.20]
+
+[seats.blue]
+pieces = "lapis"
+colour = [0.16, 0.26, 0.66]
+
+[seats.black]
+pieces = "black_slate"
+colour = [0.13, 0.13, 0.15]
+
+# Polished: a glossy coat over a stone that is itself fairly smooth.
+[materials.jasper]
+albedo = "textures/stone/jasper_albedo.jpg"
+roughness = 0.4
+clearcoat = 0.7
+clearcoat_roughness = 0.08
+
+[materials.tiger_eye]
+albedo = "textures/stone/tiger_eye_albedo.jpg"
+roughness = 0.3
+clearcoat = 0.8
+clearcoat_roughness = 0.06
+
+[materials.lapis]
+albedo = "textures/stone/lapis_albedo.jpg"
+roughness = 0.35
+clearcoat = 0.7
+clearcoat_roughness = 0.08
+
+[materials.black_slate]
+albedo = "textures/stone/black_slate_albedo.jpg"
+roughness = 0.45
+reflectance = 0.35
+clearcoat = 0.5
+clearcoat_roughness = 0.12
+
+# As Go's bowls: turned cherry, darker than the board, with a soft polish.
+[materials.bowl]
+wood = "cherry"
+tint = [0.50, 0.40, 0.36]
+clearcoat = 0.2
+clearcoat_roughness = 0.35

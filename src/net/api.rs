@@ -501,6 +501,20 @@ pub struct GameInfo {
     /// The regions of the board each seat must connect, as data (API 1.2).
     #[serde(default, deserialize_with = "null_as_default")]
     pub goals: Vec<Goal>,
+    /// The kinds of piece, and the colour word of each that has one.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub pieces: Vec<PieceDef>,
+}
+
+/// A kind of piece of a game definition.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct PieceDef {
+    /// Its id, as a selection's `piece` names it.
+    #[serde(rename = "type")]
+    pub id: String,
+    /// The colour word it is played in, when it has one (Blooms' stones each have their own).
+    #[serde(default)]
+    pub color: String,
 }
 
 /// A goal of the game: for `connect`, a group of the seat's pieces that joins regions of the
@@ -547,6 +561,9 @@ pub struct SeatDef {
     pub color: String,
     /// What the seat is called, in words ("Red (top – bottom)").
     pub label: String,
+    /// Every colour word the seat plays, when it plays several (Bingle's ADR 0117).
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub colors: Vec<String>,
 }
 
 /// The board as the rules see it.
@@ -804,6 +821,10 @@ pub struct Selections {
     pub options: Vec<LegalSelection>,
     /// The selections made are a whole move, to send as one.
     pub complete: bool,
+    /// The selections made may be sent as they are, though more may follow (Blooms' second
+    /// stone).
+    #[serde(default)]
+    pub may_end: bool,
 }
 
 /// One selection the seat may make, and the gestures that enter it.

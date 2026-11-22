@@ -281,16 +281,14 @@ pub fn groove() -> MaterialSpec {
     }
 }
 
-/// A cell a click would be taken on: the board, lit warmly, plainly enough to see at a glance.
+/// A cell a click would be taken on: the board, stained amber and lit warmly, plainly enough to
+/// see at a glance (a glow alone barely showed on the paler woods).
 pub fn lit_cell() -> MaterialSpec {
-    MaterialSpec {
-        glow: Some([0.26, 0.22, 0.07]),
-        ..board()
-    }
+    lit_square(&board())
 }
 
-/// A chessboard's square a click would be taken on: its own wood stained amber and glowing
-/// softly. Light alone barely shows on a pale square, which is near white already; the stain
+/// A cell a click would be taken on, of a board or a chessboard's square: its own wood stained
+/// amber and glowing softly. Light alone barely shows on a pale square, which is near white already; the stain
 /// shows on it, and the glow on a dark one.
 pub fn lit_square(square: &MaterialSpec) -> MaterialSpec {
     let [r, g, b] = square.tint.unwrap_or([1.0; 3]);

@@ -467,6 +467,20 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   material as the wood round them. The coordinates are smaller, half way across the margin
   between the outermost spaces or lines and the rim, on every board; a column is named only
   where it ends on the first or last row.
+- Blooms (`assets/appearance/blooms.toml`): stones of polished minerals drawn with numpy
+  (`assets-src/blender/minerals.py`), after photographs of real semi-precious Go stones the
+  maintainer owns: red jasper and tiger's eye for Warm, lapis lazuli (with a little of
+  sodalite's veining) and black slate for Cool. A small wooden bowl of each colour beside the
+  board, a seat's two at its two hands; the bowls are Go's model made smaller (`[bowls] size`),
+  stood by the board's own outline so a hexagonal board's narrowing near side brings them in.
+  A click on a bowl takes a stone of its colour (the seat's colours, `colors`, and each piece's,
+  `pieces[].color`, are read from the game definition); it waits over the bowl, bobbing, while
+  the cells it may go to are lit, and a click on one carries it there and sets it down, as a
+  piece moved is; the bowl again puts it back. Any game with bowls carries what it places from
+  them (Go's stones too). A one-stone turn ends with the server's `done`, a button on the panel;
+  `may_end` (a move sent part way) is read too, though only a one-seat game sets it. The lit
+  cells of a plain board are stained amber as well as glowing, as a chessboard's are: the glow
+  alone barely showed on teak.
 - Sounds as a seat is played (`sounds.rs`), the same for every game by default (made for
   Amazons first, and the default for now); a game's appearance may give any of them another
   (`[sounds]`): a piece picked up, a piece set down (when a carried piece touches the board, or

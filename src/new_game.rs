@@ -348,6 +348,7 @@ mod tests {
             seat,
             color: color.into(),
             label: color.into(),
+            colors: vec![],
         };
         let mut form = Form::new("hex-7", "Hex (7×7)");
         assert_eq!(
@@ -367,6 +368,7 @@ mod tests {
                 },
                 actions: vec![],
                 goals: vec![],
+                pieces: vec![],
             },
             vec![BotInfo {
                 id: "mcts".into(),

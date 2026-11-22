@@ -7,6 +7,8 @@ rounds it; k = 0.5 would be an ellipse, and k = 1 a sharp rim). Its real size: 2
 fills 80 % of a 28 mm cell. It is mapped flat from above, the texture's middle on the stone's.
 
 - Slate: near black, a little cool, faintly mottled.
+- Polished minerals (`minerals.py`): lapis lazuli, red jasper, tiger's eye and black slate, for
+  games of coloured stones.
 - Shell: warm white with fine growth lines, the way a shell grows: thin lines a fraction of a
   millimetre apart, bending a little, some stronger than others, and a few broad soft bands.
 
@@ -19,6 +21,7 @@ import bpy
 import numpy as np
 
 import common
+import minerals
 
 RADIUS = 0.0112
 HALF_THICKNESS = 0.0044
@@ -166,4 +169,8 @@ def run():
     export_glb(common.output("models", "stone.glb"))
     for name, size, make in (("shell", 1024, shell), ("slate", 512, slate)):
         albedo = common.linear_to_srgb(make(size))
+        common.write_jpeg(common.output("textures", "stone", f"{name}_albedo.jpg"), albedo, 90)
+    span_mm = 2.0 * RADIUS * 1000.0 / UV_SPAN
+    for name, (size, make) in minerals.MINERALS.items():
+        albedo = common.linear_to_srgb(make(size, span_mm))
         common.write_jpeg(common.output("textures", "stone", f"{name}_albedo.jpg"), albedo, 90)
