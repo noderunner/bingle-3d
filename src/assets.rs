@@ -25,6 +25,7 @@ files![
     "appearance/fist.toml",
     "appearance/hex.toml",
     "appearance/points.toml",
+    "appearance/stones.toml",
     "appearance/tak.toml",
     "environment/garden_diffuse.ktx2",
     "environment/garden_sky.ktx2",

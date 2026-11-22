@@ -378,6 +378,44 @@ impl Turn {
             .then(|| &self.gestures[i])
     }
 
+    /// The kind of piece the player holds without taking it from anywhere, at the start of a
+    /// selection where every click on the board places one piece of that kind, and that is all
+    /// it does (Go, Hex, Reversi: a stone, held under the pointer). Choices that are not clicks
+    /// (pass, swap) may be there too; they are the panel's. Empty when the selections do not
+    /// name the kind.
+    pub fn auto_hand(&self) -> Option<&str> {
+        if self.stage != Stage::Choosing
+            || self.gestures.len() != self.forced
+            || self.taken.is_some()
+        {
+            return None;
+        }
+        let n = self.gestures.len();
+        // Every selection with a click in it: the same choices before it (the stone), then the
+        // click, and nothing after.
+        let mut before: Option<&[Gesture]> = None;
+        let mut piece: Option<&str> = None;
+        for o in self.matching() {
+            let rest = &o.gestures[n..];
+            let Some(click) = rest.iter().position(Gesture::is_pos) else {
+                continue;
+            };
+            if click + 1 != rest.len() || o.from.is_some() || o.to.is_none() {
+                return None;
+            }
+            if before.is_some_and(|b| b != &rest[..click]) {
+                return None;
+            }
+            before = Some(&rest[..click]);
+            let kind = o.piece.as_deref().unwrap_or("");
+            if piece.is_some_and(|p| p != kind) {
+                return None;
+            }
+            piece = Some(kind);
+        }
+        piece
+    }
+
     /// The selections still possible that would place something (not move it) on `cell`.
     pub fn could_place(&self, cell: &str) -> impl Iterator<Item = &LegalSelection> {
         self.matching()
@@ -1452,6 +1490,34 @@ mod tests {
         t.gesture(&g("pos", "d1"));
         t.gesture(&g("pos", "d3"));
         assert!(t.taken().is_none());
+    }
+
+    #[test]
+    fn a_stone_is_held_by_itself_where_every_click_places_one() {
+        // Go: the stone chosen for the player, then where; a pass on the panel.
+        let mut options = vec![place("a1"), place("b1")];
+        options.push(sel("pass", None, &[("action", "pass")]));
+        let mut t = Turn::new(1);
+        t.answered(answer(2, options));
+        assert_eq!(t.auto_hand(), Some("stone"));
+        assert!(!t.holding(), "nothing lit: nearly every point would be");
+        // Placed: nothing held until the next selection.
+        assert_eq!(t.gesture(&g("pos", "a1")), Outcome::Ask);
+        assert_eq!(t.auto_hand(), None);
+        // A choice of kind first (Blooms' colours), a piece moved (Fendo, Tak), or a move of
+        // two parts: no stone held by itself.
+        for options in [tak(), fendo(), vec![shoot("a1", "a2", "a3")]] {
+            let mut t = Turn::new(1);
+            t.answered(answer(2, options));
+            assert_eq!(t.auto_hand(), None);
+        }
+        let mut t = Turn::new(1);
+        let colours = vec![
+            sel("r", Some("a1"), &[("piece", "red"), ("pos", "a1")]),
+            sel("y", Some("a1"), &[("piece", "yellow"), ("pos", "a1")]),
+        ];
+        t.answered(answer(2, colours));
+        assert_eq!(t.auto_hand(), None);
     }
 
     #[test]

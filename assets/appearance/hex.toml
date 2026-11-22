@@ -3,7 +3,7 @@
 # this one is drawn by the generic defaults in `src/look.rs`.
 #
 # Slate and shell stones on a wooden board, each side's edges (the board's rim and the cells along
-# them) coloured to match its stones.
+# them) coloured to match its stones, and each side's stones in a turned bowl beside the board.
 
 # The games this file is for, by the id the server gives them.
 games = ["hex-7", "hex-9", "hex-11", "hex-13"]
@@ -56,3 +56,15 @@ clearcoat_roughness = 0.4
 wood = "maple"
 clearcoat = 0.2
 clearcoat_roughness = 0.4
+
+# A bowl of each side's stones beside the board, as Go's.
+[bowls]
+model = "models/bowl.glb"
+stones = "models/bowl_stones.glb"
+material = "bowl"
+
+[materials.bowl]
+wood = "cherry"
+tint = [0.50, 0.40, 0.36]
+clearcoat = 0.2
+clearcoat_roughness = 0.35
