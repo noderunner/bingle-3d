@@ -174,6 +174,9 @@ pub enum Carry {
     Held { lift: f32, scale: f32 },
     /// Put down where it is moved to, as it will stand there.
     Put(Transform),
+    /// Held over somewhere else, bobbing (scaled by `scale`): what is left of a stack carried,
+    /// over the last space it dropped a piece on.
+    Over { at: Transform, scale: f32 },
 }
 
 /// What the move aims, held under the pointer while it is over the board: `lift` over the
@@ -261,7 +264,7 @@ fn set_off(
                 secs: -route.delay,
                 route,
             }),
-            Carry::Held { .. } => commands.entity(entity).remove::<Travel>(),
+            Carry::Held { .. } | Carry::Over { .. } => commands.entity(entity).remove::<Travel>(),
         };
     }
     for entity in gone.read() {
@@ -286,6 +289,11 @@ fn carry(
             Some(Carry::Held { lift, scale }) => {
                 let mut up = rest.0;
                 up.translation.y += lift + bob(secs) * scale;
+                up
+            }
+            Some(Carry::Over { at, scale }) => {
+                let mut up = *at;
+                up.translation.y += bob(secs) * scale;
                 up
             }
             Some(Carry::Put(to)) => {

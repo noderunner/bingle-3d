@@ -39,6 +39,7 @@ mod showcase;
 mod sign_in;
 mod slab;
 mod sounds;
+mod supply;
 mod table;
 mod textures;
 mod toggles;

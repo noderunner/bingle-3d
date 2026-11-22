@@ -42,7 +42,7 @@ use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, Rest, Route};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, PieceOnBoard};
-use crate::play::{Hovering, Spot, Stage, Turn};
+use crate::play::{Choice, Hovering, Spot, Stage, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -65,6 +65,7 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<ShowLegalMoves>),
                     ),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
+                    show_supply.run_if(resource_changed::<WatchStatus>),
                     drop_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
@@ -393,6 +394,11 @@ struct Kit {
     aimed: Option<String>,
     /// Where a stone taken from each colour's bowl waits, by colour word.
     bowls: HashMap<String, Vec3>,
+    /// Each seat's supply beside the board, by its colour word, and each kind of piece's pool;
+    /// how far the supply reaches to either side, for the camera.
+    supply: HashMap<String, Vec<SupplyPool>>,
+    pools: HashMap<String, String>,
+    beside: f32,
     /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
@@ -404,6 +410,23 @@ struct Kit {
     tray_scale: f32,
     /// How far towards the player the first seat's tray reaches, if there are trays.
     front: f32,
+}
+
+/// One pool of a seat's supply: its id, the kind of piece a click on it takes, where each of
+/// its pieces stands, and how high they stand.
+struct SupplyPool {
+    id: String,
+    piece: String,
+    slots: Vec<Transform>,
+    height: f32,
+}
+
+/// A piece of a seat's supply (by its colour word), of a pool, and its place in the line.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct InSupply {
+    colour: String,
+    pool: String,
+    index: usize,
 }
 
 /// A seat's tray of what it captured: the colour word its count is kept under, the colours it
@@ -443,6 +466,27 @@ impl Kit {
 
     fn piece(&self, id: &str) -> &PieceKit {
         self.pieces.get(id).unwrap_or(&self.stone)
+    }
+
+    /// Where a piece of kind `id` that this client's seat (of colour word `yours`) places is
+    /// taken from, if from somewhere to see: its colour's bowl (the colour word), or its pool of
+    /// the seat's supply (`colour/pool`).
+    fn source_of(&self, id: &str, yours: &str) -> Option<String> {
+        if let Some(colour) = self.bowl_of(id, yours) {
+            return Some(colour.to_string());
+        }
+        let pool = self.pools.get(id)?;
+        self.supply
+            .get(yours)?
+            .iter()
+            .any(|p| &p.id == pool)
+            .then(|| format!("{yours}/{pool}"))
+    }
+
+    /// The pool of a seat's supply a source names.
+    fn supply_pool(&self, source: &str) -> Option<&SupplyPool> {
+        let (colour, pool) = source.split_once('/')?;
+        self.supply.get(colour)?.iter().find(|p| p.id == pool)
     }
 
     /// Where a piece of kind `id` lies in seat `seat`'s tray, the `index`th in: in its square,
@@ -640,7 +684,7 @@ fn sync_board(
         // Framed with the player's tray in front of it, if it has one.
         let extra = (kit.1.front - layout.size.y / 2.0).max(0.0);
         built.write(BoardBuilt {
-            size: layout.size + Vec2::Y * extra,
+            size: Vec2::new(layout.size.x.max(2.0 * kit.1.beside), layout.size.y + extra),
             middle: Vec2::Y * extra / 2.0,
         });
         // A board just built shows the position as it is, without dropping every piece.
@@ -1333,7 +1377,56 @@ fn build_board(
             });
         }
     }
+    // Each seat's supply beside the board, for a game whose seats keep pieces to place.
+    let mut supply: HashMap<String, Vec<SupplyPool>> = HashMap::new();
+    let mut beside = 0.0f32;
+    let kinds = crate::supply::pools(&table.info);
+    if !kinds.is_empty() {
+        let stances: Vec<(crate::supply::Stance, usize)> = kinds
+            .iter()
+            .map(|k| {
+                let model = tools
+                    .look
+                    .and_then(|l| l.pieces.get(&k.piece))
+                    .map_or(look::PIECE_MODEL, |p| p.model.as_str());
+                let half = Vec3::new(0.013, STONE_THICKNESS / 2.0, 0.013);
+                let (low, high) = assets::model_bounds(model).unwrap_or((-half, half));
+                (
+                    crate::supply::Stance::of(low, high, pitch / PITCH),
+                    k.start as usize,
+                )
+            })
+            .collect();
+        let seats = &table.info.seats;
+        for (i, seat) in seats.iter().enumerate() {
+            let places = crate::supply::places(i, seats.len(), &edge, &stances);
+            for ((kind, slots), (stance, _)) in kinds.iter().zip(places).zip(&stances) {
+                for t in &slots {
+                    beside = beside.max(t.translation.x.abs() + stance.out);
+                }
+                supply
+                    .entry(seat.color.clone())
+                    .or_default()
+                    .push(SupplyPool {
+                        id: kind.id.clone(),
+                        piece: kind.piece.clone(),
+                        slots,
+                        height: stance.height,
+                    });
+            }
+        }
+    }
+    let pools: HashMap<String, String> = table
+        .info
+        .pieces
+        .iter()
+        .filter(|p| !p.pool.is_empty())
+        .map(|p| (p.id.clone(), p.pool.clone()))
+        .collect();
     let kit = Kit {
+        supply,
+        pools,
+        beside,
         stone,
         pieces,
         scale: pitch / PITCH,
@@ -1437,8 +1530,11 @@ pub fn goal_strips(info: &GameInfo, layout: &Layout, shape: CellShape) -> Vec<Go
         cells: Vec<Vec2>,
         outward: Vec2,
     }
+    // A region every seat shares (both of Tak's pairs of sides) is nobody's to colour: shading it
+    // would say nothing, so only a seat's own goals are marked.
     let regions: Vec<Region> = owners
         .iter()
+        .filter(|(_, seat)| seat.is_some())
         .filter_map(|(name, seat)| {
             let cells: Vec<Vec2> = info
                 .board
@@ -1741,6 +1837,81 @@ fn show_turn(
         };
         carried.insert((c.from.to_string(), layer), (carry, at.to_string()));
     }
+    // A stack moved: as many of its top pieces as are carried, lifted over it; each dropped
+    // carried to where it was dropped, bottom first; what is left held over the last of those.
+    for m in turn.map(Turn::stack_moves).unwrap_or_default() {
+        let height = after.get(m.from).map_or(0, Vec::len);
+        if m.count == 0 || m.count > height {
+            continue;
+        }
+        let taken = after
+            .get_mut(m.from)
+            .expect("a stack there")
+            .split_off(height - m.count);
+        let lift = LIFT * kit.scale;
+        let mut over: Option<(&str, f32)> = None;
+        for (k, piece) in taken.into_iter().enumerate() {
+            let layer = height - m.count + k;
+            let key = (m.from.to_string(), layer);
+            if let Some(&to) = m.drops.get(k)
+                && let Some(centre) = layout.centres.get(to)
+            {
+                let stack = after.entry(to.to_string()).or_default();
+                let put = kit.set_down(
+                    &piece.piece,
+                    &piece.color,
+                    *centre,
+                    (to, stack.len()),
+                    kit.stack_height(stack.iter()),
+                );
+                stack.push(piece);
+                carried.insert(key, (Carry::Put(put), to.to_string()));
+                over = Some((to, 0.0));
+                continue;
+            }
+            match over {
+                // Nothing dropped yet: lifted where it stands.
+                None => {
+                    carried.insert(
+                        key,
+                        (
+                            Carry::Held {
+                                lift,
+                                scale: kit.scale,
+                            },
+                            m.from.to_string(),
+                        ),
+                    );
+                }
+                // Held over the last space dropped on, on what will be there.
+                Some((cell, ref mut above)) => {
+                    let Some(centre) = layout.centres.get(cell) else {
+                        continue;
+                    };
+                    let stack = after.get(cell).map_or(&[][..], Vec::as_slice);
+                    let mut at = kit.set_down(
+                        &piece.piece,
+                        &piece.color,
+                        *centre,
+                        (cell, stack.len() + k),
+                        kit.stack_height(stack) + *above,
+                    );
+                    at.translation.y += lift;
+                    *above += kit.piece(&piece.piece).height;
+                    carried.insert(
+                        key,
+                        (
+                            Carry::Over {
+                                at,
+                                scale: kit.scale,
+                            },
+                            cell.to_string(),
+                        ),
+                    );
+                }
+            }
+        }
+    }
     for (entity, at, mut spot, now) in &mut pieces {
         match carried.get(&(at.cell.clone(), at.layer)) {
             Some((carry, cell)) => {
@@ -1808,7 +1979,7 @@ fn show_turn(
     // What is placed from a bowl is carried there solid (`bowl_stones`), not shown see-through.
     let from_bowls: Vec<&str> = turn
         .placements()
-        .filter(|(_, piece)| piece.is_some_and(|p| kit.bowl_of(p, colour).is_some()))
+        .filter(|(_, piece)| piece.is_some_and(|p| kit.source_of(p, colour).is_some()))
         .map(|(cell, _)| cell)
         .collect();
     shown.retain(|cell| !from_bowls.contains(cell));
@@ -1836,7 +2007,7 @@ fn show_turn(
             kit.stack_height(stack),
         );
         let kind = kit.piece(id);
-        let word = kit.colour_of(id, colour);
+        let word = kit.colour_of(id, placing_colour(table));
         // Once the move is sent it is shown as played, solid, without waiting for the server.
         let sent = turn.stage == Stage::Sending;
         let material = if sent {
@@ -1864,16 +2035,52 @@ fn show_turn(
     }
 }
 
-/// A stone taken from a bowl: waiting over it, or carried to the cell it is placed on.
+/// A piece taken from a bowl or a seat's supply (its source, `Kit::source_of`): waiting over
+/// it, or carried to the cell it is placed on.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct FromBowl {
-    colour: String,
+    source: String,
+    piece: String,
     cell: Option<String>,
 }
 
-/// The stones the move being built takes from the bowls: the one in hand waits over its bowl,
-/// lifted and bobbing; each placed is carried from there to its cell and set down, solid. One in
-/// hand that is then placed goes on from where it waits.
+/// The colour word the pieces this client's seat places are played in: its own, but in an
+/// opening in which each seat places another's (Tak's first stones), the other seat's.
+fn placing_colour(table: &Table) -> &str {
+    let yours = table.yours().map_or("", |s| s.color.as_str());
+    let opening = table
+        .info
+        .opening
+        .as_ref()
+        .is_some_and(|o| o.owner == "opponent" && table.state.ply < o.plies);
+    if !opening {
+        return yours;
+    }
+    table
+        .info
+        .seats
+        .iter()
+        .map(|s| s.color.as_str())
+        .find(|c| *c != yours)
+        .unwrap_or(yours)
+}
+
+/// How many pieces the move being built takes from `source`: those it places, and the one in
+/// hand.
+fn taken_from(turn: Option<&Turn>, kit: &Kit, yours: &str, source: &str) -> usize {
+    let Some(turn) = turn else { return 0 };
+    let from = |piece: &str| kit.source_of(piece, yours).as_deref() == Some(source);
+    let placed = turn
+        .placements()
+        .filter(|(_, piece)| piece.is_some_and(from))
+        .count();
+    placed + usize::from(turn.in_hand().is_some_and(from))
+}
+
+/// The pieces the move being built takes from bowls or the supply: the one in hand waits over
+/// where it was taken from, lifted and bobbing (another kind of the same pool chosen with the
+/// wheel, it becomes that); each placed is carried from there to its cell and set down, solid.
+/// One in hand that is then placed goes on from where it waits.
 fn bowl_stones(
     mut commands: Commands,
     watch: Res<WatchStatus>,
@@ -1890,30 +2097,38 @@ fn bowl_stones(
         return;
     };
     let yours = table.yours().map_or("", |s| s.color.as_str());
+    let placing = placing_colour(table);
     let layout = Layout::new(&table.info.board.positions);
     let cells = &table.state.state.cells;
-    let mut take = |found: &dyn Fn(&FromBowl) -> bool| -> Option<Entity> {
+    let mut take = |found: &dyn Fn(&FromBowl) -> bool| -> Option<(Entity, FromBowl)> {
         let i = left.iter().position(|(_, f)| found(f))?;
-        Some(left.remove(i).0)
+        Some(left.remove(i))
     };
-    let stone = |id: &str, colour: &str, at: Transform| {
+    let looks = |id: &str| {
         let kind = kit.piece(id);
+        let colour = kit.colour_of(id, placing);
         let material = kind
             .material
             .clone()
             .or_else(|| kit.materials.get(colour).cloned())
             .unwrap_or_default();
-        (
-            Mesh3d(kind.mesh.clone()),
-            MeshMaterial3d(material),
-            at,
-            Rest(at),
-            ChildOf(root),
-        )
+        (Mesh3d(kind.mesh.clone()), MeshMaterial3d(material))
     };
-    // Where a stone of `colour` waits: just over its bowl's rim.
-    let over = |colour: &str| {
-        let at = kit.bowls.get(colour).copied().unwrap_or_default();
+    // Where a piece from `source` waits: just over its bowl's rim, or over the place in the
+    // supply it was taken from (the first left empty).
+    let over = |source: &str| {
+        let at = match kit.supply_pool(source) {
+            Some(pool) => {
+                let colour = source.split_once('/').map_or("", |(c, _)| c);
+                let have = table.state.state.count(colour, &pool.id) as usize;
+                let shown = have.saturating_sub(taken_from(Some(turn), kit, yours, source));
+                let slot = pool
+                    .slots
+                    .get(shown.min(pool.slots.len().saturating_sub(1)));
+                slot.map_or(Vec3::ZERO, |t| t.translation.with_y(pool.height))
+            }
+            None => kit.bowls.get(source).copied().unwrap_or_default(),
+        };
         Transform::from_translation(at + Vec3::Y * 0.012 * kit.scale)
             .with_scale(Vec3::splat(kit.scale))
     };
@@ -1921,7 +2136,7 @@ fn bowl_stones(
         let (Some(id), Some(centre)) = (piece, layout.centres.get(cell)) else {
             continue;
         };
-        let Some(colour) = kit.bowl_of(id, yours) else {
+        let Some(source) = kit.source_of(id, yours) else {
             continue;
         };
         if take(&|f| f.cell.as_deref() == Some(cell)).is_some() {
@@ -1930,49 +2145,145 @@ fn bowl_stones(
         let stack = cells.get(cell).map_or(&[][..], Vec::as_slice);
         let to = kit.set_down(
             id,
-            colour,
+            kit.colour_of(id, placing),
             *centre,
             (cell, stack.len()),
             kit.stack_height(stack),
         );
         let placed = FromBowl {
-            colour: colour.to_string(),
+            source: source.clone(),
+            piece: id.to_string(),
             cell: Some(cell.to_string()),
         };
-        match take(&|f| f.cell.is_none() && f.colour == colour) {
-            // The stone in hand goes on from where it waits.
-            Some(entity) => {
-                commands.entity(entity).insert((placed, Carry::Put(to)));
+        match take(&|f| f.cell.is_none() && f.source == source) {
+            // The piece in hand goes on from where it waits, as the kind placed.
+            Some((entity, held)) => {
+                let mut e = commands.entity(entity);
+                if held.piece != id {
+                    e.insert(looks(id));
+                }
+                e.insert((placed, Carry::Put(to)));
             }
             None => {
+                let at = over(&source);
                 commands.spawn((
-                    Name::new(format!("Stone for {cell}")),
+                    Name::new(format!("{id} for {cell}")),
                     placed,
-                    stone(id, colour, over(colour)),
+                    looks(id),
+                    at,
+                    Rest(at),
                     Carry::Put(to),
+                    ChildOf(root),
                 ));
             }
         }
     }
     if let Some(id) = turn.in_hand()
-        && let Some(colour) = kit.bowl_of(id, yours)
-        && take(&|f| f.cell.is_none() && f.colour == colour).is_none()
+        && let Some(source) = kit.source_of(id, yours)
     {
-        commands.spawn((
-            Name::new(format!("Stone of {colour} in hand")),
-            FromBowl {
-                colour: colour.to_string(),
-                cell: None,
-            },
-            stone(id, colour, over(colour)),
-            Carry::Held {
-                lift: LIFT * kit.scale,
-                scale: kit.scale,
-            },
-        ));
+        let held = FromBowl {
+            source: source.clone(),
+            piece: id.to_string(),
+            cell: None,
+        };
+        match take(&|f| f.cell.is_none() && f.source == source) {
+            // Another kind of the same pool: the piece in hand becomes it.
+            Some((entity, was)) => {
+                if was.piece != id {
+                    commands.entity(entity).insert((looks(id), held));
+                }
+            }
+            None => {
+                let at = over(&source);
+                commands.spawn((
+                    Name::new(format!("{id} in hand")),
+                    held,
+                    looks(id),
+                    at,
+                    Rest(at),
+                    Carry::Held {
+                        lift: LIFT * kit.scale,
+                        scale: kit.scale,
+                    },
+                    ChildOf(root),
+                ));
+            }
+        }
     }
     for (entity, _) in left {
         commands.entity(entity).despawn();
+    }
+}
+
+/// Each seat's supply shows what it has left: the position's count, less what the move being
+/// built takes from it (the piece in hand among them), each piece in its place in the line. A
+/// click on this client's seat's own takes a piece of its pool.
+fn show_supply(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    roots: Query<(Entity, &Kit), With<BoardRoot>>,
+    shown: Query<(Entity, &InSupply)>,
+) {
+    let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
+        return;
+    };
+    if kit.supply.is_empty() {
+        return;
+    }
+    let yours = table.yours().map_or("", |s| s.color.as_str());
+    let turn = watch.turn.as_ref();
+    let mut have: Vec<&InSupply> = Vec::new();
+    for (colour, pools) in &kit.supply {
+        for pool in pools {
+            let mut count = table.state.state.count(colour, &pool.id) as usize;
+            if colour == yours {
+                let source = format!("{colour}/{}", pool.id);
+                count = count.saturating_sub(taken_from(turn, kit, yours, &source));
+            }
+            let count = count.min(pool.slots.len());
+            for (entity, piece) in &shown {
+                if piece.colour == *colour && piece.pool == pool.id {
+                    if piece.index >= count {
+                        commands.entity(entity).despawn();
+                    } else {
+                        have.push(piece);
+                    }
+                }
+            }
+            let kind = kit.piece(&pool.piece);
+            let material = kind
+                .material
+                .clone()
+                .or_else(|| kit.materials.get(colour).cloned())
+                .unwrap_or_default();
+            for index in 0..count {
+                let there = InSupply {
+                    colour: colour.clone(),
+                    pool: pool.id.clone(),
+                    index,
+                };
+                if have.contains(&&there) {
+                    continue;
+                }
+                let mut piece = commands.spawn((
+                    Name::new(format!("{} of {colour}'s supply", pool.piece)),
+                    Mesh3d(kind.mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    pool.slots[index].with_scale(Vec3::splat(kit.scale)),
+                    there,
+                    ChildOf(root),
+                ));
+                if colour == yours {
+                    piece.insert((
+                        Pickable::default(),
+                        Choice(Gesture {
+                            kind: "piece".into(),
+                            value: pool.piece.clone(),
+                        }),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -2249,6 +2560,8 @@ mod tests {
                     goals: vec![],
                     pieces: vec![],
                     counters: vec![],
+                    opening: None,
+                    reserves: Default::default(),
                 },
                 game: Game {
                     game_def_id: "g".into(),
@@ -2724,6 +3037,7 @@ mod tests {
                 .map(|c| crate::net::api::PieceDef {
                     id: c.into(),
                     color: c.into(),
+                    ..Default::default()
                 })
                 .to_vec();
             table.info.counters = vec![crate::net::api::Counter {
@@ -2887,6 +3201,258 @@ mod tests {
             );
         }
 
+        /// Tak on a 3×3 grid: white (this client's) and black, flat and standing stones from
+        /// one pool and the capstone from another, with these stacks and what each seat has
+        /// left (stones, capstones).
+        fn tak_table(
+            cells: &[(&str, &[(&str, &str)])],
+            white: (u32, u32),
+            black: (u32, u32),
+        ) -> Table {
+            use crate::net::api::PieceDef;
+            let mut table = grid_table("tak-5x5", cells);
+            table.info.pieces = [
+                ("cap", "cap", false),
+                ("flat", "stone", true),
+                ("wall", "stone", false),
+            ]
+            .map(|(id, pool, coverable)| PieceDef {
+                id: id.into(),
+                pool: pool.into(),
+                coverable,
+                ..Default::default()
+            })
+            .to_vec();
+            table.info.reserves = [("stone", 3), ("cap", 1)]
+                .map(|(k, v)| (k.to_string(), v))
+                .into();
+            table.state.state.reserves = serde_json::json!({
+                "white": {"stone": white.0, "cap": white.1},
+                "black": {"stone": black.0, "cap": black.1},
+            });
+            table.game.seats = vec![crate::net::api::GameSeat {
+                seat: 1,
+                color: "white".into(),
+                name: "Ana".into(),
+                bot: String::new(),
+                yours: true,
+            }];
+            table.state.ply = 4;
+            table
+        }
+
+        fn tak_turn(options: Vec<crate::net::api::LegalSelection>) -> Turn {
+            let mut turn = Turn::new(1);
+            turn.answered(crate::net::api::Selections {
+                seat: 1,
+                ply: 4,
+                made: vec![],
+                options,
+                complete: false,
+                may_end: false,
+            });
+            turn
+        }
+
+        fn option(
+            gestures: &[(&str, &str)],
+            from: Option<&str>,
+        ) -> crate::net::api::LegalSelection {
+            crate::net::api::LegalSelection {
+                notation: "m".into(),
+                action: "x".into(),
+                to: None,
+                from: from.map(Into::into),
+                piece: gestures
+                    .iter()
+                    .find(|(k, _)| *k == "piece")
+                    .map(|(_, v)| v.to_string()),
+                aim: None,
+                gestures: gestures
+                    .iter()
+                    .map(|(k, v)| Gesture {
+                        kind: k.to_string(),
+                        value: v.to_string(),
+                    })
+                    .collect(),
+            }
+        }
+
+        fn supply(app: &mut App) -> Vec<(String, String, usize, Option<String>)> {
+            let mut q = app.world_mut().query::<(&InSupply, Option<&Choice>)>();
+            let mut out: Vec<_> = q
+                .iter(app.world())
+                .map(|(s, c)| {
+                    (
+                        s.colour.clone(),
+                        s.pool.clone(),
+                        s.index,
+                        c.map(|c| c.0.value.clone()),
+                    )
+                })
+                .collect();
+            out.sort();
+            out
+        }
+
+        #[test]
+        fn each_seat_has_what_it_has_left_beside_the_board_and_a_click_takes_from_its_own() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(tak_table(&[], (3, 1), (2, 0)));
+            app.update();
+            let shown = supply(&mut app);
+            let count = |colour: &str, pool: &str| {
+                shown
+                    .iter()
+                    .filter(|s| s.0 == colour && s.1 == pool)
+                    .count()
+            };
+            assert_eq!(
+                [
+                    count("white", "stone"),
+                    count("white", "cap"),
+                    count("black", "stone"),
+                    count("black", "cap")
+                ],
+                [3, 1, 2, 0]
+            );
+            // The player's own take a flat stone, or the capstone; the other seat's nothing.
+            for (colour, pool, _, choice) in &shown {
+                let wanted = match (colour.as_str(), pool.as_str()) {
+                    ("white", "stone") => Some("flat"),
+                    ("white", "cap") => Some("cap"),
+                    _ => None,
+                };
+                assert_eq!(choice.as_deref(), wanted, "{colour} {pool}");
+            }
+            // Beside the board, not on it.
+            let mut q = app.world_mut().query::<(&InSupply, &Transform)>();
+            for (piece, t) in q.iter(app.world()) {
+                assert!(t.translation.x.abs() > 0.06, "{piece:?} {}", t.translation);
+            }
+
+            // A flat stone taken: one fewer in the line, the stone in hand over its place; the
+            // wheel makes it a standing stone.
+            let options = vec![
+                option(&[("piece", "flat"), ("pos", "a1")], None),
+                option(&[("piece", "wall"), ("pos", "a1")], None),
+                option(&[("piece", "cap"), ("pos", "a1")], None),
+            ];
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = Some(tak_turn(options));
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "piece".into(),
+                value: "flat".into(),
+            });
+            app.update();
+            let shown = supply(&mut app);
+            assert_eq!(
+                shown
+                    .iter()
+                    .filter(|s| s.0 == "white" && s.1 == "stone")
+                    .count(),
+                2
+            );
+            let mut q = app.world_mut().query::<(&FromBowl, &Carry, &Rest)>();
+            let (held, carry, rest) = q.single(app.world()).unwrap();
+            assert_eq!(
+                (held.source.as_str(), held.piece.as_str()),
+                ("white/stone", "flat")
+            );
+            assert!(matches!(carry, Carry::Held { .. }));
+            assert!(
+                rest.0.translation.x > 0.06,
+                "over the supply: {}",
+                rest.0.translation
+            );
+            let pools: HashMap<String, String> =
+                [("flat", "stone"), ("wall", "stone"), ("cap", "cap")]
+                    .map(|(a, b)| (a.to_string(), b.to_string()))
+                    .into();
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().wheel(true, &pools);
+            app.update();
+            let mut q = app.world_mut().query::<&FromBowl>();
+            assert_eq!(q.single(app.world()).unwrap().piece, "wall");
+        }
+
+        #[test]
+        fn a_stack_is_lifted_some_put_back_and_each_dropped_carried_where_it_goes() {
+            let mut app = with_looks();
+            let two: &[(&str, &str)] = &[("flat", "black"), ("flat", "white")];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(tak_table(&[("b2", two)], (3, 1), (2, 0)));
+            app.update();
+            let options = vec![
+                option(&[("pos", "b2"), ("count", "1"), ("pos", "b3")], Some("b2")),
+                option(
+                    &[("pos", "b2"), ("count", "2"), ("pos", "b3"), ("pos", "b3")],
+                    Some("b2"),
+                ),
+                option(
+                    &[("pos", "b2"), ("count", "2"), ("pos", "b3"), ("pos", "b1")],
+                    Some("b2"),
+                ),
+            ];
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn = Some(tak_turn(options));
+            watch.turn.as_mut().unwrap().gesture(&Gesture::pos("b2"));
+            app.update();
+            let carried = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&PieceAt, Option<&Carry>)>();
+                let mut out: Vec<(usize, Option<Carry>)> = q
+                    .iter(app.world())
+                    .map(|(at, c)| (at.layer, c.copied()))
+                    .collect();
+                out.sort_by_key(|(l, _)| *l);
+                out
+            };
+            let both = carried(&mut app);
+            assert!(
+                both.iter()
+                    .all(|(_, c)| matches!(c, Some(Carry::Held { .. }))),
+                "{both:?}"
+            );
+            // The wheel leaves the bottom one on the board.
+            let pools = HashMap::new();
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().wheel(false, &pools);
+            app.update();
+            let one = carried(&mut app);
+            assert_eq!(one[0].1, None);
+            assert!(matches!(one[1].1, Some(Carry::Held { .. })));
+            // Both again, then one dropped on b3: carried there; the other held over it, above.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            turn.wheel(true, &pools);
+            turn.gesture(&Gesture::pos("b3"));
+            app.update();
+            let dropped = carried(&mut app);
+            let (Some(Carry::Put(put)), Some(Carry::Over { at, .. })) =
+                (dropped[0].1, dropped[1].1)
+            else {
+                panic!("{dropped:?}");
+            };
+            let b3 = Layout::new(
+                &app.world()
+                    .resource::<WatchStatus>()
+                    .table
+                    .as_ref()
+                    .unwrap()
+                    .info
+                    .board
+                    .positions,
+            )
+            .centres["b3"];
+            assert!(put.translation.xz().distance(b3.xz()) < 0.003);
+            assert!(at.translation.xz().distance(b3.xz()) < 0.003);
+            assert!(
+                at.translation.y > put.translation.y + 0.005,
+                "held above it"
+            );
+        }
+
         #[test]
         fn a_game_that_counts_nothing_has_no_trays() {
             let mut app = with_looks();
@@ -2925,6 +3491,7 @@ mod tests {
                 .map(|c| PieceDef {
                     id: c.into(),
                     color: c.into(),
+                    ..Default::default()
                 })
                 .to_vec();
             table.game.seats = vec![crate::net::api::GameSeat {
@@ -3000,7 +3567,7 @@ mod tests {
                 .world_mut()
                 .query::<(Entity, &FromBowl, &Carry, &Transform)>();
             let (held, from, carry, t) = q.single(app.world()).unwrap();
-            assert_eq!((from.colour.as_str(), from.cell.as_deref()), ("red", None));
+            assert_eq!((from.source.as_str(), from.cell.as_deref()), ("red", None));
             assert!(matches!(carry, Carry::Held { .. }));
             assert!(
                 t.translation.x.abs() > 0.03,
@@ -3165,6 +3732,8 @@ mod tests {
             goals: vec![goal(1, "top", "bottom"), goal(2, "left", "right")],
             pieces: vec![],
             counters: vec![],
+            opening: None,
+            reserves: Default::default(),
         }
     }
 
@@ -3286,12 +3855,8 @@ mod tests {
         info.goals[0].kind = "surround".into();
         info.goals[1].seat = None;
         let strips = goal_strips(&info, &layout, CellShape::Hexagon);
-        assert!(
-            strips
-                .iter()
-                .all(|s| s.region == "left" || s.region == "right")
-        );
-        assert!(strips.iter().all(|s| s.seat.is_none()));
+        // The surround goal is not known; the other, every seat's, marks nothing.
+        assert!(strips.is_empty(), "{strips:?}");
         info.goals.clear();
         assert!(goal_strips(&info, &layout, CellShape::Hexagon).is_empty());
     }

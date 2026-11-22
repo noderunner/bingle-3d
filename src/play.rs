@@ -15,15 +15,15 @@
 //! a click on the cell is enough (the web page takes such forced choices by itself too). The
 //! selection that ends the impulse is previewed, and waits for the player to confirm it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::input_focus::InputFocus;
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
-use crate::camera::PointerOverUi;
+use crate::camera::{PIXELS_PER_LINE, PointerOverUi, WheelTaken};
 use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Selections};
 use crate::net::session::Problem;
@@ -34,6 +34,7 @@ pub struct PlayPlugin;
 impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovering>()
+            .init_resource::<WheelTaken>()
             .add_observer(on_click)
             .add_observer(on_over)
             .add_observer(on_out)
@@ -43,6 +44,8 @@ impl Plugin for PlayPlugin {
                     start_turn.run_if(resource_changed::<WatchStatus>),
                     keys,
                     right_click,
+                    take_wheel.run_if(resource_changed::<WatchStatus>),
+                    wheel,
                 ),
             );
     }
@@ -92,6 +95,34 @@ pub struct Arriving<'a> {
 pub struct Carried<'a> {
     pub from: &'a str,
     pub to: Option<&'a str>,
+}
+
+/// A stack picked up to move (Tak's): where from, how many of its top pieces, and where each
+/// has been dropped so far, bottom first. Its gestures are the position, the count, then a
+/// position for each piece dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackMove<'a> {
+    pub from: &'a str,
+    pub count: usize,
+    pub drops: Vec<&'a str>,
+}
+
+impl<'a> StackMove<'a> {
+    /// The stack move these gestures make, if they make one: a position, then a count, then
+    /// only positions.
+    pub fn of(gestures: &'a [Gesture]) -> Option<Self> {
+        let i = gestures.iter().position(|g| g.kind == "count")?;
+        let from = gestures.get(i.checked_sub(1)?).filter(|g| g.is_pos())?;
+        let rest = &gestures[i + 1..];
+        if !rest.iter().all(Gesture::is_pos) {
+            return None;
+        }
+        Some(StackMove {
+            from: &from.value,
+            count: gestures[i].value.parse().ok()?,
+            drops: rest.iter().map(|g| g.value.as_str()).collect(),
+        })
+    }
 }
 
 /// The impulse this client's seat is on, and the move being built for it.
@@ -163,6 +194,7 @@ impl Turn {
         let mut out: Vec<Carried> = self
             .made
             .iter()
+            .filter(|s| StackMove::of(&s.gestures).is_none())
             .filter_map(|s| {
                 Some(Carried {
                     from: s.from.as_deref()?,
@@ -170,7 +202,7 @@ impl Turn {
                 })
             })
             .collect();
-        if self.stage != Stage::Choosing {
+        if self.stage != Stage::Choosing || StackMove::of(&self.gestures).is_some() {
             return out;
         }
         let clicked = |at: &str| self.gestures.contains(&Gesture::pos(at));
@@ -188,6 +220,114 @@ impl Turn {
             });
         }
         out
+    }
+
+    /// The stacks the move being built moves: each selection made that moves one, and the one
+    /// being entered.
+    pub fn stack_moves(&self) -> Vec<StackMove<'_>> {
+        let mut out: Vec<StackMove> = self
+            .made
+            .iter()
+            .filter_map(|s| StackMove::of(&s.gestures))
+            .collect();
+        if self.stage == Stage::Choosing
+            && let Some(lifted) = StackMove::of(&self.gestures)
+        {
+            out.push(lifted);
+        }
+        out
+    }
+
+    /// What the wheel changes now: how many of a stack picked up are carried, before any is
+    /// dropped (more one way, fewer the other: those left go back down on it), or the kind of
+    /// piece in hand, to another of the same pool (`pools`: each kind's; Tak's flat stone and
+    /// standing stone). `up` is the wheel turned away from the player.
+    pub fn wheel(&mut self, up: bool, pools: &HashMap<String, String>) -> Outcome {
+        if self.stage != Stage::Choosing {
+            return Outcome::Ignored;
+        }
+        let n = self.gestures.len();
+        // The count of a stack picked up, while nothing of it has been dropped.
+        if n > self.forced.max(1) && self.gestures[n - 1].kind == "count" {
+            let before = &self.gestures[..n - 1];
+            let mut counts: Vec<usize> = self
+                .options
+                .iter()
+                .filter(|o| o.gestures.starts_with(before))
+                .filter_map(|o| o.gestures.get(n - 1))
+                .filter(|g| g.kind == "count")
+                .filter_map(|g| g.value.parse().ok())
+                .collect();
+            counts.sort_unstable();
+            counts.dedup();
+            let now: usize = self.gestures[n - 1].value.parse().unwrap_or(0);
+            let next = if up {
+                counts.into_iter().find(|c| *c > now)
+            } else {
+                counts.into_iter().rev().find(|c| *c < now)
+            };
+            return match next {
+                Some(count) => {
+                    self.gestures[n - 1] = Gesture {
+                        kind: "count".into(),
+                        value: count.to_string(),
+                    };
+                    Outcome::Changed
+                }
+                None => Outcome::Ignored,
+            };
+        }
+        // The kind of piece in hand, among those of its pool the move may place.
+        let Some(piece) = self.in_hand() else {
+            return Outcome::Ignored;
+        };
+        let Some(pool) = pools.get(piece).filter(|p| !p.is_empty()) else {
+            return Outcome::Ignored;
+        };
+        let i = self
+            .gestures
+            .iter()
+            .rposition(|g| g.kind == "piece")
+            .expect("a piece in hand");
+        let before = &self.gestures[..i];
+        let mut kinds: Vec<&Gesture> = Vec::new();
+        for o in self
+            .options
+            .iter()
+            .filter(|o| o.gestures.starts_with(before))
+        {
+            if let Some(g) = o.gestures.get(i)
+                && g.kind == "piece"
+                && pools.get(&g.value) == Some(pool)
+                && !kinds.contains(&g)
+            {
+                kinds.push(g);
+            }
+        }
+        if kinds.len() < 2 {
+            return Outcome::Ignored;
+        }
+        let at = kinds
+            .iter()
+            .position(|g| **g == self.gestures[i])
+            .unwrap_or(0);
+        let next = if up {
+            (at + 1) % kinds.len()
+        } else {
+            (at + kinds.len() - 1) % kinds.len()
+        };
+        let next = kinds[next].clone();
+        self.gestures.truncate(i);
+        self.gestures.push(next);
+        self.take_forced();
+        Outcome::Changed
+    }
+
+    /// Whether the wheel would change anything now (so the camera leaves it alone).
+    pub fn wheel_changes(&self, pools: &HashMap<String, String>) -> bool {
+        [true, false]
+            .iter()
+            .any(|up| self.clone().wheel(*up, pools) != Outcome::Ignored)
     }
 
     /// Whether the player has clicked towards the selection being entered: a piece picked up,
@@ -531,7 +671,35 @@ impl Turn {
         };
         self.gestures.extend(path);
         self.take_forced();
+        self.take_all();
         self.settle()
+    }
+
+    /// A stack just picked up is picked up whole, as much of it as may be carried: every
+    /// selection still possible moves from where it was clicked and next says how many. The
+    /// wheel then leaves some behind.
+    fn take_all(&mut self) {
+        let n = self.gestures.len();
+        let Some(from) = self.gestures.last().filter(|g| g.is_pos()) else {
+            return;
+        };
+        let mut most: Option<(usize, &Gesture)> = None;
+        for o in self.matching() {
+            let Some(g) = o.gestures.get(n).filter(|g| g.kind == "count") else {
+                return;
+            };
+            if o.from.as_deref() != Some(from.value.as_str()) {
+                return;
+            }
+            let count = g.value.parse().unwrap_or(0);
+            if most.is_none_or(|(m, _)| count > m) {
+                most = Some((count, g));
+            }
+        }
+        if let Some((_, g)) = most {
+            let g = g.clone();
+            self.gestures.push(g);
+        }
     }
 
     /// Starts entering a selection from the options there are.
@@ -742,6 +910,62 @@ fn right_click(
     }
 }
 
+/// Each kind of piece's reserve pool, by its id: what the wheel may swap a piece in hand for.
+fn pools(watch: &WatchStatus) -> HashMap<String, String> {
+    watch
+        .table
+        .as_ref()
+        .map(|t| {
+            t.info
+                .pieces
+                .iter()
+                .map(|p| (p.id.clone(), p.pool.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The wheel is the move's while it would change something there, and the camera's otherwise.
+fn take_wheel(watch: Res<WatchStatus>, mut taken: ResMut<WheelTaken>) {
+    let wanted = watch
+        .turn
+        .as_ref()
+        .is_some_and(|t| t.wheel_changes(&pools(&watch)));
+    taken.set_if_neq(WheelTaken(wanted));
+}
+
+/// The wheel over the table, while the move takes it: each notch one more of a stack picked up
+/// carried (away from the player) or one fewer, or the piece in hand swapped for another of its
+/// pool. A touchpad's pixels are counted into notches.
+fn wheel(
+    scroll: Res<AccumulatedMouseScroll>,
+    taken: Res<WheelTaken>,
+    pointer: PointerOverUi,
+    menu: Option<Res<EscapeMenu>>,
+    mut notches: Local<f32>,
+    mut watch: ResMut<WatchStatus>,
+) {
+    if !taken.0 || pointer.is_over_ui() || !escape_menu::closed(menu.as_deref()) {
+        *notches = 0.0;
+        return;
+    }
+    *notches += match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_LINE,
+    };
+    let pools = pools(&watch);
+    while notches.abs() >= 1.0 {
+        let up = *notches > 0.0;
+        *notches -= notches.signum();
+        let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
+            return;
+        };
+        if turn.wheel(up, &pools) != Outcome::Ignored {
+            watch.set_changed();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,6 +1047,145 @@ mod tests {
                 aimed: false,
             })
         );
+    }
+
+    /// A stack's move as Tak's server lists it: from a position, a count, then a position for
+    /// each piece dropped.
+    fn carry(from: &str, count: usize, drops: &[&str]) -> LegalSelection {
+        let mut gestures = vec![("pos", from)];
+        let count = count.to_string();
+        gestures.push(("count", count.as_str()));
+        gestures.extend(drops.iter().map(|d| ("pos", *d)));
+        LegalSelection {
+            from: Some(from.into()),
+            ..sel("m", drops.first().copied(), &gestures)
+        }
+    }
+
+    /// Tak's choices on c3 with two of the player's stones: one or both, up (c4, c5) or right
+    /// (d3), and stones to place, flat or standing, with the capstone.
+    fn tak() -> Vec<LegalSelection> {
+        let mut out = vec![
+            carry("c3", 1, &["c4"]),
+            carry("c3", 2, &["c4", "c4"]),
+            carry("c3", 2, &["c4", "c5"]),
+            carry("c3", 1, &["d3"]),
+            carry("c3", 2, &["d3", "d3"]),
+        ];
+        for piece in ["flat", "wall", "cap"] {
+            out.push(sel("p", Some("a1"), &[("piece", piece), ("pos", "a1")]));
+        }
+        out
+    }
+
+    fn pools() -> HashMap<String, String> {
+        [("flat", "stone"), ("wall", "stone"), ("cap", "cap")]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .into()
+    }
+
+    #[test]
+    fn a_stack_is_picked_up_whole_and_the_wheel_leaves_some_behind() {
+        let mut t = Turn::new(1);
+        t.answered(answer(8, tak()));
+        assert_eq!(t.gesture(&g("pos", "c3")), Outcome::Changed);
+        // All it may carry, at once: no button to press for how many.
+        assert_eq!(t.gestures, [g("pos", "c3"), g("count", "2")]);
+        let lifted = t.stack_moves();
+        assert_eq!(
+            lifted,
+            [StackMove {
+                from: "c3",
+                count: 2,
+                drops: vec![]
+            }]
+        );
+        assert!(t.choices().is_empty());
+        assert!(t.carried().is_empty(), "a stack, not one piece");
+        // Down: one fewer (it goes back on the stack); not below one; up again.
+        assert!(t.wheel_changes(&pools()));
+        assert_eq!(t.wheel(false, &pools()), Outcome::Changed);
+        assert_eq!(t.stack_moves()[0].count, 1);
+        assert_eq!(t.wheel(false, &pools()), Outcome::Ignored);
+        assert_eq!(t.wheel(true, &pools()), Outcome::Changed);
+        assert_eq!(
+            t.wheel(true, &pools()),
+            Outcome::Ignored,
+            "no more than it may carry"
+        );
+        // Each click drops the bottom piece carried; once one has, the wheel is the camera's.
+        assert_eq!(t.gesture(&g("pos", "c4")), Outcome::Changed);
+        assert_eq!(t.stack_moves()[0].drops, ["c4"]);
+        assert!(!t.wheel_changes(&pools()));
+        assert_eq!(t.targets(), ["c4", "c5"].map(String::from).into());
+        assert_eq!(t.gesture(&g("pos", "c5")), Outcome::Ask);
+        // Made, it is still known as a stack moved, to show.
+        assert_eq!(t.stack_moves()[0].drops, ["c4", "c5"]);
+        assert!(t.carried().is_empty());
+    }
+
+    #[test]
+    fn a_stack_put_down_again_goes_back_whole() {
+        let mut t = Turn::new(1);
+        t.answered(answer(8, tak()));
+        t.gesture(&g("pos", "c3"));
+        t.wheel(false, &pools());
+        assert_eq!(
+            t.gesture(&g("pos", "c3")),
+            Outcome::Changed,
+            "clicked again"
+        );
+        assert!(t.gestures.is_empty() && t.stack_moves().is_empty());
+        t.gesture(&g("pos", "c3"));
+        assert!(t.back());
+        assert!(t.gestures.is_empty(), "back puts it down too");
+    }
+
+    #[test]
+    fn the_wheel_turns_a_flat_stone_in_hand_into_a_standing_one_and_back() {
+        let mut t = Turn::new(1);
+        t.answered(answer(8, tak()));
+        assert!(!t.wheel_changes(&pools()), "nothing in hand: the camera's");
+        t.gesture(&g("piece", "flat"));
+        assert_eq!(t.wheel(true, &pools()), Outcome::Changed);
+        assert_eq!(t.in_hand(), Some("wall"));
+        assert_eq!(t.wheel(true, &pools()), Outcome::Changed);
+        assert_eq!(t.in_hand(), Some("flat"), "round again");
+        assert_eq!(t.wheel(false, &pools()), Outcome::Changed);
+        assert_eq!(t.in_hand(), Some("wall"));
+        assert_eq!(t.gesture(&g("pos", "a1")), Outcome::Ask);
+        assert_eq!(t.made[0].piece.as_deref(), Some("wall"));
+        // A capstone has no other kind in its pool.
+        let mut t = Turn::new(1);
+        t.answered(answer(8, tak()));
+        t.gesture(&g("piece", "cap"));
+        assert_eq!(t.wheel(true, &pools()), Outcome::Ignored);
+        // Nor does a piece whose pool is not known.
+        let mut t = Turn::new(1);
+        t.answered(answer(8, tak()));
+        t.gesture(&g("piece", "flat"));
+        assert_eq!(t.wheel(true, &HashMap::new()), Outcome::Ignored);
+    }
+
+    #[test]
+    fn a_stack_move_is_read_from_its_gestures() {
+        let gs = |v: &[(&str, &str)]| v.iter().map(|(k, x)| g(k, x)).collect::<Vec<_>>();
+        let m = gs(&[("pos", "c3"), ("count", "3"), ("pos", "c4"), ("pos", "c4")]);
+        assert_eq!(
+            StackMove::of(&m),
+            Some(StackMove {
+                from: "c3",
+                count: 3,
+                drops: vec!["c4", "c4"]
+            })
+        );
+        // A count with no position before it, or a choice after it: not a stack moved.
+        assert_eq!(StackMove::of(&gs(&[("count", "2"), ("pos", "a1")])), None);
+        assert_eq!(
+            StackMove::of(&gs(&[("pos", "a1"), ("count", "2"), ("piece", "x")])),
+            None
+        );
+        assert_eq!(StackMove::of(&gs(&[("pos", "a1"), ("pos", "a2")])), None);
     }
 
     /// A piece sliding from one position to another, then shooting from there (Amazons').

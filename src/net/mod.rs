@@ -1557,6 +1557,8 @@ mod tests {
                 goals: vec![],
                 pieces: vec![],
                 counters: vec![],
+                opening: None,
+                reserves: Default::default(),
             },
             game: Game {
                 game_def_id: "g".into(),

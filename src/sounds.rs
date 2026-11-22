@@ -104,7 +104,13 @@ impl Moment {
                 .into_iter()
                 .find(|c| c.to.is_none())
                 .map(|c| c.from.to_string())
-                .or_else(|| turn.in_hand().map(|piece| format!("piece {piece}"))),
+                .or_else(|| turn.in_hand().map(|piece| format!("piece {piece}")))
+                // A stack picked up, and each time the wheel changes how much of it.
+                .or_else(|| {
+                    let m = turn.stack_moves().pop()?;
+                    (turn.stage == Stage::Choosing && m.drops.is_empty())
+                        .then(|| format!("stack {} {}", m.from, m.count))
+                }),
             placed: turn
                 .placed()
                 .filter(|cell| !bowls || !placements.contains(cell))
@@ -211,11 +217,13 @@ fn listen(
     mut before: Local<(Moment, Standing)>,
     mut cues_out: MessageWriter<Cue>,
 ) {
-    let bowls = watch
-        .table
-        .as_ref()
-        .and_then(|t| appearances.for_game(&t.info.id))
-        .is_some_and(|look| look.bowls.is_some());
+    // A piece placed from a bowl or a seat's supply is carried there, and sounds as it lands.
+    let bowls = watch.table.as_ref().is_some_and(|t| {
+        appearances
+            .for_game(&t.info.id)
+            .is_some_and(|look| look.bowls.is_some())
+            || !crate::supply::pools(&t.info).is_empty()
+    });
     let now = (
         Moment::of(watch.turn.as_ref(), bowls),
         Standing::of(watch.table.as_ref()),
@@ -297,6 +305,48 @@ mod tests {
             placed: placed.iter().map(|p| p.to_string()).collect(),
             sent,
         }
+    }
+
+    #[test]
+    fn a_stack_picked_up_ticks_and_ticks_again_as_the_wheel_changes_how_much() {
+        use crate::net::api::{Gesture, LegalSelection, Selections};
+        let option = |count: &str| LegalSelection {
+            notation: "m".into(),
+            action: "move".into(),
+            to: Some("b3".into()),
+            from: Some("b2".into()),
+            piece: None,
+            aim: None,
+            gestures: [("pos", "b2"), ("count", count), ("pos", "b3")]
+                .iter()
+                .chain(if count == "2" {
+                    &[("pos", "b3")][..]
+                } else {
+                    &[]
+                })
+                .map(|(k, v)| Gesture {
+                    kind: k.to_string(),
+                    value: v.to_string(),
+                })
+                .collect(),
+        };
+        let mut turn = Turn::new(1);
+        turn.answered(Selections {
+            seat: 1,
+            ply: 4,
+            made: vec![],
+            options: vec![option("1"), option("2")],
+            complete: false,
+            may_end: false,
+        });
+        let before = Moment::of(Some(&turn), true);
+        turn.gesture(&Gesture::pos("b2"));
+        let lifted = Moment::of(Some(&turn), true);
+        assert_eq!(cues(&before, &lifted), [Cue::Lift]);
+        turn.wheel(false, &Default::default());
+        let fewer = Moment::of(Some(&turn), true);
+        assert_eq!(cues(&lifted, &fewer), [Cue::Lift]);
+        assert!(cues(&fewer, &fewer).is_empty());
     }
 
     #[test]

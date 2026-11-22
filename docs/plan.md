@@ -496,6 +496,20 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   has a counter with a count wanted gets them, with no look of its own; `[trays]` may give a
   material and a size. The camera frames the board with the player's tray in front of it. No
   number is shown: the squares are the score.
+- Tak: what each seat has left to place stands beside the board at its right hand
+  (`supply.rs`): its stones on their edges, face to face, a low wall along the board's side from
+  the seat's near corner, and its capstones upright nearest it (the definition's `reserves`,
+  each piece's `pool`, the position's counts). A click on the player's own takes a flat stone
+  (the plain piece of the pool: the first another may go on) or a capstone; it waits over the
+  place it came from, bobbing, and the wheel turns a flat stone into a standing one and back
+  (any kind of the same pool). A click on a cell carries it there. A stack clicked is picked up
+  whole, as much of it as may be carried; the wheel puts its stones back down on it one at a
+  time (and takes them up again), until the first drop; each click then drops the bottom stone
+  carried where it goes, what is left held over it. The camera does not zoom while the wheel is
+  the move's. Its opening places the other seat's stone, shown in that colour (`opening.owner`).
+  The road goals every seat shares no longer shade the board's edges in no one's colour: that
+  marking says something only where each seat has its own (Hex). Generic: any game whose seats
+  keep pieces in reserve gets a supply.
 - A board's lines are as thick round the outside as between its cells: the darkened layer under
   the cells is grown by a cell's margin, since round the outside only one cell's margin made the
   line (half as thick). The cells stand only 0.3 mm proud of the lines, not 1.2 mm: the deeper

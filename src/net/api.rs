@@ -508,6 +508,13 @@ pub struct GameInfo {
     /// rule wants of each.
     #[serde(default, deserialize_with = "null_as_default")]
     pub counters: Vec<Counter>,
+    /// The opening, when the game has one.
+    #[serde(default)]
+    pub opening: Option<Opening>,
+    /// What each seat starts with off the board, by pool: pieces (Tak's stones and capstones)
+    /// or a counter's number.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub reserves: BTreeMap<String, u32>,
 }
 
 /// A number each seat keeps in a reserve pool of that `id`, holding no pieces.
@@ -530,6 +537,25 @@ pub struct PieceDef {
     /// The colour word it is played in, when it has one (Blooms' stones each have their own).
     #[serde(default)]
     pub color: String,
+    /// The reserve pool it is taken from (Tak's flat and standing stones share one).
+    #[serde(default)]
+    pub pool: String,
+    /// Whether another piece may go on it (a standing stone and a capstone may not).
+    #[serde(default = "yes")]
+    pub coverable: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// The opening, when the game has one: its first `plies`, and whose pieces are placed in it
+/// (`opponent`: each seat places a piece of another's, as Tak's first stones are).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Opening {
+    pub plies: u64,
+    #[serde(default)]
+    pub owner: String,
 }
 
 /// A goal of the game: for `connect`, a group of the seat's pieces that joins regions of the
@@ -913,6 +939,9 @@ pub struct GameState {
     /// Selections played so far. A `move` event's `seq` is this after it.
     #[serde(default)]
     pub move_seq: u64,
+    /// Impulses played so far.
+    #[serde(default)]
+    pub ply: u64,
     #[serde(default)]
     pub winner_seat: Option<u32>,
     /// Seats that share a draw.
