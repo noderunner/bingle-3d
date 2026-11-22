@@ -172,7 +172,9 @@ A game's own rules and its players' words keep their terms.
   interface is blended in linear light: prefer opaque colours to faint see-through ones.
   `src/families.rs`: the games to start grouped by family, the names of a family and its
   members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
-  beside a watched game.
+  beside a watched game: what the seat on impulse is asked, in the server's words when its
+  view says (`Position::impulse_words`), else generic hints, as also once the player has
+  chosen something (`hint`).
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`).
@@ -239,6 +241,17 @@ A game's own rules and its players' words keep their terms.
   `board::fence_aim`: a see-through fence there), and a click on the board makes the choice
   that builds it there, and it is carried there (`board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
   does not say.
+- `src/tints.rs`: the positions the view tints with a key of the game's legend
+  (`Position::tints`; Courtfall's terrain and its Eye), drawn as the look's `[tints]` say: a
+  piece of the look laid there (a tile, `Stands::Fitted`, which what stands there stands on:
+  `Kit::floor`), or a stamp of a material printed there; a key the look does not name is not
+  drawn. And what both seats have still to place, counted in the view (`[stock]`, a draft's
+  tiles: `Position::view_counts`), in a column of each kind beside the board to the first
+  seat's left; a click on one takes it to place (`play::TakeToPlace`, `Turn::take_to_place`:
+  held under the pointer, the hexes it may go on lit, the one under the pointer showing it
+  see-through in place of its light (`board::TileGhost`), and a click on one makes the click and
+  the tile's choice that follows it), and it is carried where it goes (`board::FromStock`).
+  `Tinted`, `shown`, `stock` and `takes` have no Bevy in them; `board::show_tints` draws them.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which
@@ -307,7 +320,9 @@ A game's own rules and its players' words keep their terms.
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it
   (`in_hand` is a piece taken to place; `may_end` a move a one-seat game may send part of;
   `stack_moves` a stack picked up, by its gestures: a position, a count, a position for each
-  piece dropped; a stack clicked is taken whole); its systems turn clicks on a `Spot` (a board cell or a
+  piece dropped; a stack clicked is taken whole; `lifted` the piece every click moves, where
+  its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
+  it and held under the pointer); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh

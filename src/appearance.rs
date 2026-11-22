@@ -18,7 +18,12 @@
 //! - `bowls`: a bowl of its stones for each seat, beside the board: the bowl's model, the heap of
 //!   stones in it, and the material the bowl is made of;
 //! - `card.pictures.<game id>`: the picture on the game's card in the main screen's list (an
-//!   image under `pictures/`); a game without one has a blank space there.
+//!   image under `pictures/`); a game without one has a blank space there;
+//! - `tints.<key>`: how a position the view tints with a key of the game's legend is drawn
+//!   (`tints.rs`): a `piece` of this file laid on it (a tile), or a `stamp` of a material
+//!   printed on it. A key without one is not drawn;
+//! - `stock.counts`: the view's count of each kind of piece both seats have still to place (a
+//!   draft's tiles), shown beside the board.
 //!
 //! The private overlay's games (plan, decision 2) will add files from a folder; this is where
 //! they will be read.
@@ -62,6 +67,29 @@ pub struct Appearance {
     pub aimed: Option<String>,
     #[serde(default)]
     pub sounds: SoundLook,
+    /// How the positions the view tints are drawn, by the legend's key (`tints.rs`).
+    #[serde(default)]
+    pub tints: BTreeMap<String, TintLook>,
+    /// What both seats have still to place, counted in the view, beside the board.
+    pub stock: Option<StockLook>,
+}
+
+/// How a position the view tints with one key is drawn: a piece of the file's laid on it (a
+/// tile, nobody's), or a stamp of a material on it, `size` of the pitch across.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TintLook {
+    pub piece: Option<String>,
+    pub stamp: Option<String>,
+    pub size: Option<f32>,
+}
+
+/// What both seats have still to place, shared (a draft's tiles): the view's map of each kind of
+/// piece to how many are left (`ext.view.<counts>`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StockLook {
+    pub counts: String,
 }
 
 /// Sounds of its own for playing a seat, each a file of the client's, in place of every game's
@@ -203,6 +231,8 @@ pub enum Stands {
     Square,
     /// Upright, looking across the board from its seat's side: a piece with a face.
     Forward,
+    /// True to the board, as a tile fitted to its space: never turned, never aside.
+    Fitted,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -320,6 +350,23 @@ impl Appearance {
             && !self.pieces.contains_key(id)
         {
             out.push(format!("aimed: no piece {id}"));
+        }
+        for (key, tint) in &self.tints {
+            match (&tint.piece, &tint.stamp) {
+                (Some(id), None) if !self.pieces.contains_key(id) => {
+                    out.push(format!("tint {key}: no piece {id}"));
+                }
+                (None, Some(name)) if !self.materials.contains_key(name) => {
+                    out.push(format!("tint {key}: no material {name}"));
+                }
+                (Some(_), Some(_)) | (None, None) => {
+                    out.push(format!("tint {key}: a piece or a stamp"));
+                }
+                _ => {}
+            }
+            if tint.size.is_some_and(|s| !(0.05..=1.0).contains(&s)) {
+                out.push(format!("tint {key}: a size from 0.05 to 1"));
+            }
         }
         if self.games.is_empty() {
             out.push("for no game".into());
@@ -523,6 +570,38 @@ mod tests {
         // Its sounds are every game's (`sounds.rs`).
         assert_eq!(look.sounds, SoundLook::default());
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
+    }
+
+    #[test]
+    fn a_tint_is_a_piece_of_the_files_or_a_stamp_of_one_of_its_materials() {
+        let all = Appearances::built_in();
+        let look = all.for_game("courtfall-1.0.0").expect("Courtfall has one");
+        assert_eq!(look.tints["green"].piece.as_deref(), Some("green"));
+        assert_eq!(look.pieces["green"].stands, Stands::Fitted);
+        assert!(
+            look.materials
+                .contains_key(look.tints["eye"].stamp.as_ref().unwrap())
+        );
+        assert_eq!(
+            look.stock.as_ref().map(|s| s.counts.as_str()),
+            Some("tiles_left")
+        );
+        let a = Appearance::parse(
+            r#"
+            games = ["g"]
+            [tints.green]
+            piece = "tile"
+            [tints.eye]
+            stamp = "ink"
+            size = 3.0
+            [tints.both]
+            piece = "tile"
+            stamp = "ink"
+            [tints.neither]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(a.problems().len(), 5, "{:?}", a.problems());
     }
 
     #[test]

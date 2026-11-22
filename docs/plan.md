@@ -543,6 +543,43 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the pointer is beyond it, and the pointer's own arrow comes back; back over the board, it is
   the stone again. Which games have bowls is each look's: the definitions do not say which games
   are of this kind (two have their rules in Go and name no placing action).
+- Courtfall (`assets/appearance/courtfall.toml`): its units are the chessmen, by the piece each
+  is in the definition (a Warden is a pawn, an Outrider a knight, an Arbalest a bishop, a
+  Juggernaut a rook, the Champion a queen), of boxwood and ebonised walnut. Its terrain is what
+  the position's view tints each hex with (`ext.view.tints`, a key of the legend by position,
+  as Bingle's page colours them), drawn as the look's `[tints]` say (`tints.rs`): Overgrowth,
+  Mire and Hazard as hexagonal tiles of teak stained green, blue and red (`tiles.py`: a tile a
+  little narrower than a cell, so the board's lines show round it, 2.4 mm thick), laid on the
+  hex, lit with it while a click there would be taken, the units standing on them; the Eye as a
+  dot of ink stamped on its hex. A key the look does not name (the deployment zones) is not
+  drawn. During the draft the tiles still to lay (the view's `tiles_left`, `[stock]`) wait
+  beside the board to the first seat's left, a column of each colour, each tile the size of the
+  board's. On the player's draft a click on one takes it up (`Turn::take_to_place`): it
+  leaves its column and floats under the pointer, bobbing, as Fendo's fence does, and only the
+  hexes that tile may go on are lit; over one of them the tile is shown there see-through, in
+  place of the hex's light, following the pointer from hex to hex; a click on one of them makes both of the selection's
+  gestures (the hex, then the tile, as Courtfall's selection has them) and the tile is carried
+  down onto it, solid, until the move is played; a click on another hex leaves it in hand, and
+  another tile clicked takes its place. Chosen the old way (the hex, then the tile's button on
+  the panel), it is carried there from its column. Every tile is cut from the same place in the wood: one grain for all,
+  for now. Any game whose view tints positions or counts a shared stock gets the same from a
+  look of its own.
+- A piece whose moves do not have it clicked (Courtfall's unit, once activated: each of its
+  selections says it moves from its hex, and is a click on where it goes, then what it does
+  there) is picked up by a click on it (`Turn::unclicked_from`, `Turn::lifted`): it floats
+  under the pointer in place of its arrow, with the sound of a piece picked up, the hexes it
+  may go to or act on are lit, and over an empty one it may go to a see-through copy of it
+  stands there (none over a unit it would strike or shove: it does not go there). A click on
+  one of them moves it, carried from under the pointer; a click on it again, or Back, puts it
+  down; a click where it may not go leaves it in hand. Its second action starts from where
+  the first put it: the board follows the piece the move being built has moved
+  (`show_turn`'s `origin`), so it is picked up there and carried on from there.
+- The game's panel says what the seat on impulse is asked in the server's words, for any game
+  whose view says it (`ext.view.impulse`, else `prompt`: Courtfall's "Choose where to lay a
+  tile (Overgrowth 4, Mire 3, Hazard 3 left).", "Choose a Court."), as Bingle's page does:
+  under "Your move." until the player chooses something (then how to go on from there, as
+  before), and under whose move it is for everyone else. A game that says nothing keeps the
+  generic hints.
 - Commercial games are not shown, even when a server offers them, until bingle-3d has a private
   overlay build of its own (as Bingle's ADR 0127). The client may not name them, so it asked
   Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its private

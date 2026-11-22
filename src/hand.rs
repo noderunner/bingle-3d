@@ -304,13 +304,17 @@ fn set_off(
     }
 }
 
+/// A piece `carry` moves: where it rests, how it is carried, its trip, and where it is.
+type Carried = (
+    &'static Rest,
+    Option<&'static Carry>,
+    Option<&'static mut Travel>,
+    &'static mut Transform,
+);
+
 /// Moves each piece of the board towards where it is wanted: where it rests, held over it, or
-/// carried to where it is put.
-fn carry(
-    time: Res<Time>,
-    mut pieces: Query<(&Rest, Option<&Carry>, Option<&mut Travel>, &mut Transform)>,
-    mut cues: MessageWriter<Cue>,
-) {
+/// carried to where it is put. One held under the pointer is `hold`'s.
+fn carry(time: Res<Time>, mut pieces: Query<Carried, Without<Held>>, mut cues: MessageWriter<Cue>) {
     let k = approach(time.delta_secs());
     let secs = time.elapsed_secs();
     for (rest, carry, trip, mut t) in &mut pieces {
