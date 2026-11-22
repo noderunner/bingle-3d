@@ -2,7 +2,8 @@
 
 The fonts are Fira Sans, under the SIL Open Font License (`fonts/OFL.txt`).
 
-Everything else here is made by the asset pipeline (`assets-src/`). The scanned material it
+Everything else here is made by the asset pipeline (`assets-src/`). The sounds are synthesised
+there (`assets-src/sounds/sounds.py`), from nothing recorded. The scanned material it
 starts from is CC0 (public domain), from [Poly Haven](https://polyhaven.com); credit is not
 required, and is given gladly:
 

@@ -231,7 +231,8 @@ A game's own rules and its players' words keep their terms.
   board but never quite, a piece with a face looks across it) and a material of its own if it
   has one; what a
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
-  card in the main screen, a chessboard's two materials (`[board] squares`) and its inlaid
+  card in the main screen, the sounds it makes as it is played (`[sounds]`), a chessboard's two
+  materials (`[board] squares`) and its inlaid
   border (`[board] border`), and the piece
   what a move aims is shown as while it is built (`aimed`: the server does not say). A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.
@@ -254,6 +255,11 @@ A game's own rules and its players' words keep their terms.
   it moves held over its space or carried to where it goes, and what it aims held under the
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
   then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
+- `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down, the move
+  sent, the game won or lost), for a game whose appearance has `[sounds]`. `cues` and `ended`
+  read them from the turn's and the table's changes, with no Bevy in them; a carried piece sounds as it lands (`hand.rs`). The files are synthesised
+  by `assets-src/sounds/sounds.py` (Python's standard library and ffmpeg, on the host), never
+  recorded. `--no-audio-devices` leaves Bevy's audio out, so no speaker is opened.
 - `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
   name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its

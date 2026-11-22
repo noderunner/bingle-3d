@@ -52,6 +52,23 @@ pub struct Appearance {
     /// (an arrow shot from where a piece landed), by its id in `pieces`. The server does not
     /// say what it puts down; without this it is the generic stone.
     pub aimed: Option<String>,
+    #[serde(default)]
+    pub sounds: SoundLook,
+}
+
+/// The sounds playing a seat makes, each a file of the client's (`sounds.rs`). Silent without.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SoundLook {
+    /// A piece picked up.
+    pub lift: Option<String>,
+    /// A piece set down where it goes, or one placed.
+    pub put: Option<String>,
+    /// The move sent.
+    pub play: Option<String>,
+    /// The game over, the player having won, or lost.
+    pub win: Option<String>,
+    pub lose: Option<String>,
 }
 
 /// The bowls the seats keep their stones in (`bowls.rs`).
@@ -209,6 +226,21 @@ impl Appearance {
         {
             if !self.materials.contains_key(name) {
                 out.push(format!("board: no material {name}"));
+            }
+        }
+        let sounds = &self.sounds;
+        for file in [
+            &sounds.lift,
+            &sounds.put,
+            &sounds.play,
+            &sounds.win,
+            &sounds.lose,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !assets::exists(file) {
+                out.push(format!("sounds: no file {file}"));
             }
         }
         if let Some(id) = &self.aimed
@@ -415,6 +447,10 @@ mod tests {
         // A board may be checkered, and what a move aims at shown as a piece of its own.
         assert!(look.board.squares.is_some() && look.board.border.is_some());
         assert_eq!(look.aimed.as_deref(), Some("arrow"));
+        // And may make sounds as it is played.
+        assert!(look.sounds.lift.is_some() && look.sounds.put.is_some());
+        assert!(look.sounds.play.is_some());
+        assert!(look.sounds.win.is_some() && look.sounds.lose.is_some());
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
     }
 
@@ -433,10 +469,12 @@ mod tests {
             [board]
             squares = ["light", "dark"]
             border = "inlay"
+            [sounds]
+            put = "sounds/none.ogg"
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 8, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 9, "{:?}", a.problems());
         let a = Appearance::parse("games = [\"g\"]\naimed = \"arrow\"").unwrap();
         assert_eq!(a.problems(), ["aimed: no piece arrow"]);
         assert!(

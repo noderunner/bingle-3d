@@ -11,6 +11,17 @@ games = ["amazons", "amazons-6"]
 # While a move is built, its arrow is shown as an arrow is.
 aimed = "arrow"
 
+# Synthesised (`assets-src/sounds/sounds.py`): a tap of wood as a queen is picked up, a soft
+# thump (a die dropped on felt) as it is set down where it goes or an arrow lands, and a key
+# pressed on a well-lubricated mechanical keyboard as the move is played; and a crowd's short
+# cheer, or groan, as the game is won or lost.
+[sounds]
+lift = "sounds/tick.ogg"
+put = "sounds/thump.ogg"
+play = "sounds/key.ogg"
+win = "sounds/cheer.ogg"
+lose = "sounds/groan.ogg"
+
 [board]
 squares = ["dark_square", "light_square"]
 border = "inlay"
