@@ -30,6 +30,7 @@ STEPS = [
     "checkers",
     "tak",
     "playing_cards",
+    "card_faces",
     "dice",
     "garden",
     "garden_light",

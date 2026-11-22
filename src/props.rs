@@ -1,7 +1,7 @@
 //! Cards and dice: what lies on a table beside a board, or in place of one. The models are the
 //! asset pipeline's (`assets-src/blender/playing_cards.py`, `dice.py`); this is how the client
-//! reads them: a model's parts, a card turned over, a die turned to show a number. Their
-//! generic looks are in `look.rs`.
+//! reads them: a model's parts, a card turned over, the picture on the face of a card of the
+//! usual deck, a die turned to show a number. Their generic looks are in `look.rs`.
 //!
 //! Nothing draws a game's cards or dice with them yet (plan: card zones); `showcase.rs` lays
 //! them out to look at.
@@ -19,6 +19,24 @@ use crate::assets;
 pub const CARD: &str = "models/card.glb";
 /// Across, top to bottom, and through, in metres.
 pub const CARD_SIZE: Vec3 = Vec3::new(0.0635, 0.0889, 0.0003);
+
+/// The picture for the face of a card of the usual deck, by its suit's symbol (♠ ♥ ♦ ♣) and
+/// its rank's label (A, 2 to 10, J, Q, K) as the server gives them: one of the pipeline's
+/// (`assets-src/blender/card_faces.py`). None for any other card: the client has no picture
+/// of it.
+pub fn standard_face(suit: &str, rank: &str) -> Option<String> {
+    // A symbol may come with the mark that asks for its coloured form.
+    let suit = match suit.trim_end_matches('\u{fe0f}') {
+        "♠" => "spades",
+        "♥" => "hearts",
+        "♦" => "diamonds",
+        "♣" => "clubs",
+        _ => return None,
+    };
+    let rank = rank.trim().to_ascii_lowercase();
+    let file = format!("textures/cards/faces/{suit}_{rank}_albedo.png");
+    assets::exists(&file).then_some(file)
+}
 
 /// A die of six sides, about its middle. Its parts are `body` and `pips`.
 pub const DIE: &str = "models/die.glb";
@@ -102,6 +120,41 @@ mod tests {
     fn the_models_have_the_parts_the_client_names() {
         assert_eq!(assets::model_parts(CARD), ["face", "back", "edge"]);
         assert_eq!(assets::model_parts(DIE), ["body", "pips"]);
+    }
+
+    #[test]
+    fn the_usual_deck_has_a_face_for_each_of_its_fifty_two_cards_and_no_other() {
+        let ranks = [
+            "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K",
+        ];
+        let mut faces = Vec::new();
+        for suit in ["♠", "♥", "♦", "♣"] {
+            for rank in ranks {
+                let face = standard_face(suit, rank);
+                assert!(face.is_some(), "{rank} of {suit}");
+                faces.extend(face);
+            }
+        }
+        // Each its own, read as a colour, and nothing in the folder that no card shows.
+        let all = assets::FILES
+            .iter()
+            .filter(|(file, _)| file.starts_with("textures/cards/faces/"));
+        assert_eq!(all.count(), 52);
+        faces.sort();
+        faces.dedup();
+        assert_eq!(faces.len(), 52);
+        assert!(faces.iter().all(|f| crate::textures::is_colour(f)));
+
+        assert_eq!(
+            standard_face("♥\u{fe0f}", " q "),
+            standard_face("♥", "Q"),
+            "the symbol's coloured form, and a label as it happens to be written"
+        );
+        assert_eq!(standard_face("♥", "1"), None, "an ace is A");
+        assert_eq!(standard_face("♥", "11"), None);
+        assert_eq!(standard_face("♥", ""), None);
+        assert_eq!(standard_face("hearts", "A"), None, "by symbol, not by id");
+        assert_eq!(standard_face("★", "A"), None);
     }
 
     #[test]

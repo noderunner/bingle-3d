@@ -1,8 +1,8 @@
 //! `--showcase`: every model the client has for a piece, in each material its games give it,
-//! with a few playing cards and the dice, laid out on the table with nothing else: to look at an
-//! asset in the client's own light, as the asset pipeline asks before one is called done
-//! (`assets-src/README.md`). A face is seen from one side here, as nowhere in Blender, so this is
-//! where a card mapped or wound the wrong way shows.
+//! with a few playing cards of the usual deck and the dice, laid out on the table with nothing
+//! else: to look at an asset in the client's own light, as the asset pipeline asks before one
+//! is called done (`assets-src/README.md`). A face is seen from one side here, as nowhere in
+//! Blender, so this is where a card mapped or wound the wrong way shows.
 //!
 //! The pieces are found in the appearance files, so a new one is here by itself, and no game is
 //! named. `--card-face` and `--card-back` try a picture (a JPEG or a PNG) on a card's sides.
@@ -48,6 +48,10 @@ const ACROSS: f32 = 0.034;
 const BACK: f32 = 0.044;
 const GAP: f32 = 0.03;
 const ROW: usize = 8;
+
+/// The cards lying face up, by suit and rank: one of each suit, and of each kind of face (an
+/// ace, a court card, the fullest number card, and one that is not the same either way up).
+const FACES: [(&str, &str); 4] = [("♠", "A"), ("♥", "Q"), ("♦", "10"), ("♣", "7")];
 
 /// One piece to show: its model, what it is made of, and how its game stands it.
 #[derive(Debug, Clone, PartialEq)]
@@ -161,7 +165,7 @@ fn lay_out(
         commands.entity(whole).insert(ChildOf(root));
     }
 
-    // The cards: one face up, one face down, and a few in a pile.
+    // The cards: a few of the usual deck face up, one face down, and a few in a pile.
     let mut side = |file: &Option<PathBuf>, without: MaterialSpec| {
         let mut material = without.build(&server);
         if let Some(file) = file {
@@ -175,23 +179,38 @@ fn lay_out(
         }
         materials.add(material)
     };
-    let card = [
-        ("face", side(&pictures.face, look::paper())),
-        (
-            "back",
-            side(&pictures.back, look::card_side(look::CARD_BACK)),
-        ),
-        ("edge", materials.add(look::paper().build(&server))),
-    ];
-    let lie = |x: f32, layer: usize, yaw: f32, face_up: bool| {
+    // A picture given for the faces is on every one of them.
+    let faces = FACES.map(|(suit, rank)| {
+        let own = props::standard_face(suit, rank).filter(|_| pictures.face.is_none());
+        side(
+            &pictures.face,
+            own.map_or_else(look::paper, |file| look::card_side(&file)),
+        )
+    });
+    let back = side(&pictures.back, look::card_side(look::CARD_BACK));
+    let edge = materials.add(look::paper().build(&server));
+    let step = props::CARD_SIZE.x + 0.012;
+    let count = FACES.len() + 2;
+    let lie = |place: usize, layer: usize, yaw: f32, face_up: bool| {
+        let x = (place as f32 - (count as f32 - 1.0) / 2.0) * step;
         let y = props::CARD_SIZE.z * (layer as f32 + 0.5);
         Transform::from_xyz(x, y, cards_at)
             .with_rotation(Quat::from_rotation_y(yaw) * props::card_lies(face_up))
     };
-    let step = props::CARD_SIZE.x + 0.012;
-    let mut cards = vec![lie(-step, 0, 0.08, true), lie(0.0, 0, -0.05, false)];
-    cards.extend((0..10).map(|layer| lie(step, layer, 0.02 * (layer % 3) as f32, false)));
-    for at in cards {
+    let mut cards: Vec<(usize, Transform)> = (0..FACES.len())
+        .map(|i| (i, lie(i, 0, 0.08 - 0.05 * i as f32, true)))
+        .collect();
+    cards.push((0, lie(FACES.len(), 0, -0.05, false)));
+    cards.extend((0..10).map(|layer| {
+        let yaw = 0.02 * (layer % 3) as f32;
+        (layer % FACES.len(), lie(FACES.len() + 1, layer, yaw, false))
+    }));
+    for (face, at) in cards {
+        let card = [
+            ("face", faces[face].clone()),
+            ("back", back.clone()),
+            ("edge", edge.clone()),
+        ];
         let whole = props::spawn(&mut commands, &server, props::CARD, &card, at);
         commands.entity(whole).insert(ChildOf(root));
     }
@@ -199,7 +218,7 @@ fn lay_out(
     // The camera frames it as it frames a board.
     let widest = ROW.min(pieces.len()) as f32 * ACROSS;
     built.write(BoardBuilt {
-        size: Vec2::new(widest.max(3.0 * step), depth + front),
+        size: Vec2::new(widest.max(count as f32 * step), depth + front),
     });
 }
 

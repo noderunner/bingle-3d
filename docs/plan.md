@@ -488,6 +488,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     maintainer's choice, over a capstone of Tak's own that was made and dropped).
   - **A playing card**: a blank one of the usual size with a place on each side for a picture
     (a JPEG or a PNG of 5 to 7), and a back to give it until a game brings its own.
+  - **The usual deck's faces**: a PNG for each of the 52 cards of spades, hearts, diamonds and
+    clubs, ace to king, drawn by the pipeline with no picture to start from (`card_faces.py`):
+    the rank and suit in two corners, the suit as many times as the rank counts in the places
+    cards have them, and for a court card a crown, a coronet or a plumed cap in a frame, twice,
+    so it reads the same from either end. The client finds one by the suit's symbol and the
+    rank's label as the server gives them (`props::standard_face`), so no game is named. 1 MB
+    together. No jokers: no game deals one yet.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
 - No game's cards or dice are drawn yet (card zones, below): `props.rs` holds only how the two
   models are read. `--showcase` lays every piece model, the dice and some cards on the table,
@@ -502,8 +509,12 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     time, by a tool the pipeline does not have (Blender's own import reads filled shapes, but
     no text and no strokes), or in the client by a rasteriser such as `resvg`, a dependency to
     weigh. Not decided.
-  - A card with no picture: the generic face, drawn from what the server says a card is (its
-    suit's symbol and its rank), belongs with card zones.
+  - A card with no picture: a card of the usual deck now has one. The generic face of any
+    other card, drawn from what the server says it is (its suit's symbol and its rank), still
+    belongs with card zones; so do a table's card sets (Bingle's ADR 0085), whose art is each
+    client's to draw.
+  - The court cards are plain: what a rank wears, not a figure. Whether they want figures, as
+    printed cards have, is the maintainer's to say.
   - A board of squares is plain wood: light and dark squares, where a game is known by them
     (draughts), would be an appearance's to ask for.
 - **Next**: the maintainer's eye on it, on the GPU; pictures on these games' cards in the main
