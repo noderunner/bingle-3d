@@ -560,6 +560,12 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   stock and carried). Every tile is cut from the same place in the wood: one grain for all,
   for now. Any game whose view tints positions or counts a shared stock gets the same from a
   look of its own.
+- The game's panel says what the seat on impulse is asked in the server's words, for any game
+  whose view says it (`ext.view.impulse`, else `prompt`: Courtfall's "Choose where to lay a
+  tile (Overgrowth 4, Mire 3, Hazard 3 left).", "Choose a Court."), as Bingle's page does:
+  under "Your move." until the player chooses something (then how to go on from there, as
+  before), and under whose move it is for everyone else. A game that says nothing keeps the
+  generic hints.
 - Commercial games are not shown, even when a server offers them, until bingle-3d has a private
   overlay build of its own (as Bingle's ADR 0127). The client may not name them, so it asked
   Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its private

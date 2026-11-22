@@ -172,7 +172,9 @@ A game's own rules and its players' words keep their terms.
   interface is blended in linear light: prefer opaque colours to faint see-through ones.
   `src/families.rs`: the games to start grouped by family, the names of a family and its
   members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
-  beside a watched game.
+  beside a watched game: what the seat on impulse is asked, in the server's words when its
+  view says (`Position::impulse_words`), else generic hints, as also once the player has
+  chosen something (`hint`).
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`).
