@@ -284,12 +284,12 @@ mod tests {
             }
         }
         // A stone is in several games' looks: slate and shell for those played with them (shown
-        // once each, however many games), and Blooms' four minerals.
+        // once each, however many games), Mycelium's jade, and Blooms' four minerals.
         let stones = shown
             .iter()
             .filter(|s| s.model == look::PIECE_MODEL)
             .count();
-        assert_eq!(stones, 6);
+        assert_eq!(stones, 7);
     }
 
     #[test]

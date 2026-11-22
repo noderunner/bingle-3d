@@ -1,0 +1,77 @@
+# How this client draws the games played by placing a stone in a cell, one at a time (Bingle's
+# ADR 0124: the server says what things are, and each client decides how they look). Data only:
+# nothing here changes the rules.
+#
+# Slate and shell stones, as Go's and Hex's, in the cells of the board, each seat's in a turned
+# bowl beside it; Mycelium's green seat plays jade-green stones.
+
+games = [
+    "havannah-4",
+    "havannah-6",
+    "havannah-8",
+    "havannah-10",
+    "mycelium",
+    "mycelium-1.0.0",
+    "reversi",
+    "yavalath",
+]
+
+[pieces.stone]
+model = "models/stone.glb"
+
+[pieces.piece]
+model = "models/stone.glb"
+
+[pieces.disc]
+model = "models/stone.glb"
+
+[pieces.black]
+model = "models/stone.glb"
+
+[pieces.green]
+model = "models/stone.glb"
+
+[bowls]
+model = "models/bowl.glb"
+stones = "models/bowl_stones.glb"
+material = "bowl"
+
+[seats.black]
+pieces = "slate"
+colour = [0.13, 0.13, 0.14]
+
+[seats.white]
+pieces = "shell"
+colour = [0.92, 0.91, 0.87]
+
+[seats.green]
+pieces = "jade"
+colour = [0.36, 0.62, 0.42]
+
+[materials.slate]
+albedo = "textures/stone/slate_albedo.jpg"
+roughness = 0.45
+reflectance = 0.3
+clearcoat = 0.3
+clearcoat_roughness = 0.14
+
+[materials.shell]
+albedo = "textures/stone/shell_albedo.jpg"
+roughness = 0.25
+clearcoat = 0.6
+clearcoat_roughness = 0.08
+translucency = 0.2
+
+# The shell's layered grain, stained a soft jade green and polished.
+[materials.jade]
+albedo = "textures/stone/shell_albedo.jpg"
+tint = [0.42, 0.70, 0.48]
+roughness = 0.3
+clearcoat = 0.6
+clearcoat_roughness = 0.08
+
+[materials.bowl]
+wood = "cherry"
+tint = [0.50, 0.40, 0.36]
+clearcoat = 0.2
+clearcoat_roughness = 0.35

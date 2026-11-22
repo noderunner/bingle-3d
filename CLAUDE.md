@@ -284,7 +284,11 @@ A game's own rules and its players' words keep their terms.
   move being built: what it places as see-through pieces (solid once the move is sent), a piece
   it moves held over its space or carried to where it goes, and what it aims held under the
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
-  then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
+  then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place;
+  off the board (over a panel), what is held under the pointer waits over the board's edge where
+  the pointer is beyond it (`hand::within`, `BoardEdge`), and the arrow is back. Where every
+  click places one stone (Go, Hex, Reversi: `Turn::auto_hand`), the stone is held under the
+  pointer by itself and carried from there to where it is placed.
 - `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down or
   captured, the move sent, the game won or lost), the same for every game (`Cue::default_file`) unless its
   appearance gives others (`[sounds]`). `cues` and `ended`

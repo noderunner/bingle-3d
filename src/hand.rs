@@ -26,6 +26,7 @@ pub struct Hands;
 impl Plugin for HandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PointerOnBoard>()
+            .init_resource::<BoardEdge>()
             .add_message::<Cue>()
             .add_observer(on_move)
             .add_observer(on_over)
@@ -188,6 +189,35 @@ pub struct Held {
     pub scale: f32,
 }
 
+/// The board's outline on the table (x, z): where something held stays, at the edge where the
+/// pointer left the board, while the pointer is off it. Empty with no board.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct BoardEdge(pub Vec<Vec2>);
+
+/// `at` (x, z), kept within a convex `outline`: itself inside it, else the nearest point of its
+/// edge. With no outline, itself.
+pub fn within(outline: &[Vec2], at: Vec2) -> Vec2 {
+    let n = outline.len();
+    if n < 3 {
+        return at;
+    }
+    // Inside: on the same side of every edge (either way round).
+    let sides: Vec<f32> = (0..n)
+        .map(|i| (outline[(i + 1) % n] - outline[i]).perp_dot(at - outline[i]))
+        .collect();
+    if sides.iter().all(|s| *s >= 0.0) || sides.iter().all(|s| *s <= 0.0) {
+        return at;
+    }
+    (0..n)
+        .map(|i| {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            let along = (at - a).dot(b - a) / (b - a).length_squared().max(1e-12);
+            a + (b - a) * along.clamp(0.0, 1.0)
+        })
+        .min_by(|p, q| p.distance_squared(at).total_cmp(&q.distance_squared(at)))
+        .unwrap_or(at)
+}
+
 /// Where the pointer is over the board, while it is: what it is on (a space or a piece), and
 /// where it looks from, both in the world.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
@@ -332,14 +362,36 @@ fn carry(
 fn hold(
     time: Res<Time>,
     on: Res<PointerOnBoard>,
+    edge: Res<BoardEdge>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>,
     mut held: Query<(&Held, &mut Transform, &mut Visibility)>,
 ) {
     for (held, mut t, mut vis) in &mut held {
-        let Some((hit, eye)) = on.0 else {
-            vis.set_if_neq(Visibility::Hidden);
+        let at = match on.0 {
+            Some((hit, eye)) => Some(on_surface(hit, eye, held.board)),
+            // Off the board (over a panel, say): over the board's edge where the pointer is
+            // beyond it, so it waits there for the pointer to come back.
+            None => (|| {
+                let cursor = windows.single().ok()?.cursor_position()?;
+                let (camera, eye) = cameras.iter().find(|(c, _)| c.is_active)?;
+                let ray = camera.viewport_to_world(eye, cursor).ok()?;
+                let down = ray.direction.y;
+                if down.abs() < 1e-6 {
+                    return None;
+                }
+                let along = (held.board - ray.origin.y) / down;
+                (along > 0.0).then(|| {
+                    let on = ray.origin + *ray.direction * along;
+                    let kept = within(&edge.0, on.xz());
+                    Vec3::new(kept.x, held.board, kept.y)
+                })
+            })(),
+        };
+        // Nowhere to say (the pointer out of the window): it stays where it was.
+        let Some(at) = at else {
             continue;
         };
-        let at = on_surface(hit, eye, held.board);
         let up = held.lift + bob(time.elapsed_secs()) * held.scale;
         let wanted = at + Vec3::Y * up;
         if *vis == Visibility::Hidden {
@@ -372,6 +424,34 @@ mod tests {
     use super::*;
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
+
+    #[test]
+    fn something_held_off_the_board_stays_over_its_edge_where_the_pointer_is() {
+        let square = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .map(|(x, z)| Vec2::new(x * 0.1, z * 0.1))
+            .to_vec();
+        assert_eq!(
+            within(&square, Vec2::new(0.05, 0.02)),
+            Vec2::new(0.05, 0.02)
+        );
+        let near = |a: Vec2, b: Vec2| a.distance(b) < 1e-6;
+        assert!(
+            near(within(&square, Vec2::new(0.3, 0.02)), Vec2::new(0.1, 0.02)),
+            "beyond a side"
+        );
+        assert!(
+            near(within(&square, Vec2::new(0.3, -0.4)), Vec2::new(0.1, -0.1)),
+            "a corner"
+        );
+        // Wound the other way round, the same.
+        let mut back = square.clone();
+        back.reverse();
+        assert!(near(
+            within(&back, Vec2::new(-0.5, 0.0)),
+            Vec2::new(-0.1, 0.0)
+        ));
+        assert_eq!(within(&[], Vec2::ONE), Vec2::ONE, "no board");
+    }
 
     #[test]
     fn a_held_piece_bobs_gently_about_its_height() {
@@ -614,12 +694,16 @@ mod tests {
         );
         assert!(!app.world().get::<CursorOptions>(window).unwrap().visible);
 
+        // Off the board (over a panel): it stays over the board, and the pointer's own arrow
+        // is back. (No window cursor here to say where: where it was.)
         app.world_mut().resource_mut::<PointerOnBoard>().0 = None;
         app.update();
         assert_eq!(
             app.world().get::<Visibility>(held),
-            Some(&Visibility::Hidden)
+            Some(&Visibility::Inherited)
         );
+        let still = app.world().get::<Transform>(held).unwrap().translation;
+        assert!(still.xz().distance(t.xz()) < 1e-6);
         assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
 
         // Nothing held: the cursor is the pointer's own, on the board or off it.

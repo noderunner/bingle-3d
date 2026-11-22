@@ -38,7 +38,7 @@ use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
+use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
@@ -407,6 +407,9 @@ struct Kit {
     beside: f32,
     /// How walls between positions are drawn and put down, for a game whose look has fences.
     fences: Option<FenceKit>,
+    /// The board's playing area's outline (its cells', or its points'), for what is held to
+    /// stay over while the pointer is off the board.
+    edge: Vec<Vec2>,
     /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
@@ -762,6 +765,7 @@ fn sync_board(
         for (root, ..) in &roots {
             commands.entity(root).despawn();
         }
+        commands.insert_resource(BoardEdge::default());
         return;
     };
     let current = roots
@@ -788,6 +792,7 @@ fn sync_board(
             woodwork: Vec::new(),
         };
         let kit = build_board(&mut commands, &mut tools, table, &layout);
+        commands.insert_resource(BoardEdge(kit.1.edge.clone()));
         // Framed with the player's tray in front of it, if it has one.
         let extra = (kit.1.front - layout.size.y / 2.0).max(0.0);
         built.write(BoardBuilt {
@@ -1123,15 +1128,18 @@ fn build_board(
         .map(|c| Vec2::new(c.x, c.z))
         .collect();
     let corners = slab::cell_corners(shape, pitch);
-    let outline = match surface {
-        Surface::Cells(_) => {
-            let points: Vec<Vec2> = centres
+    let playing = match surface {
+        Surface::Cells(_) => slab::hull(
+            &centres
                 .iter()
                 .flat_map(|c| corners.iter().map(move |k| *c + *k))
-                .collect();
-            slab::grown(&slab::hull(&points), pitch * MARGIN, 6)
-        }
-        Surface::Points => slab::grown(&slab::hull(&centres), pitch * POINTS_MARGIN, 6),
+                .collect::<Vec<_>>(),
+        ),
+        Surface::Points => slab::hull(&centres),
+    };
+    let outline = match surface {
+        Surface::Cells(_) => slab::grown(&playing, pitch * MARGIN, 6),
+        Surface::Points => slab::grown(&playing, pitch * POINTS_MARGIN, 6),
     };
     let rim = Rim {
         height: BOARD_HEIGHT,
@@ -1673,6 +1681,7 @@ fn build_board(
         .map(|p| (p.id.clone(), p.pool.clone()))
         .collect();
     let kit = Kit {
+        edge: playing,
         fences,
         supply,
         pools,
@@ -2019,15 +2028,17 @@ fn facings(info: &GameInfo) -> HashMap<String, f32> {
 /// piece is in hand), and shows the move being built: each piece it moves, held or put down;
 /// what it puts down new, see-through; and what it aims, held under the pointer.
 #[allow(clippy::too_many_arguments)]
+/// What the move aims, held under the pointer (not a fence, nor a stone in hand).
+type AimedHeld<'w, 's> = Query<'w, 's, Entity, (With<Held>, Without<HeldFence>, Without<FromBowl>)>;
+
 fn show_turn(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
-    ghosts: Query<Entity, With<Ghost>>,
     mut pieces: Query<(Entity, &PieceAt, &mut Spot, Option<&Carry>)>,
-    held: Query<Entity, (With<Held>, Without<HeldFence>)>,
+    (ghosts, held, in_flight): (Query<Entity, With<Ghost>>, AimedHeld, Query<&FromBowl>),
 ) {
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
@@ -2226,7 +2237,8 @@ fn show_turn(
     let in_hand = turn
         .in_hand_choice()
         .and_then(|g| kit.source_for(g, colour))
-        .map(|(_, piece)| piece);
+        .map(|(_, piece)| piece)
+        .or_else(|| turn.auto_hand().map(String::from));
     if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
         && turn.arriving(cell).is_some()
         && (in_hand.is_some()
@@ -2242,7 +2254,16 @@ fn show_turn(
         .filter(|s| kit.source_of_placing(s, colour).is_some())
         .filter_map(|s| s.to.as_deref())
         .collect();
-    shown.retain(|cell| !from_bowls.contains(cell));
+    // Nor is what the stone held under the pointer is carried to (it is about to be, this frame).
+    let from_hand = in_flight
+        .iter()
+        .any(|f| f.source == HAND && f.cell.is_none());
+    shown.retain(|cell| {
+        let made = turn.placings().any(|s| s.to.as_deref() == Some(*cell));
+        !from_bowls.contains(cell)
+            && !in_flight.iter().any(|f| f.cell.as_deref() == Some(*cell))
+            && !(made && from_hand)
+    });
     for cell in shown {
         let Some(centre) = layout.centres.get(cell) else {
             continue;
@@ -2306,6 +2327,9 @@ struct FromBowl {
     cell: Option<String>,
 }
 
+/// The source of the stone a turn holds by itself in a game with no bowl to take it from.
+const HAND: &str = "hand";
+
 /// The colour word the pieces this client's seat places are played in: its own, but in an
 /// opening in which each seat places another's (Tak's first stones), the other seat's.
 fn placing_colour(table: &Table) -> &str {
@@ -2368,6 +2392,7 @@ fn bowl_stones(
     let placing = placing_colour(table);
     let layout = Layout::new(&table.info.board.positions);
     let cells = &table.state.state.cells;
+    let had_hand = left.iter().any(|(_, f)| f.source == HAND);
     let mut take = |found: &dyn Fn(&FromBowl) -> bool| -> Option<(Entity, FromBowl)> {
         let i = left.iter().position(|(_, f)| found(f))?;
         Some(left.remove(i))
@@ -2405,7 +2430,11 @@ fn bowl_stones(
         let Some(centre) = layout.centres.get(cell) else {
             continue;
         };
-        let Some((source, id)) = kit.source_of_placing(s, yours) else {
+        // From a bowl or the supply, or else the stone that was held under the pointer.
+        let Some((source, id)) = kit
+            .source_of_placing(s, yours)
+            .or_else(|| had_hand.then(|| (HAND.to_string(), s.piece.clone().unwrap_or_default())))
+        else {
             continue;
         };
         let id = id.as_str();
@@ -2426,13 +2455,19 @@ fn bowl_stones(
             cell: Some(cell.to_string()),
         };
         match take(&|f| f.cell.is_none() && f.source == source) {
-            // The piece in hand goes on from where it waits, as the kind placed.
+            // The piece in hand goes on from where it waits (or from under the pointer), as the
+            // kind placed.
             Some((entity, held)) => {
                 let mut e = commands.entity(entity);
                 if held.piece != id {
                     e.insert(looks(id));
                 }
-                e.insert((placed, Carry::Put(to)));
+                e.remove::<Held>().insert((
+                    placed,
+                    Rest(to),
+                    Carry::Put(to),
+                    Visibility::Inherited,
+                ));
             }
             None => {
                 let at = over(&source);
@@ -2448,7 +2483,35 @@ fn bowl_stones(
             }
         }
     }
-    if let Some((source, id)) = turn.in_hand_choice().and_then(|g| kit.source_for(g, yours)) {
+    // The stone a turn holds by itself (every click places one): under the pointer, in place of
+    // its arrow, from its bowl's source if it has one.
+    if let Some(piece) = turn.auto_hand() {
+        let source = kit
+            .source_for(&Gesture::piece(piece), yours)
+            .map_or_else(|| HAND.to_string(), |(s, _)| s);
+        let held = FromBowl {
+            source: source.clone(),
+            piece: piece.to_string(),
+            cell: None,
+        };
+        if take(&|f| f.cell.is_none() && f.source == source).is_none() {
+            let kind = kit.piece(piece);
+            commands.spawn((
+                Name::new(format!("{piece} under the pointer")),
+                held,
+                looks(piece),
+                Held {
+                    board: kit.surface,
+                    lift: (LIFT - kind.foot) * kit.scale,
+                    scale: kit.scale,
+                },
+                Transform::from_scale(Vec3::splat(kit.scale)),
+                Visibility::Hidden,
+                ChildOf(root),
+            ));
+        }
+    } else if let Some((source, id)) = turn.in_hand_choice().and_then(|g| kit.source_for(g, yours))
+    {
         let id = id.as_str();
         let held = FromBowl {
             source: source.clone(),
@@ -4163,6 +4226,55 @@ mod tests {
                 0,
                 "nothing lit once it is down"
             );
+        }
+
+        #[test]
+        fn a_stone_is_held_under_the_pointer_and_carried_from_there_where_it_is_placed() {
+            // Go, with its bowls, and a game with no look of its own: the same.
+            for id in ["go-9x9", "g"] {
+                let mut app = with_looks();
+                let mut table = grid_table(id, &[]);
+                table.game.seats = vec![crate::net::api::GameSeat {
+                    seat: 1,
+                    color: "white".into(),
+                    name: "Ana".into(),
+                    bot: String::new(),
+                    yours: true,
+                }];
+                app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+                app.update();
+                let mut options: Vec<_> = ["a1", "b2"]
+                    .iter()
+                    .map(|c| {
+                        let mut o = option(&[("piece", "stone"), ("pos", c)], None);
+                        o.to = Some(c.to_string());
+                        o
+                    })
+                    .collect();
+                options.push(option(&[("action", "pass")], None));
+                app.world_mut().resource_mut::<WatchStatus>().turn = Some(tak_turn(options));
+                app.update();
+                let mut q = app.world_mut().query_filtered::<&FromBowl, With<Held>>();
+                let held = q
+                    .single(app.world())
+                    .unwrap_or_else(|_| panic!("{id}: a stone held"));
+                assert_eq!(held.piece, "stone", "{id}");
+                // Placed on b2: carried there from under the pointer, solid, no ghost over it.
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                let outcome = watch.turn.as_mut().unwrap().gesture(&Gesture::pos("b2"));
+                assert_eq!(outcome, crate::play::Outcome::Ask, "{id}");
+                app.update();
+                let mut q = app.world_mut().query::<(&FromBowl, &Carry, Has<Held>)>();
+                let (placed, carry, held) = q.single(app.world()).unwrap();
+                assert_eq!(placed.cell.as_deref(), Some("b2"), "{id}");
+                assert!(matches!(carry, Carry::Put(_)) && !held, "{id}");
+                let mut q = app.world_mut().query_filtered::<(), With<Ghost>>();
+                assert_eq!(
+                    q.iter(app.world()).count(),
+                    0,
+                    "{id}: no see-through stone on it"
+                );
+            }
         }
 
         #[test]

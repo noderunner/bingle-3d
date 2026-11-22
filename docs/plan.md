@@ -531,6 +531,18 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   selection does not say what it adds); with a pawn in hand, a see-through pawn.
   Which action builds on which side is the look's (`[fences] sides`: the API names the actions
   but not their sides). The panel's fence buttons still work.
+- Games of placing a stone (Go, Gomoku, Pente, Meridians, Hex, Havannah, Mycelium, Reversi,
+  Yavalath) play alike: each seat's stones in a turned bowl beside the board (the looks:
+  `points.toml`, `hex.toml`, and `stones.toml` for the rest, slate and shell, and jade for
+  Mycelium's green), and on the player's turn the pointer is the stone, floating and bobbing as
+  Amazons' arrow and Fendo's fence are, with a see-through stone on the point or cell under it;
+  a click carries it there. This is the default for any game whose every click places one stone
+  (`Turn::auto_hand`: the same choices before one click, nothing after, nothing moved), look or
+  no look; a pass or a swap stays on the panel. When the pointer leaves the board (for a panel),
+  whatever is held under it (stone, arrow or fence) waits floating over the board's edge where
+  the pointer is beyond it, and the pointer's own arrow comes back; back over the board, it is
+  the stone again. Which games have bowls is each look's: the definitions do not say which games
+  are of this kind (two have their rules in Go and name no placing action).
 - Commercial games are not shown, even when a server offers them, until bingle-3d has a private
   overlay build of its own (as Bingle's ADR 0127). The client may not name them, so it asked
   Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its private
