@@ -49,7 +49,7 @@ files![
     "models/tak/wall.glb",
     "pictures/cards/points.jpg",
     "sounds/chime.ogg",
-    "sounds/clack.ogg",
+    "sounds/thump.ogg",
     "sounds/tick.ogg",
     "textures/cards/back_albedo.jpg",
     "textures/cards/faces/clubs_10_albedo.png",

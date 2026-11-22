@@ -11,11 +11,12 @@ games = ["amazons", "amazons-6"]
 # While a move is built, its arrow is shown as an arrow is.
 aimed = "arrow"
 
-# Wood on wood (`assets-src/sounds/sounds.py`): a tap as a queen is picked up, a clack as it is
-# set down where it goes or an arrow lands, and two marimba notes as the move is played.
+# Synthesised (`assets-src/sounds/sounds.py`): a tap of wood as a queen is picked up, a soft
+# thump (a die dropped on felt) as it is set down where it goes or an arrow lands, and two
+# marimba notes as the move is played.
 [sounds]
 lift = "sounds/tick.ogg"
-put = "sounds/clack.ogg"
+put = "sounds/thump.ogg"
 play = "sounds/chime.ogg"
 
 [board]

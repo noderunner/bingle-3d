@@ -69,16 +69,16 @@ def tick():
     return normalised(out, -14.0)
 
 
-def clack():
-    """A piece set down: a wooden piece on a wooden board, the board's body under its click."""
-    out = silence(0.26)
-    ring(
-        out,
-        0.0,
-        [(205, 0.055, 0.7), (612, 0.045, 1.0), (1390, 0.03, 0.6), (2650, 0.018, 0.35)],
-    )
-    strike(out, 0.0, 0.005, 0.9, 0.35)
-    return normalised(out, -7.0)
+def thump():
+    """A piece set down: soft, as a die dropped on a felt-covered table. Mostly a muffled burst
+    of noise over a low body that dies at once, with nothing left ringing, and a faint bounce."""
+    out = silence(0.14)
+    strike(out, 0.0, 0.016, 1.0, 0.07)
+    ring(out, 0.0, [(140, 0.018, 0.9), (290, 0.009, 0.35)])
+    # The bounce: a tenth as loud, a moment later.
+    strike(out, 0.045, 0.008, 0.18, 0.06)
+    ring(out, 0.045, [(160, 0.008, 0.12)])
+    return normalised(out, -11.0)
 
 
 def chime():
@@ -120,7 +120,7 @@ def write(name, samples):
 
 
 if __name__ == "__main__":
-    for name, make in [("tick", tick), ("clack", clack), ("chime", chime)]:
+    for name, make in [("tick", tick), ("thump", thump), ("chime", chime)]:
         # Each its own noise, the same every time.
         random.seed(name)
         write(name, make())

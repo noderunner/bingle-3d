@@ -59,7 +59,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `piece_previews` | `target/asset-previews/{chess,checkers,tak,cards-dice,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card and the die in their generic look, `src/look.rs`, with two of the usual deck's faces); `PIECE_VIEWS=chess,tak` renders only those |
 | `garden_previews` | `target/asset-previews/garden-*.png`, not shipped | Cycles, the garden from the client's camera at a few places, and from high above (`GARDEN_VIEWS=garden-seat,garden-plan` renders only those) |
 
-The sounds (`sounds/{tick,clack,chime}.ogg`) are not Blender's: `python3
+The sounds (`sounds/{tick,thump,chime}.ogg`) are not Blender's: `python3
 assets-src/sounds/sounds.py`, on the host, synthesises them (wood's modes, decaying sine waves
 over a burst of noise, with Python's standard library) and encodes them as Ogg Vorbis with
 ffmpeg, bit-exactly, so the same script makes the same files.
