@@ -124,7 +124,9 @@ These are Bingle's decisions; the client is built around them, not around changi
   with generic defaults; a per-game appearance improves that and is never required.
 - **No game is named in shared code.** Game-specific looks live in per-game appearance files.
 - **Commercial games stay out of this repository**
-  ([ADR 0127](https://github.com/noderunner/bingle/blob/main/docs/decisions/0127-commercial-games-in-a-private-overlay.md)).
+  ([ADR 0127](https://github.com/noderunner/bingle/blob/main/docs/decisions/0127-commercial-games-in-a-private-overlay.md)). A server marks the games it builds from its
+  private overlay `private` (API 1.8); this build leaves them out of every list
+  (`session::public`), until the client has a private build of its own.
   Their appearance is loaded from a folder at run time (plan, decision 2). Never add their names,
   art, models or rules text here, not even in a test.
 - **The connection must be secure**

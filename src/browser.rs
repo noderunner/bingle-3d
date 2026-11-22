@@ -1347,6 +1347,7 @@ mod tests {
             prototype: false,
             version: "1.0.0".into(),
             tutorials: 0,
+            private: false,
         };
         let defs = [def("a"), def("b")];
         let family = &families(&defs)[0];
@@ -1471,6 +1472,7 @@ mod tests {
             prototype: true,
             version: "1.0.0".into(),
             tutorials: 0,
+            private: false,
         };
         assert_eq!(
             describe_def("Solitaire", &def),

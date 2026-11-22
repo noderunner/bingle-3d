@@ -8,7 +8,7 @@
 //! of the guest key. When the server no longer knows the token (it expired, or the account signed
 //! out everywhere or changed its password), the client forgets it and goes on as a guest.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -174,6 +174,9 @@ pub struct Session {
     session_ended: bool,
     /// The server's bots, once read; nor do they.
     bots: Option<Vec<BotInfo>>,
+    /// The games built from the server's private overlay (commercial games), by id: left out
+    /// of every list this build shows (`public`).
+    hidden: HashSet<String>,
 }
 
 impl Session {
@@ -191,6 +194,7 @@ impl Session {
             bots: None,
             account: None,
             session_ended: false,
+            hidden: HashSet::new(),
         }
     }
 
@@ -312,14 +316,15 @@ impl Session {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let (index, api_version) = self.index(&url)?;
         self.check_account(&url)?;
-        let defs: Vec<GameDef> = self.get_as_me(&url, "/api/game-defs")?;
+        let (defs, hidden) = public(self.get_as_me(&url, "/api/game-defs")?);
+        self.hidden = hidden;
         let games: OpenGames = self.get_as_me(&url, "/api/games")?;
         Ok(Snapshot {
             server: url.to_string(),
             version: index.version,
             api_version,
             defs,
-            games: games.games,
+            games: self.shown(games.games),
             account: self.account.clone(),
             session_ended: std::mem::take(&mut self.session_ended),
         })
@@ -768,7 +773,15 @@ impl Session {
     pub fn games(&mut self, query: &GameQuery) -> Result<Vec<OpenGame>, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let list: OpenGames = self.get_as_me(&url, &games_path(query))?;
-        Ok(list.games)
+        Ok(self.shown(list.games))
+    }
+
+    /// The games of these that this build shows: none of a private game.
+    fn shown(&self, games: Vec<OpenGame>) -> Vec<OpenGame> {
+        games
+            .into_iter()
+            .filter(|g| !self.hidden.contains(&g.game_def_id))
+            .collect()
     }
 
     /// Takes an open seat in the game in this room, if it is waiting for players and this client
@@ -1282,6 +1295,14 @@ pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGam
 }
 
 /// `GET /api/games` for `query`, with as many games as the server lists at once.
+/// The games this build shows, and the ids of those it leaves out: the server's private
+/// overlay's (commercial games, which bingle-3d leaves to a private build of its own; Bingle's
+/// ADR 0127). A public server marks none.
+pub fn public(defs: Vec<GameDef>) -> (Vec<GameDef>, HashSet<String>) {
+    let (hidden, shown): (Vec<GameDef>, Vec<GameDef>) = defs.into_iter().partition(|d| d.private);
+    (shown, hidden.into_iter().map(|d| d.id).collect())
+}
+
 pub fn games_path(query: &GameQuery) -> String {
     let mut path = "/api/games?limit=60".to_string();
     if let Some(family) = &query.family {
@@ -1427,7 +1448,35 @@ pub(crate) mod tests {
         (addr, seen)
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.6.0","docs":"/api/docs"}"#;
+    #[test]
+    fn a_private_game_and_its_tables_are_left_out_of_the_lists() {
+        let def = |id: &str, private: bool| GameDef {
+            id: id.into(),
+            name: id.into(),
+            seats_required: 2,
+            family: None,
+            description: String::new(),
+            prototype: false,
+            version: "1.0.0".into(),
+            tutorials: 0,
+            private,
+        };
+        let (shown, hidden) = public(vec![def("hex", false), def("p", true), def("go", false)]);
+        let ids: Vec<&str> = shown.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["hex", "go"]);
+        assert_eq!(hidden, HashSet::from(["p".to_string()]));
+        // A public server marks none.
+        assert!(public(vec![def("hex", false)]).1.is_empty());
+        // Read from the server: absent is public.
+        let read: Vec<GameDef> = serde_json::from_str(
+            r#"[{"id":"a","name":"A","seats_required":2},
+                {"id":"b","name":"B","seats_required":2,"private":true}]"#,
+        )
+        .unwrap();
+        assert_eq!(public(read).1, HashSet::from(["b".to_string()]));
+    }
+
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.8.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1465,7 +1514,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.6.0");
+        assert_eq!(probe.api_version, "1.8.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1510,7 +1559,7 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.6.0");
+        assert_eq!(snap.api_version, "1.8.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
