@@ -1690,7 +1690,7 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.6.0".into(),
+                api_version: "1.8.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
                 account: None,

@@ -13,10 +13,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
 /// 1.2 the regions each seat must connect (`goals`), 1.4 the lobby's calls (`start`, `seat`,
 /// `leave`, `remove`, `bots`) to the schema, 1.5 the sign-in that answers with a session
-/// token, for a client that is not a browser, and 1.6 voice chat's calls and events.
+/// token, for a client that is not a browser, 1.6 voice chat's calls and events, and 1.8 the
+/// games built from the server's private overlay marked `private`.
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 6,
+    minor: 8,
     patch: 0,
 };
 
@@ -439,6 +440,9 @@ pub struct GameDef {
     /// How many tutorials the game has.
     #[serde(default)]
     pub tutorials: u32,
+    /// Built from the server's private overlay (a commercial game): this build does not show it.
+    #[serde(default)]
+    pub private: bool,
 }
 
 /// `GET /api/games`.
@@ -1220,8 +1224,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.6.0")), Compatible);
-        assert_eq!(compatibility(Some("1.7.2")), Compatible);
+        assert_eq!(compatibility(Some("1.8.0")), Compatible);
+        assert_eq!(compatibility(Some("1.9.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.7.3")),
+            ServerTooOld(Some("1.7.3".into())),
+            "1.7 does not mark private games"
+        );
         assert_eq!(
             compatibility(Some("1.0.9")),
             ServerTooOld(Some("1.0.9".into())),
@@ -1316,7 +1325,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.6.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.8.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
