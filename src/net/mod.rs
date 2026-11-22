@@ -1599,6 +1599,8 @@ mod tests {
             notation: cell.into(),
             action: "place".into(),
             to: Some(cell.into()),
+            from: None,
+            piece: Some("stone".into()),
             gestures: vec![
                 Gesture {
                     kind: "piece".into(),

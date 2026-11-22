@@ -48,18 +48,25 @@ pub struct StartView(pub Option<OrbitCamera>);
 
 impl StartView {
     /// `YAW,PITCH,RADIUS`: degrees round the table (0 is the player's side), degrees above it,
-    /// and metres from its middle.
+    /// and metres from what it looks at: the table's middle, or with `,X,Z` after those, the
+    /// place on the table that many metres to the right of its middle and towards the player.
     pub fn parse(text: &str) -> Result<OrbitCamera, String> {
         let numbers: Vec<f32> = text
             .split(',')
             .map(|n| n.trim().parse::<f32>())
             .collect::<Result<_, _>>()
-            .map_err(|_| format!("{text:?} is not YAW,PITCH,RADIUS"))?;
-        let [yaw, pitch, radius] = numbers[..] else {
-            return Err(format!("{text:?} is not YAW,PITCH,RADIUS"));
+            .map_err(|_| format!("{text:?} is not YAW,PITCH,RADIUS or YAW,PITCH,RADIUS,X,Z"))?;
+        let (yaw, pitch, radius, focus) = match numbers[..] {
+            [yaw, pitch, radius] => (yaw, pitch, radius, Vec3::ZERO),
+            [yaw, pitch, radius, x, z] => (yaw, pitch, radius, Vec3::new(x, 0.0, z)),
+            _ => {
+                return Err(format!(
+                    "{text:?} is not YAW,PITCH,RADIUS or YAW,PITCH,RADIUS,X,Z"
+                ));
+            }
         };
         let mut orbit = OrbitCamera {
-            focus: Vec3::ZERO,
+            focus,
             radius,
             yaw: 0.0,
             pitch: 0.0,
@@ -428,6 +435,11 @@ mod tests {
         );
         assert!(StartView::parse("1,2").is_err());
         assert!(StartView::parse("a,b,c").is_err());
+        // And where on the table it looks, when that is not its middle.
+        let aside = StartView::parse("0,40,0.3,0.1,-0.05").unwrap();
+        assert_eq!(aside.focus, Vec3::new(0.1, 0.0, -0.05));
+        assert_eq!(aside.radius, 0.3);
+        assert!(StartView::parse("0,40,0.3,0.1").is_err());
     }
 
     #[test]

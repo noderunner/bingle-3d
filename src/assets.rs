@@ -17,8 +17,12 @@ macro_rules! files {
 }
 
 files![
+    "appearance/chessmen.toml",
+    "appearance/draughts.toml",
+    "appearance/fist.toml",
     "appearance/hex.toml",
     "appearance/points.toml",
+    "appearance/tak.toml",
     "environment/garden_diffuse.ktx2",
     "environment/garden_sky.ktx2",
     "environment/garden_specular.ktx2",
@@ -29,8 +33,22 @@ files![
     "environments/room.toml",
     "models/bowl.glb",
     "models/bowl_stones.glb",
+    "models/card.glb",
+    "models/checkers/king.glb",
+    "models/checkers/man.glb",
+    "models/chess/bishop.glb",
+    "models/chess/king.glb",
+    "models/chess/knight.glb",
+    "models/chess/pawn.glb",
+    "models/chess/queen.glb",
+    "models/chess/rook.glb",
+    "models/die.glb",
     "models/stone.glb",
+    "models/tak/cap.glb",
+    "models/tak/flat.glb",
+    "models/tak/wall.glb",
     "pictures/cards/points.jpg",
+    "textures/cards/back_albedo.jpg",
     "textures/engraving/glyphs_albedo.png",
     "textures/engraving/glyphs_normal.png",
     "textures/garden/bamboo_albedo.png",
@@ -105,6 +123,51 @@ pub fn text(file: &str) -> Option<&'static str> {
         .and_then(|(_, bytes)| std::str::from_utf8(bytes).ok())
 }
 
+/// The JSON part of one of our models: a binary glTF file is a 12-byte header, then chunks,
+/// each its length, its kind and its bytes, the JSON first.
+fn model_json(file: &str) -> Option<serde_json::Value> {
+    let bytes = FILES.iter().find(|(f, _)| *f == file)?.1;
+    if bytes.get(..4)? != b"glTF" || bytes.get(16..20)? != b"JSON" {
+        return None;
+    }
+    let length = u32::from_le_bytes(bytes.get(12..16)?.try_into().ok()?) as usize;
+    serde_json::from_slice(bytes.get(20..20 + length)?).ok()
+}
+
+/// How low and how high a model's first mesh reaches (y), in metres: where its foot is, to
+/// stand it on something, and how much it raises what stands on it.
+pub fn model_span(file: &str) -> Option<(f32, f32)> {
+    let doc = model_json(file)?;
+    let mut span: Option<(f32, f32)> = None;
+    for part in doc["meshes"][0]["primitives"].as_array()? {
+        // glTF gives every accessor of positions its least and greatest values.
+        let positions = &doc["accessors"][part["attributes"]["POSITION"].as_u64()? as usize];
+        let low = positions["min"][1].as_f64()? as f32;
+        let high = positions["max"][1].as_f64()? as f32;
+        span = Some(span.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
+    }
+    span
+}
+
+/// The parts of a model's first mesh, in order, each by the name of its material: a card's
+/// face, back and edge. A model with no materials has one part, with no name.
+pub fn model_parts(file: &str) -> Vec<String> {
+    let Some(doc) = model_json(file) else {
+        return Vec::new();
+    };
+    let name = |part: &serde_json::Value| {
+        part["material"]
+            .as_u64()
+            .and_then(|m| doc["materials"][m as usize]["name"].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    doc["meshes"][0]["primitives"]
+        .as_array()
+        .map(|parts| parts.iter().map(name).collect())
+        .unwrap_or_default()
+}
+
 pub struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
@@ -148,6 +211,23 @@ mod tests {
         let mut listed: Vec<String> = FILES.iter().map(|(f, _)| f.to_string()).collect();
         listed.sort();
         assert_eq!(found, listed, "list each file of assets/ in FILES");
+    }
+
+    #[test]
+    fn a_model_says_how_tall_it_is_and_what_its_parts_are() {
+        // The stone is centred on its middle, 8.8 mm thick.
+        let (low, high) = model_span("models/stone.glb").unwrap();
+        assert!((low + 0.0044).abs() < 1e-5 && (high - 0.0044).abs() < 1e-5);
+        assert_eq!(model_parts("models/stone.glb"), [""]);
+        assert_eq!(model_parts("models/card.glb"), ["face", "back", "edge"]);
+        assert_eq!(model_span("appearance/hex.toml"), None, "not a model");
+        assert_eq!(model_span("models/nothing.glb"), None);
+        assert!(model_parts("models/nothing.glb").is_empty());
+        // Every model can be stood on the table.
+        for (file, _) in FILES.iter().filter(|(f, _)| f.starts_with("models/")) {
+            let (low, high) = model_span(file).unwrap_or_else(|| panic!("{file}"));
+            assert!(high > low, "{file}");
+        }
     }
 
     #[test]

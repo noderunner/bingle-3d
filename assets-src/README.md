@@ -7,6 +7,7 @@ changed by a person or an agent, and made again (plan, decision 8).
 bash scripts/assets.sh                 # every step (the table below)
 bash scripts/assets.sh stones          # one step
 bash scripts/assets.sh previews        # render the assets in Cycles, to look at
+bash scripts/assets.sh piece_previews  # the same for the chessmen, checkers, Tak, cards and dice
 bash scripts/assets.sh garden_previews # the same for the garden, from where a player sits
 ```
 
@@ -46,9 +47,15 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `cards` | `pictures/cards/points.jpg`: the picture on the cards of the games played on a square board's points, in the client's main screen | Cycles, 512 × 512: a teak board of nine lines by nine with its star points, and slate and shell stones from `assets/appearance/points.toml`, from the player's side |
 | `surfaces` | `textures/garden/*`: what the garden is made of | scanned surfaces resized as the woods are (tatami, hinoki, linen, moss, cut stone, bark, a bamboo fence, the rocks' own); and, drawn with numpy, the raked gravel (a scan of gravel with a furrow's shape laid over it), the water's ripples, a bamboo cane, clipped shrubs' leaves, sprays of maple and bamboo leaves cut out (PNG with alpha), and the trees and hills beyond the fence |
 | `tableware` | `models/bowl.glb`, `models/bowl_stones.glb`: a turned bowl, and the heap of stones in it | the bowl's profile, turned; the board's stone with few triangles, three dozen of them heaped |
+| `chessmen` | `models/chess/{king,queen,bishop,knight,rook,pawn}.glb`: a set of chessmen of the usual pattern, the king 46 mm tall | five turned from profiles written in `chessmen.py`, with what a lathe cannot do added after (the rook's battlements, the queen's coronet, the cut in the bishop's mitre, the king's cross); the knight's head from an outline of its side, given a carved head's thickness, with a mane, an eye and a mouth cut in |
+| `checkers` | `models/checkers/{man,king}.glb`: a wooden draughtsman, and a king, which is two | a profile turned, its edge milled |
+| `tak` | `models/tak/{flat,wall,cap}.glb`: a square block lying flat, the same block on its edge, and a capstone | a box with its edges eased; a profile turned |
+| `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
+| `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
 | `garden_light` | `environment/garden_{diffuse,specular,sky}.ktx2`: the garden's light, and its sky | Cycles renders the garden from just above the table, all the way round, under the sun and sky that `assets/environments/garden.toml` gives the client; that panorama is filtered as the room's photograph is. The sky is a photograph (pure sky, no ground), turned to put its sun where the garden's is, with the sun itself clipped out |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
+| `piece_previews` | `target/asset-previews/{chess,checkers,tak,cards-dice,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card and the die in their generic look, `src/look.rs`); `PIECE_VIEWS=chess,tak` renders only those |
 | `garden_previews` | `target/asset-previews/garden-*.png`, not shipped | Cycles, the garden from the client's camera at a few places, and from high above (`GARDEN_VIEWS=garden-seat,garden-plan` renders only those) |
 
 How the client reads them:
@@ -61,11 +68,55 @@ How the client reads them:
 - **Textures** are JPEG, and the client makes their mipmaps when they load
   (`src/textures.rs`); a colour texture's name ends in `_albedo`, which is how it is read as
   sRGB.
-- **Models** are glTF, in metres, centred on their middle, made for a 28 mm cell; the first
-  mesh is used.
+- **Models** are glTF, in metres, made for a 28 mm cell; the first mesh is used. The client
+  reads how low and how high a model reaches from its file (`assets::model_span`): a piece is
+  stood by its foot, and what is on it in a stack is raised by its height, so nothing else
+  says how tall it is. The pieces here are centred on their middle. One with a face (a knight)
+  looks to the far side of the table, +y in Blender: the client turns it for its seat.
+- **A model of several parts** (a card's face, back and edge; a die's body and pips) has a
+  material slot for each and is exported with them (`meshkit.export_glb(…, materials=True)`),
+  so each part carries a name: the client gives each name a material (`props::spawn`).
 - **Materials** are not in the models: an appearance file (`assets/appearance/*.toml`) or the
   generic look (`src/look.rs`) says what each thing is made of, and the previews read the same
   file.
+
+## A piece
+
+A game's appearance file (`assets/appearance/*.toml`) names a model for each kind of piece, by
+the id the game gives it, and how it `stands`: `loose` (a stone: turned any way, leaning a
+little), `upright` (a turned piece), `square` (a block: square to the board, a quarter turn any
+way) or `forward` (a piece with a face). A kind it does not name is the generic stone. A seat's
+pieces are all of that seat's material, unless a piece has a `material` of its own.
+
+A piece is mapped in metres from every side, with the finer second set (`meshkit.box_uv(…,
+detail=True)`), so it can be made of a wood; each kind from its own place in the wood
+(`offset`). **A mesh cut with a boolean is put in order after** (`meshkit.boolean` does it,
+with `meshkit.settle`): the cut leaves its vertices in whatever order its threads finished, and
+the file would differ from run to run.
+
+## A card and a die
+
+- **The card** lies face up about the origin, its top to the far side of the table. A side's
+  picture fills it: **any image of 5 to 7, as a JPEG or a PNG**. On the face the picture's top
+  is the card's top; the back is mapped the other way across, so its picture reads rightly when
+  the card is turned over about its long axis (`props::card_lies`). The client reads no SVG: one
+  is made a PNG or a JPEG first (Blender's own SVG import reads filled shapes, but no text and
+  no strokes, so it will not do for a card in general).
+- **The die** has 1 up and 6 down, 2 towards the player and 5 away, 3 to the right and 4 to
+  the left, as dice are made; `props::die_showing` turns it to show a number.
+- Their generic looks are in `src/look.rs` (`paper`, `card_side`, `die`, `pips`), which
+  `piece_previews.py` repeats.
+
+To look at any of these in the client, which draws a face from one side only:
+
+```sh
+cargo run -- --showcase --view 15,38,0.5 --frames 200 --screenshot showcase.png
+cargo run -- --showcase --card-face my-face.png --view 0,62,0.22,0,0.11   # a picture on a card
+```
+
+`--showcase` lays every piece model the appearance files name on the table, in each material it
+is given, with the dice and a few cards; `--view`'s last two numbers aim the camera at a place
+on the table.
 
 ## An environment
 

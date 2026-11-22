@@ -3,7 +3,8 @@
 Status: stage 9 under way, with a main screen and an escape menu: a game can be played against the server's bots or a person, found,
 set up and started from its lobby; the player can sign in to an account, has friends and can talk
 to them; Hex has a look of its own, made by the asset pipeline, and the table can stand in a
-garden (2026-11-20). In a build with the `vr` feature the whole client works in a SteamVR
+garden (2026-11-20); Tak, draughts and the games played with chessmen have their pieces
+(2026-11-21). In a build with the `vr` feature the whole client works in a SteamVR
 headset, with its controllers (decision 10; 2026-11-21).
 Stage 4's and stage 5's last checks, against the web page by hand, are the maintainer's. The desktop client comes first: Hex, a game
 browser, accounts, friends and voice chat.
@@ -462,8 +463,48 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   each material using one is built again (Bevy does not rebuild a material when its image
   changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left
   out: they are behind an experimental feature, noisy and costly; TAA's filtering does enough.
-- **Next**: the maintainer's eye on it, on the GPU; then per-piece models (a piece kind per
-  model), and a look for the next game.
+- A model for each kind of piece (2026-11-21). An appearance file names a model for each piece
+  id, how it `stands` (a stone lies loose; a turned piece upright; a block square to the board,
+  a quarter turn any way; a piece with a face looks across the board from its seat's side) and,
+  for a piece that is nobody's, a material of its own. A kind it does not name is the generic
+  stone. A piece is stood by its model's foot, and what is on it in a stack is raised by its
+  model's height, both read from the model's file, so a stack may be of several kinds: Tak's
+  flat stones under a wall or a capstone. A colour word no seat plays may have a look too (the
+  pawn that is neither side's in Fist), and one with none still gets a colour. The move being
+  built shows the piece it would put down (the selection's `piece`, or what stands where it
+  moves `from`), and nothing over a position a click would only pick a piece up from.
+- The pieces, made by the pipeline:
+  - **Chessmen**: king, queen, bishop, knight, rook and pawn of the usual pattern, the king
+    46 mm tall for a 28 mm cell. Five are turned from profiles; the knight's head is an outline
+    of its side given a carved head's thickness. Pale and near-black wood. Bingle has no chess,
+    but Breakthrough (pawns), Amazons (queens, and a charred block for an arrow), Brandubh
+    (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of green copper) are
+    played with them.
+  - **Checkers**: a wooden draughtsman with a milled edge, stained red or black; a king is two.
+  - **Tak**: a square block (a flat stone), the same block on its edge, corner to corner (a
+    wall), and a turned capstone, in pale and dark wood.
+  - **A playing card**: a blank one of the usual size with a place on each side for a picture
+    (a JPEG or a PNG of 5 to 7), and a back to give it until a game brings its own.
+  - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
+- No game's cards or dice are drawn yet (card zones, below): `props.rs` holds only how the two
+  models are read. `--showcase` lays every piece model, the dice and some cards on the table,
+  to look at an asset in the client's own light; `--card-face` and `--card-back` try a picture
+  on a card, and `--view` takes a place on the table to look at.
+- Cost: 3 MB of models. A chessman is 3,700 to 6,500 triangles, a checker 5,000, a die 2,900;
+  a board full of them (Fist's thirty) is over 100,000, and held the display's 60 frames a
+  second on the maintainer's GPU. Not measured on the Steam Frame.
+- Open:
+  - **Pictures as SVG.** The client reads JPEG and PNG (Bevy does), not SVG, and Bingle's page
+    draws its cards as SVG in code. To put an SVG on a card it must be made a picture: ahead of
+    time, by a tool the pipeline does not have (Blender's own import reads filled shapes, but
+    no text and no strokes), or in the client by a rasteriser such as `resvg`, a dependency to
+    weigh. Not decided.
+  - A card with no picture: the generic face, drawn from what the server says a card is (its
+    suit's symbol and its rank), belongs with card zones.
+  - A board of squares is plain wood: light and dark squares, where a game is known by them
+    (draughts), would be an appearance's to ask for.
+- **Next**: the maintainer's eye on it, on the GPU; pictures on these games' cards in the main
+  screen; then card zones.
 
 ### The main screen and the escape menu (UI basics)
 
@@ -569,7 +610,8 @@ nothing of (decision 9). First draft, for the maintainer's eye.
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
   reserves and pools; tints, badges and counters by name; card zones for card games.
-- More games: square boards, points and stacks (Go, Tak), drawn from their definitions.
+- More games: boards that are neither a grid nor hexagons, reserves beside the board (Tak's
+  stones in hand), drawn from their definitions.
 - Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
   reward it; the private overlay's games' appearance loaded from a configured folder, without
   this repository naming them (decision 2).

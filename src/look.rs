@@ -317,6 +317,51 @@ pub fn piece(colour: Color) -> MaterialSpec {
     }
 }
 
+/// The back a playing card has until a game brings its own, drawn by the asset pipeline
+/// (`assets-src/blender/playing_cards.py`).
+pub const CARD_BACK: &str = "textures/cards/back_albedo.jpg";
+
+/// A playing card's paper: its edge, and a side with no picture. Coated, as cards are.
+pub fn paper() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.955, 0.945, 0.915]),
+        roughness: Some(0.5),
+        clearcoat: Some(0.15),
+        clearcoat_roughness: Some(0.3),
+        ..default()
+    }
+}
+
+/// A side of a playing card with a picture on it (one of the client's files): printed on the
+/// same paper.
+pub fn card_side(picture: &str) -> MaterialSpec {
+    MaterialSpec {
+        albedo: Some(picture.into()),
+        tint: None,
+        ..paper()
+    }
+}
+
+/// A die: ivory white, polished.
+pub fn die() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.93, 0.90, 0.82]),
+        roughness: Some(0.3),
+        clearcoat: Some(0.5),
+        clearcoat_roughness: Some(0.1),
+        ..default()
+    }
+}
+
+/// A die's pips: near black, dull.
+pub fn pips() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.05, 0.05, 0.06]),
+        roughness: Some(0.5),
+        ..default()
+    }
+}
+
 /// The colour a seat is drawn in. A seat's colour word is an identifier, not a colour, but most
 /// games name their seats after the colour players know them by, so a word this client knows is
 /// drawn as that colour. Any other word gets a colour from a palette by seat, so that every seat
@@ -370,6 +415,10 @@ mod tests {
             lit_cell(),
             goal(None),
             piece(Color::BLACK),
+            paper(),
+            card_side(CARD_BACK),
+            die(),
+            pips(),
         ];
         for look in looks {
             assert!(

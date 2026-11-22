@@ -84,7 +84,8 @@ R=noderunner/bingle-3d
   without a window (layout, camera maths, parsing, protocol handling) in plain functions, and test
   systems with a headless `App` (`MinimalPlugins`), as `src/run_limit.rs` does.
 - **Look at what you changed when it is visual.** Render it (`--frames N --screenshot out.png`) and
-  look at the picture. A green build does not prove a scene draws.
+  look at the picture. A green build does not prove a scene draws. `--showcase` lays every piece
+  model, the dice and some cards on the table, for a model no game draws yet.
 - `docs/plan.md` updated when a stage moves on or a decision is made; README updated when building
   or running changes.
 - Push back, in the PR or the issue, on anything that hurts performance, simplicity, security or
@@ -217,19 +218,25 @@ A game's own rules and its players' words keep their terms.
 - `src/bowls.rs`: a bowl of each seat's stones beside the board, for games whose appearance has
   `[bowls]`; `places` has no Bevy in it.
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
-  `embedded://<path>`; a test checks the list against the folder. `src/textures.rs`: mipmaps for
+  `embedded://<path>`; a test checks the list against the folder. It also reads a model's
+  height and its parts' names from the file's own JSON. `src/textures.rs`: mipmaps for
   our JPEG textures when they load (Bevy 0.20 makes none), and the materials using them built
   again. The files are made by the asset pipeline: **Blender 5.3 headless, run from scripts in
   `assets-src/`** (its README), on the host, never by hand; CC0 sources only, listed with their
   hashes. Look at its Cycles previews (`bash scripts/assets.sh previews`) and at the client's
   screenshot before calling an asset done. A face is seen from one side in the client and
   from both in Cycles: only the client's screenshot shows a card or a fence wound the wrong way.
-- `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): a
-  piece's model, what a seat's pieces and goal edges are made of, a seat's colour in the panels,
-  the picture on its card in the main screen.
+- `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): each
+  kind of piece's model, how it stands (`Stands`: a stone lies loose, a block square to the
+  board, a piece with a face looks across it) and a material of its own if it has one; what a
+  seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
+  card in the main screen. A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
-  layout coordinates and the position's cells; names no game. The board is one slab
+  layout coordinates and the position's cells; names no game. Each kind of piece is its
+  appearance's model, or the generic stone: stood by the model's foot, and what is on it in a
+  stack raised by the model's height (`assets::model_span` reads both from the file, so nothing
+  else says how tall a model is). The board is one slab
   (`src/slab.rs`: its outline, rounded rim, grid lines, and the shading of a goal's cells,
   geometry with no systems) with the cells cut into it, or, for a game whose appearance says
   `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
@@ -241,6 +248,11 @@ A game's own rules and its players' words keep their terms.
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
   lights the cells a click would be taken on and shows the move being built as see-through
   pieces.
+- `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
+  name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number.
+  No game's cards or dice are drawn with them yet. `src/showcase.rs`: `--showcase`, every
+  piece model the appearance files name, with cards and dice, laid out to look at; it names no
+  game either.
 - `src/play.rs`: playing a seat (Enter plays, Backspace goes back; Esc is the escape menu's).
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
@@ -253,7 +265,8 @@ A game's own rules and its players' words keep their terms.
   lighting the legal moves (L, `board::ShowLegalMoves`, off by default).
 - `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera. How far back it goes is
-  the environment's (`Reach`); `--view` puts it somewhere for a picture (`StartView`).
+  the environment's (`Reach`); `--view` puts it somewhere for a picture (`StartView`), looking at
+  the table's middle or at a place on it.
 - `src/hud.rs`: text over the scene. Text that is only words is `Pickable::IGNORE`, so the wheel
   and clicks reach the table through it; the camera leaves the wheel to any UI node under the
   pointer.

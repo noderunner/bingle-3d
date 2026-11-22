@@ -1,0 +1,64 @@
+# How this client draws Fist (Bingle's ADR 0124: the server says what things are, and each client
+# decides how they look). Data only: nothing here changes the rules.
+#
+# Chessmen, as the game is played with a chess set: a guard worth one is a pawn and one worth two
+# a rook, the ace a knight, the mage a bishop, and the pawn that belongs to neither side a queen
+# of green copper.
+
+games = ["fist"]
+
+[pieces.yellow]
+model = "models/chess/pawn.glb"
+stands = "upright"
+
+[pieces.blue]
+model = "models/chess/rook.glb"
+stands = "upright"
+
+[pieces.ace]
+model = "models/chess/knight.glb"
+stands = "forward"
+
+[pieces.mage]
+model = "models/chess/bishop.glb"
+stands = "forward"
+
+[pieces.king]
+model = "models/chess/king.glb"
+stands = "forward"
+
+[pieces.pawn]
+model = "models/chess/queen.glb"
+stands = "upright"
+
+[seats.white]
+pieces = "boxwood"
+colour = [0.90, 0.80, 0.62]
+
+[seats.black]
+pieces = "ebonised"
+colour = [0.13, 0.11, 0.10]
+
+# The pawn's colour, which no seat plays.
+[seats.green]
+pieces = "verdigris"
+colour = [0.30, 0.62, 0.52]
+
+# As in `chessmen.toml`.
+[materials.boxwood]
+wood = "maple"
+tint = [1.0, 0.93, 0.78]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+[materials.ebonised]
+wood = "walnut"
+tint = [0.30, 0.26, 0.25]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# Copper gone green.
+[materials.verdigris]
+tint = [0.25, 0.58, 0.49]
+roughness = 0.6
+reflectance = 0.4
