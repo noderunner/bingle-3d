@@ -56,7 +56,8 @@ pub struct Appearance {
     pub sounds: SoundLook,
 }
 
-/// The sounds playing a seat makes, each a file of the client's (`sounds.rs`). Silent without.
+/// Sounds of its own for playing a seat, each a file of the client's, in place of every game's
+/// (`sounds.rs`).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoundLook {
@@ -447,10 +448,8 @@ mod tests {
         // A board may be checkered, and what a move aims at shown as a piece of its own.
         assert!(look.board.squares.is_some() && look.board.border.is_some());
         assert_eq!(look.aimed.as_deref(), Some("arrow"));
-        // And may make sounds as it is played.
-        assert!(look.sounds.lift.is_some() && look.sounds.put.is_some());
-        assert!(look.sounds.play.is_some());
-        assert!(look.sounds.win.is_some() && look.sounds.lose.is_some());
+        // Its sounds are every game's (`sounds.rs`).
+        assert_eq!(look.sounds, SoundLook::default());
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
     }
 
