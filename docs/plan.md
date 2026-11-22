@@ -481,6 +481,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   `may_end` (a move sent part way) is read too, though only a one-seat game sets it. The lit
   cells of a plain board are stained amber as well as glowing, as a chessboard's are: the glow
   alone barely showed on teak.
+- A board's lines are as thick round the outside as between its cells: the darkened layer under
+  the cells is grown by a cell's margin, since round the outside only one cell's margin made the
+  line (half as thick). A points board's thicker edge lines are a Go board's, on purpose.
 - Sounds as a seat is played (`sounds.rs`), the same for every game by default (made for
   Amazons first, and the default for now); a game's appearance may give any of them another
   (`[sounds]`): a piece picked up, a piece set down (when a carried piece touches the board, or
