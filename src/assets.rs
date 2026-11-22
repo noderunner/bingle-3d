@@ -17,6 +17,7 @@ macro_rules! files {
 }
 
 files![
+    "appearance/amazons.toml",
     "appearance/chessmen.toml",
     "appearance/draughts.toml",
     "appearance/fist.toml",

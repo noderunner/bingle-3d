@@ -447,8 +447,23 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   positions with a dot, per game id (`[board.marks]`): Go's star points, for each size.
 - Lighting the legal moves is off by default (at the start of most games every position is one,
   and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
-  stone under the pointer still shows where a click would play. Which games want it on is for
-  later. A board's cells are the same
+  stone under the pointer still shows where a click would play. Once a piece is picked up, the
+  places it may go are lit whatever the setting, as a chess program shows them; it is lifted and
+  bobs over its own space (following the pointer instead was tried, and set aside), and a click
+  on it again puts it down. A click on where it goes carries it there: across the board at the
+  height it was held, then lowered onto it (a third of a second in all), and it stands there
+  before the move is sent. Once the move is sent, what it puts down (Amazons' arrow) is shown
+  solid at once, without waiting for the server, and is not dropped in again when the server's
+  position arrives. Backspace, or a right-click (the right button pressed and let
+  go with the pointer all but still, so a right-drag still turns the camera), goes back one
+  click at a time. What a move
+  then aims (Amazons' arrow) is held under the pointer in place of its arrow, with a see-through
+  one on the space a click would shoot at. The server does not say what an aim puts down, so a
+  game's appearance names it (`aimed`); asking the API for it belongs in Bingle. A chessboard's
+  squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale
+  maple. A game's look may inlay a border round the cells (`[board] border`), a flat band of
+  its own material between the cells and the coordinates. Which games want legal moves on from
+  the start is for later. A board's cells are the same
   material as the wood round them. The coordinates are smaller, half way across the margin
   between the outermost spaces or lines and the rim, on every board; a column is named only
   where it ends on the first or last row.
@@ -479,9 +494,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   - **Chessmen**: king, queen, bishop, knight, rook and pawn of the usual pattern, the king
     46 mm tall for a 28 mm cell. Five are turned from profiles; the knight's head is an outline
     of its side given a carved head's thickness. Pale and near-black wood. Bingle has no chess,
-    but Breakthrough (pawns), Amazons (queens, and a charred block for an arrow), Brandubh
-    (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of green copper) are
-    played with them.
+    but Breakthrough (pawns), Amazons (queens on a checkered board, and a red checker for an
+    arrow), Brandubh (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of
+    green copper) are played with them.
   - **Checkers**: a wooden draughtsman with a milled edge, stained red or black; a king is two.
   - **Tak**: a square block (a flat stone) and the same block on its edge, corner to corner (a
     wall), in pale and dark wood. Its capstone is the chessmen's pawn, in the same wood (the

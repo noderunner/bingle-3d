@@ -224,6 +224,39 @@ pub fn flat_cells(centres: &[Vec2], corners: &[Vec2], height: f32) -> Mesh {
     b.mesh()
 }
 
+/// A flat band round a convex outline, facing up at `height`: from `inner` beyond it to `outer`
+/// beyond it, its corners square (mitred), as a chessboard's border is.
+pub fn band(hull: &[Vec2], inner: f32, outer: f32, height: f32) -> Mesh {
+    let n = hull.len();
+    let mut b = Builder::default();
+    // Out from each corner, as far as is `1` from both its edges.
+    let mitre: Vec<Vec2> = (0..n)
+        .map(|i| {
+            let (prev, here, next) = (hull[(i + n - 1) % n], hull[i], hull[(i + 1) % n]);
+            let (a, c) = (outward(prev, here), outward(here, next));
+            (a + c) / (1.0 + a.dot(c))
+        })
+        .collect();
+    let at = |i: usize, d: f32| {
+        let p = hull[i] + mitre[i] * d;
+        Vec3::new(p.x, height, p.y)
+    };
+    let ring: Vec<(u32, u32)> = (0..n)
+        .map(|i| {
+            (
+                b.vertex(at(i, inner), Vec3::Y),
+                b.vertex(at(i, outer), Vec3::Y),
+            )
+        })
+        .collect();
+    for i in 0..n {
+        let ((a_in, a_out), (c_in, c_out)) = (ring[i], ring[(i + 1) % n]);
+        b.triangle(a_in, a_out, c_out);
+        b.triangle(a_in, c_out, c_in);
+    }
+    b.mesh()
+}
+
 /// The lines of a board played on its points: one between each two positions a pitch apart (so a
 /// square grid's are its rows and columns, and a hexagonal one's run three ways), `width` wide
 /// and `edge_width` along the board's edge, where the positions have fewer neighbours than most.
@@ -411,6 +444,30 @@ mod tests {
             side(&o, &rim, &all[..3]).count_vertices() < round.count_vertices(),
             "a part of the edge is a part of the mesh"
         );
+    }
+
+    #[test]
+    fn a_border_runs_round_a_square_at_its_distance_with_square_corners() {
+        let h = hull(&[
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(0.0, 1.0),
+        ]);
+        let border = band(&h, 0.05, 0.15, 0.03);
+        faces_its_normals(&border);
+        let p = positions(&border);
+        assert_eq!(p.len(), 8);
+        for v in &p {
+            assert!((v.y - 0.03).abs() < 1e-6);
+            // Square corners: each is as far beyond both its sides.
+            let out = (Vec2::new(v.x, v.z) - Vec2::splat(0.5)).abs() - Vec2::splat(0.5);
+            assert!((out.x - out.y).abs() < 1e-5, "{v}");
+            assert!(
+                (out.x - 0.05).abs() < 1e-5 || (out.x - 0.15).abs() < 1e-5,
+                "{v}"
+            );
+        }
     }
 
     #[test]

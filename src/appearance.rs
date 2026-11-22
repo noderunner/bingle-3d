@@ -48,6 +48,10 @@ pub struct Appearance {
     pub card: CardLook,
     /// A bowl of its stones for each seat, beside the board.
     pub bowls: Option<BowlLook>,
+    /// The kind of piece what follows a move of two parts is shown as while the move is built
+    /// (an arrow shot from where a piece landed), by its id in `pieces`. The server does not
+    /// say what it puts down; without this it is the generic stone.
+    pub aimed: Option<String>,
 }
 
 /// The bowls the seats keep their stones in (`bowls.rs`).
@@ -80,6 +84,11 @@ pub struct BoardLook {
     /// each its own size).
     #[serde(default)]
     pub marks: BTreeMap<String, Vec<String>>,
+    /// The cells in two materials by turns, as a chessboard's: the first for the corner nearest
+    /// the player on the left and every other cell from there, the second for the rest.
+    pub squares: Option<[String; 2]>,
+    /// A border inlaid round the cells, as a chessboard's, in this material.
+    pub border: Option<String>,
 }
 
 impl BoardLook {
@@ -190,6 +199,22 @@ impl Appearance {
             if !self.materials.contains_key(&bowls.material) {
                 out.push(format!("bowls: no material {}", bowls.material));
             }
+        }
+        for name in self
+            .board
+            .squares
+            .iter()
+            .flatten()
+            .chain(&self.board.border)
+        {
+            if !self.materials.contains_key(name) {
+                out.push(format!("board: no material {name}"));
+            }
+        }
+        if let Some(id) = &self.aimed
+            && !self.pieces.contains_key(id)
+        {
+            out.push(format!("aimed: no piece {id}"));
         }
         if self.games.is_empty() {
             out.push("for no game".into());
@@ -387,6 +412,9 @@ mod tests {
         let arrow = piece("amazons", "arrow");
         let look = all.for_game("amazons").unwrap();
         assert!(look.material(arrow.material.as_ref()).is_some());
+        // A board may be checkered, and what a move aims at shown as a piece of its own.
+        assert!(look.board.squares.is_some() && look.board.border.is_some());
+        assert_eq!(look.aimed.as_deref(), Some("arrow"));
         assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
     }
 
@@ -402,10 +430,15 @@ mod tests {
             pieces = "missing"
             [card.pictures]
             other = "pictures/none.jpg"
+            [board]
+            squares = ["light", "dark"]
+            border = "inlay"
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 5, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 8, "{:?}", a.problems());
+        let a = Appearance::parse("games = [\"g\"]\naimed = \"arrow\"").unwrap();
+        assert_eq!(a.problems(), ["aimed: no piece arrow"]);
         assert!(
             Appearance::parse("games = [\"g\"]\n[pieces.p]\nmodel = \"m\"\nstands = \"askew\"")
                 .is_err(),

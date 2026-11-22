@@ -90,9 +90,11 @@ main screen from a game; the game goes on), *Logout*, *Quit* (to the desktop), a
 *Play a bot* on a game in the list starts a game in which you have the first seat and the server's
 strongest bot the others. When it is your move, a see-through stone follows the pointer where a
 click would be taken (L, or *Legal moves*, also lights every such place): click one, and the
-stone is shown there; click it again, press Enter or choose *Play* to play it, or press
-Backspace (or *Back*) to take it back. A choice that is not a cell, such as swapping sides in
-Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
+stone is shown there; click it again, press Enter or choose *Play* to play it, or right-click
+or press Backspace (or *Back*) to take it back, one click at a time. A piece that moves is
+picked up with a click and hovers over its space, the places it may go lit; a click on one
+carries it there and sets it down. In Amazons the arrow is then held under the pointer. A choice that is not a cell, such as
+swapping sides in Hex, is a button on the panel. The client only offers what the server lists as legal, and sends
 the move by its notation. *Watch* on a game of your own in the list (one you left) takes your seat
 again.
 
@@ -158,8 +160,9 @@ choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
 the board's lines cross, each player's in a wooden bowl beside the board. Tak has its blocks,
-walls and capstones, stacked as they are played; draughts wooden checkers; and Breakthrough,
-Amazons, Brandubh and Fist turned chessmen. The client needs a Bingle whose API is 1.6 or newer.
+walls and capstones, stacked as they are played; draughts wooden checkers; Breakthrough,
+Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
+wood with a dark border, and red checkers for arrows. The client needs a Bingle whose API is 1.6 or newer.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,

@@ -231,7 +231,9 @@ A game's own rules and its players' words keep their terms.
   board but never quite, a piece with a face looks across it) and a material of its own if it
   has one; what a
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
-  card in the main screen. A file is for the games that mean the same by a piece's id.
+  card in the main screen, a chessboard's two materials (`[board] squares`) and its inlaid
+  border (`[board] border`), and the piece
+  what a move aims is shown as while it is built (`aimed`: the server does not say). A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. Each kind of piece is its
@@ -247,8 +249,11 @@ A game's own rules and its players' words keep their terms.
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour. The board also
-  lights the cells a click would be taken on and shows the move being built as see-through
-  pieces.
+  lights the cells a click would be taken on (always while a piece is in hand) and shows the
+  move being built: what it places as see-through pieces (solid once the move is sent), a piece
+  it moves held over its space or carried to where it goes, and what it aims held under the
+  pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
+  then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place.
 - `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
   name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
@@ -256,7 +261,8 @@ A game's own rules and its players' words keep their terms.
   No game's cards or dice are drawn with them yet. `src/showcase.rs`: `--showcase`, every
   piece model the appearance files name, with cards and dice, laid out to look at; it names no
   game either.
-- `src/play.rs`: playing a seat (Enter plays, Backspace goes back; Esc is the escape menu's).
+- `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
+  escape menu's).
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it; its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.

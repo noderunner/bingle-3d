@@ -7,6 +7,9 @@
 //! a window. The systems at the end turn clicks on the board, keys and the panel's buttons into
 //! gestures and commands on it, and send what it asks for to the network thread.
 //!
+//! A right-click (a press and release of the right button with the pointer all but still, so a
+//! right-drag still turns the camera) goes back, as Backspace does.
+//!
 //! A click on a position stands for the choices that must come before it when only one way to
 //! get there is legal: in a game where a stone is placed by choosing the stone and then the cell,
 //! a click on the cell is enough (the web page takes such forced choices by itself too). The
@@ -14,11 +17,13 @@
 
 use std::collections::BTreeSet;
 
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input_focus::InputFocus;
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
+use crate::camera::PointerOverUi;
 use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Selections};
 use crate::net::session::Problem;
@@ -34,7 +39,11 @@ impl Plugin for PlayPlugin {
             .add_observer(on_out)
             .add_systems(
                 Update,
-                (start_turn.run_if(resource_changed::<WatchStatus>), keys),
+                (
+                    start_turn.run_if(resource_changed::<WatchStatus>),
+                    keys,
+                    right_click,
+                ),
             );
     }
 }
@@ -68,11 +77,21 @@ pub enum Outcome {
 }
 
 /// What a selection would stand on a position: the kind of piece, when the selections say, and
-/// where it comes from, when it moves.
+/// where it comes from, when it moves. `aimed` when it is what follows a move of two parts (an
+/// arrow shot from where a piece landed), which the selections do not name.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Arriving<'a> {
     pub piece: Option<&'a str>,
     pub from: Option<&'a str>,
+    pub aimed: bool,
+}
+
+/// A piece the player has picked up: where from, and where it has been put, once that is
+/// chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Carried<'a> {
+    pub from: &'a str,
+    pub to: Option<&'a str>,
 }
 
 /// The impulse this client's seat is on, and the move being built for it.
@@ -123,26 +142,100 @@ impl Turn {
         self.made_notations().join("; ")
     }
 
-    /// Where the selections made put something, to show it there before it is sent.
+    /// Where the selections made put something new (a piece placed, an arrow shot), to show it
+    /// there before it is sent. A piece moved is [`Turn::carried`].
     pub fn placed(&self) -> impl Iterator<Item = &str> {
-        self.made.iter().filter_map(|s| s.to.as_deref())
+        self.made.iter().flat_map(|s| {
+            let put = s.to.as_deref().filter(|_| s.from.is_none());
+            put.into_iter().chain(s.aim.as_deref())
+        })
+    }
+
+    /// The pieces the move being built picks up, so the board can show them in the player's
+    /// hand or where they have been put: each a selection made moves, and the one the gestures
+    /// towards the next have picked up, once every selection they could still become moves
+    /// that piece (and puts it in one place, once that has been clicked).
+    pub fn carried(&self) -> Vec<Carried<'_>> {
+        let mut out: Vec<Carried> = self
+            .made
+            .iter()
+            .filter_map(|s| {
+                Some(Carried {
+                    from: s.from.as_deref()?,
+                    to: Some(s.to.as_deref()?),
+                })
+            })
+            .collect();
+        if self.stage != Stage::Choosing {
+            return out;
+        }
+        let clicked = |at: &str| self.gestures.contains(&Gesture::pos(at));
+        let agreed = |of: fn(&LegalSelection) -> Option<&String>| {
+            let mut all = self.matching().map(of);
+            let first = all.next()??;
+            all.all(|o| o == Some(first))
+                .then_some(first.as_str())
+                .filter(|at| clicked(at))
+        };
+        if let Some(from) = agreed(|s| s.from.as_ref()) {
+            out.push(Carried {
+                from,
+                to: agreed(|s| s.to.as_ref()),
+            });
+        }
+        out
+    }
+
+    /// Whether the player has clicked towards the selection being entered: a piece picked up,
+    /// say, whose moves the board then lights.
+    pub fn holding(&self) -> bool {
+        self.stage == Stage::Choosing && self.last_click().is_some()
+    }
+
+    /// Whether the next click is where what follows a move goes (an arrow shot from where the
+    /// piece landed), for the board to put it in the player's hand.
+    pub fn aiming(&self) -> bool {
+        if self.stage != Stage::Choosing {
+            return false;
+        }
+        let n = self.gestures.len();
+        let mut options = self.matching().peekable();
+        options.peek().is_some()
+            && options.all(|o| {
+                let next = o.gestures[n..].iter().find(|g| g.is_pos());
+                next.is_some() && next.map(|g| &g.value) == o.aim.as_ref()
+            })
     }
 
     /// What the move being built would stand on `cell`: by the last selection made that puts
     /// something there, else by the selections a click there could still become, as far as they
     /// agree. `None` when it would put nothing there (a click that picks a piece up, say).
     pub fn arriving(&self, cell: &str) -> Option<Arriving<'_>> {
-        fn of(s: &LegalSelection) -> Arriving<'_> {
-            Arriving {
+        let clicked = |at: &Option<String>| {
+            at.as_ref()
+                .is_some_and(|at| self.gestures.contains(&Gesture::pos(at)))
+        };
+        // What lands there by `s`: what follows its move, once the move has been clicked (or
+        // made), or what it moves or places.
+        fn lands<'s>(s: &'s LegalSelection, cell: &str, moved: bool) -> Option<Arriving<'s>> {
+            if s.aim.as_deref() == Some(cell) && moved {
+                return Some(Arriving {
+                    aimed: true,
+                    ..Arriving::default()
+                });
+            }
+            (s.to.as_deref() == Some(cell)).then_some(Arriving {
                 piece: s.piece.as_deref(),
                 from: s.from.as_deref(),
-            }
+                aimed: false,
+            })
         }
-        let lands = |s: &&LegalSelection| s.to.as_deref() == Some(cell);
-        if let Some(made) = self.made.iter().rev().find(lands) {
-            return Some(of(made));
+        if let Some(made) = self.made.iter().rev().find_map(|s| lands(s, cell, true)) {
+            return Some(made);
         }
-        let mut options = self.matching().filter(lands).map(of);
+        let mut options = self
+            .matching()
+            .filter_map(|s| lands(s, cell, clicked(&s.to)));
         let mut out = options.next()?;
         for other in options {
             if other.piece != out.piece {
@@ -151,6 +244,7 @@ impl Turn {
             if other.from != out.from {
                 out.from = None;
             }
+            out.aimed &= other.aimed;
         }
         Some(out)
     }
@@ -193,7 +287,11 @@ impl Turn {
             Stage::Ready => {
                 // A click on the preview plays it, as a second click does on the web page.
                 if gesture.is_pos()
-                    && self.made.last().and_then(|s| s.to.as_ref()) == Some(&gesture.value)
+                    && self
+                        .made
+                        .last()
+                        .and_then(|s| s.aim.as_ref().or(s.to.as_ref()))
+                        == Some(&gesture.value)
                 {
                     return Outcome::Submit;
                 }
@@ -213,19 +311,32 @@ impl Turn {
     }
 
     /// Back, as Backspace or the panel's button: first the gestures towards a selection, then the
-    /// selections made, one at a time. Nothing is sent, so nothing needs undoing on the server.
+    /// selections made, one at a time, each to just before its last click (a piece moved and
+    /// its arrow not yet shot). Nothing is sent, so nothing needs undoing on the server.
     pub fn back(&mut self) -> bool {
         match self.stage {
             Stage::Choosing if self.gestures.len() > self.forced => {
-                self.gestures.truncate(self.forced);
+                self.gestures
+                    .truncate(self.last_click().unwrap_or(self.forced));
                 true
             }
             Stage::Choosing | Stage::Ready | Stage::Asking => match self.before.pop() {
                 Some(options) => {
-                    self.made.pop();
+                    let undone = self.made.pop();
                     self.options = options;
                     self.stage = Stage::Choosing;
                     self.start_selection();
+                    if let Some(s) = undone
+                        && let Some(last) = s.gestures.iter().rposition(Gesture::is_pos)
+                    {
+                        let before = &s.gestures[..last];
+                        if before.len() > self.gestures.len()
+                            && before.starts_with(&self.gestures)
+                            && before.iter().any(Gesture::is_pos)
+                        {
+                            self.gestures = before.to_vec();
+                        }
+                    }
                     true
                 }
                 None => false,
@@ -339,7 +450,22 @@ impl Turn {
         found.map(<[Gesture]>::to_vec)
     }
 
+    /// Where in the gestures the last click on a position towards this selection is.
+    fn last_click(&self) -> Option<usize> {
+        let i = self.gestures.iter().rposition(Gesture::is_pos)?;
+        (i >= self.forced).then_some(i)
+    }
+
     fn enter(&mut self, gesture: &Gesture) -> Outcome {
+        // A click again on the position last clicked, where it means nothing more, takes that
+        // click back: a piece picked up is put down again.
+        if let Some(i) = self.last_click()
+            && self.gestures[i] == *gesture
+            && self.path_to(gesture).is_none()
+        {
+            self.gestures.truncate(i);
+            return Outcome::Changed;
+        }
         let path = match self.path_to(gesture) {
             Some(path) => path,
             // A click that does not follow on from the gestures made may start afresh (another
@@ -531,6 +657,35 @@ fn keys(
     }
 }
 
+/// How far the pointer may move, in pixels, between pressing the right button and letting it go
+/// for that to be a click (back) rather than a drag (the camera turning).
+const CLICK_SLOP: f32 = 6.0;
+
+/// A right-click over the table goes back, as Backspace does; not over a panel, nor while the
+/// escape menu is open. `pressed` is how far the pointer has moved since the button went down
+/// over the table.
+fn right_click(
+    buttons: Res<ButtonInput<MouseButton>>,
+    motion: Res<AccumulatedMouseMotion>,
+    pointer: PointerOverUi,
+    menu: Option<Res<EscapeMenu>>,
+    mut pressed: Local<Option<f32>>,
+    mut watch: ResMut<WatchStatus>,
+) {
+    if buttons.just_pressed(MouseButton::Right) {
+        *pressed = (!pointer.is_over_ui() && escape_menu::closed(menu.as_deref())).then_some(0.0);
+    }
+    if let Some(moved) = pressed.as_mut() {
+        *moved += motion.delta.length();
+    }
+    if buttons.just_released(MouseButton::Right)
+        && let Some(moved) = pressed.take()
+        && moved < CLICK_SLOP
+    {
+        back(&mut watch);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,6 +703,7 @@ mod tests {
             action: "x".into(),
             to: to.map(Into::into),
             from: None,
+            aim: None,
             // As the server says it: the piece the selection's gestures choose.
             piece: gestures
                 .iter()
@@ -607,9 +763,103 @@ mod tests {
             t.arriving("a2"),
             Some(Arriving {
                 piece: None,
-                from: Some("a1")
+                from: Some("a1"),
+                aimed: false,
             })
         );
+    }
+
+    /// A piece sliding from one position to another, then shooting from there (Amazons').
+    fn shoot(from: &str, to: &str, aim: &str) -> LegalSelection {
+        LegalSelection {
+            from: Some(from.into()),
+            aim: Some(aim.into()),
+            ..sel(
+                &format!("{from}-{to}/{aim}"),
+                Some(to),
+                &[("pos", from), ("pos", to), ("pos", aim)],
+            )
+        }
+    }
+
+    #[test]
+    fn a_piece_picked_up_is_carried_put_down_and_then_aimed_from() {
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            7,
+            vec![
+                shoot("a1", "a2", "a3"),
+                shoot("a1", "a2", "a1"),
+                shoot("a1", "b2", "c3"),
+                shoot("c1", "c2", "c3"),
+            ],
+        ));
+        assert!(t.carried().is_empty(), "nothing is picked up yet");
+        assert!(!t.aiming());
+
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Changed);
+        assert_eq!(
+            t.carried(),
+            [Carried {
+                from: "a1",
+                to: None
+            }],
+            "in hand, not yet put anywhere"
+        );
+        assert!(!t.aiming(), "where it goes comes first");
+        assert_eq!(t.arriving("a2").map(|a| a.aimed), Some(false));
+        assert_eq!(t.arriving("c3"), None, "c3 is only ever aimed at");
+
+        // A click on it again puts it down.
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Changed);
+        assert!(t.gestures.is_empty() && t.carried().is_empty());
+
+        t.gesture(&Gesture::pos("a1"));
+        assert_eq!(t.gesture(&Gesture::pos("a2")), Outcome::Changed);
+        assert_eq!(
+            t.carried(),
+            [Carried {
+                from: "a1",
+                to: Some("a2")
+            }]
+        );
+        assert!(t.aiming());
+        assert_eq!(
+            t.targets(),
+            BTreeSet::from(["a1".to_string(), "a3".to_string()]),
+            "the square it left may be shot at"
+        );
+        let shot = t.arriving("a3").expect("an arrow would land there");
+        assert!(shot.aimed);
+        assert!(t.placed().next().is_none());
+
+        assert_eq!(t.gesture(&Gesture::pos("a3")), Outcome::Ask);
+        t.answered(complete(7));
+        assert_eq!(t.stage, Stage::Ready);
+        assert_eq!(t.placed().collect::<Vec<_>>(), ["a3"], "the arrow, shown");
+        assert_eq!(
+            t.carried(),
+            [Carried {
+                from: "a1",
+                to: Some("a2")
+            }],
+            "the piece stays where it was put"
+        );
+        assert!(t.arriving("a3").unwrap().aimed);
+        assert_eq!(t.arriving("a2").unwrap().from, Some("a1"));
+
+        // Another square to shoot at replaces the shot, and a click on the shot plays it.
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Ask);
+        assert_eq!(t.made.last().unwrap().notation, "a1-a2/a1");
+        t.answered(complete(7));
+        assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Submit);
+
+        // Back takes off the shot first, leaving the piece where it was put.
+        assert!(t.back());
+        assert_eq!(t.gestures, [Gesture::pos("a1"), Gesture::pos("a2")]);
+        assert!(t.aiming());
+        assert!(t.back());
+        assert_eq!(t.gestures, [Gesture::pos("a1")]);
     }
 
     fn swap() -> LegalSelection {
@@ -763,6 +1013,13 @@ mod tests {
         assert_eq!(t.stage, Stage::Choosing);
         assert!(t.made.is_empty());
         assert_eq!(t.options.len(), 3, "the options from before it");
+        assert_eq!(
+            t.gestures,
+            [Gesture::pos("a1")],
+            "to just before its last click: the piece is in hand again"
+        );
+        assert!(t.back());
+        assert!(t.gestures.is_empty());
         assert!(!t.back(), "nothing more to take back");
     }
 
@@ -832,5 +1089,56 @@ mod tests {
         assert_eq!(t.stage, Stage::Failed);
         assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Ignored);
         assert!(!t.back());
+    }
+
+    #[test]
+    fn a_right_click_goes_back_and_a_right_drag_does_not() {
+        use bevy::picking::hover::HoverMap;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<HoverMap>()
+            .init_resource::<WatchStatus>()
+            .add_systems(Update, right_click);
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![step("a1", "a2"), step("a1", "b2")]));
+        t.gesture(&Gesture::pos("a1"));
+        app.world_mut().resource_mut::<WatchStatus>().turn = Some(t);
+        let gestures = |app: &App| {
+            app.world()
+                .resource::<WatchStatus>()
+                .turn
+                .as_ref()
+                .unwrap()
+                .gestures
+                .len()
+        };
+        let button = |app: &mut App, down: bool, moved: f32| {
+            app.world_mut()
+                .resource_mut::<AccumulatedMouseMotion>()
+                .delta = Vec2::new(moved, 0.0);
+            let mut buttons = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            buttons.clear();
+            if down {
+                buttons.press(MouseButton::Right);
+            } else {
+                buttons.release(MouseButton::Right);
+            }
+            app.update();
+        };
+
+        // A drag turns the camera: the piece stays in hand.
+        button(&mut app, true, 0.0);
+        button(&mut app, true, 25.0);
+        button(&mut app, false, 0.0);
+        assert_eq!(gestures(&app), 1);
+
+        // A click, the pointer hardly moving: the piece is put down.
+        button(&mut app, true, 0.0);
+        button(&mut app, true, 1.5);
+        button(&mut app, false, 0.0);
+        assert_eq!(gestures(&app), 0);
     }
 }

@@ -819,6 +819,10 @@ pub struct LegalSelection {
     pub from: Option<String>,
     #[serde(default)]
     pub piece: Option<String>,
+    /// Where what follows the move goes, in a move of two parts (an arrow shot from where a
+    /// piece landed).
+    #[serde(default)]
+    pub aim: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub gestures: Vec<Gesture>,
 }
