@@ -8,8 +8,12 @@
 //! How it looks comes from `look.rs`: one slab of wood with a rounded rim (`slab.rs`), the cells
 //! cut into it with dark lines between them, and stones in each seat's colour. Along each goal's
 //! edge the rim is stained in the seat's colour and the cells are shaded towards it. A game's
-//! appearance file (`appearance.rs`) may choose the pieces' model, what each seat's pieces and rim
-//! are made of, and its colour. The board's wood is the player's choice (`BoardWood`).
+//! appearance file (`appearance.rs`) may choose each kind of piece's model and how it stands,
+//! what each seat's pieces and rim are made of, and its colour. The board's wood is the player's
+//! choice (`BoardWood`).
+//!
+//! A piece stands by its model's foot, and what is on it in a stack is raised by its model's
+//! height, so a stack may be of pieces of several kinds (flat blocks under one on its edge).
 //!
 //! A seat's goal is drawn from the game's `goals` and the board's `regions`: a strip in the seat's
 //! colour along the outer sides of each region the seat must connect (a hex board's edges), and a
@@ -29,7 +33,8 @@ use bevy::gltf::GltfAssetLabel;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 
-use crate::appearance::{Appearance, Appearances, PlayOn};
+use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
+use crate::assets;
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, PieceOnBoard};
@@ -263,6 +268,9 @@ struct PieceAt {
     cell: String,
     layer: usize,
     piece: PieceOnBoard,
+    /// How much stands under it in its stack, in micrometres at the full pitch: a piece is put
+    /// down again when what is under it changes height.
+    under: u32,
 }
 
 /// A cell of the board, which is lit while a click on it would be taken.
@@ -277,8 +285,17 @@ struct Ghost;
 #[derive(Component)]
 struct LastMoveMark;
 
-/// How thick the piece model is (`assets-src/blender/stones.py`), at the full pitch.
+/// How thick the generic piece is (`assets-src/blender/stones.py`), at the full pitch, should
+/// its model not say.
 const STONE_THICKNESS: f32 = 0.0088;
+/// A block set down square to the board by hand: how far from true it may be turned, either
+/// way, and how far from its position's middle it may lie, each way across the board (metres at
+/// the full pitch). Enough that the blocks of a stack do not line up; too little for one to
+/// leave its space.
+const SQUARE_OFF: f32 = 0.08;
+const SQUARE_ASIDE: f32 = 0.0013;
+/// How far from true a piece looking across the board may be turned, either way.
+const FORWARD_OFF: f32 = 0.09;
 
 /// A piece on its way down to where it was played.
 #[derive(Component)]
@@ -290,14 +307,30 @@ struct Dropping {
 const DROP_HEIGHT: f32 = 0.06;
 const DROP_TIME: Duration = Duration::from_millis(280);
 
+/// A kind of piece as the board draws it.
+#[derive(Debug, Clone)]
+struct PieceKit {
+    mesh: Handle<Mesh>,
+    /// Where the model's foot is below its origin, and how tall it is, at the full pitch.
+    foot: f32,
+    height: f32,
+    stands: Stands,
+    /// What it is made of, when that is not its seat's material.
+    material: Option<Handle<StandardMaterial>>,
+}
+
 /// The meshes and materials of the board being shown.
 #[derive(Component)]
 struct Kit {
-    stone: Handle<Mesh>,
-    stone_height: f32,
-    /// The model is made for the full pitch; a smaller board's pieces are smaller.
-    stone_scale: f32,
+    /// The generic piece, and each kind the game's look gives a model, by its id.
+    stone: PieceKit,
+    pieces: HashMap<String, PieceKit>,
+    /// The models are made for the full pitch; a smaller board's pieces are smaller.
+    scale: f32,
+    /// Each colour word's material, and the way its seat looks across the board (a turn about
+    /// the vertical from the first seat's, which looks to the far side).
     materials: HashMap<String, Handle<StandardMaterial>>,
+    facing: HashMap<String, f32>,
     cell: Handle<StandardMaterial>,
     /// A cell a click would be taken on.
     target: Handle<StandardMaterial>,
@@ -307,6 +340,37 @@ struct Kit {
     woodwork: Vec<(Handle<StandardMaterial>, MaterialSpec)>,
     /// The height pieces stand on.
     surface: f32,
+}
+
+impl Kit {
+    fn piece(&self, id: &str) -> &PieceKit {
+        self.pieces.get(id).unwrap_or(&self.stone)
+    }
+
+    /// How tall a stack of pieces is, bottom first, at the full pitch.
+    fn stack_height<'a>(&self, stack: impl IntoIterator<Item = &'a PieceOnBoard>) -> f32 {
+        stack.into_iter().map(|p| self.piece(&p.piece).height).sum()
+    }
+
+    /// Where a piece of this kind goes, on `under` (metres at the full pitch) of others on
+    /// `centre`: standing on its foot, set down as its kind is.
+    fn set_down(
+        &self,
+        id: &str,
+        colour: &str,
+        centre: Vec3,
+        (cell, layer): (&str, usize),
+        under: f32,
+    ) -> Transform {
+        let kind = self.piece(id);
+        let facing = self.facing.get(colour).copied().unwrap_or(0.0);
+        let stance = stance(kind.stands, cell, layer, facing);
+        let y = self.surface + (under - kind.foot * stance.size) * self.scale;
+        let aside = stance.aside * self.scale;
+        Transform::from_translation(Vec3::new(centre.x + aside.x, y, centre.z + aside.y))
+            .with_rotation(stance.turn)
+            .with_scale(Vec3::splat(self.scale * stance.size))
+    }
 }
 
 /// What a board is drawn with: where its meshes and materials go, where its files come from, and
@@ -340,6 +404,30 @@ impl Tools<'_> {
                 || seat_colour(colour, seat),
                 |[r, g, b]| Color::srgb(r, g, b),
             )
+    }
+
+    /// A kind of piece: the model its look gives, or the generic stone.
+    fn piece_kit(&mut self, look: Option<&PieceLook>) -> PieceKit {
+        let model = look.map_or(look::PIECE_MODEL, |l| l.model.as_str());
+        let (low, high) =
+            assets::model_span(model).unwrap_or((-STONE_THICKNESS / 2.0, STONE_THICKNESS / 2.0));
+        let own = look
+            .and_then(|l| l.material.as_ref())
+            .and_then(|name| self.look?.materials.get(name))
+            .cloned();
+        PieceKit {
+            mesh: self.server.load(
+                GltfAssetLabel::Primitive {
+                    mesh: 0,
+                    primitive: 0,
+                }
+                .from_asset(assets::path(model)),
+            ),
+            foot: low,
+            height: high - low,
+            stands: look.map(|l| l.stands).unwrap_or_default(),
+            material: own.map(|spec| self.material(&spec)),
+        }
     }
 
     /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
@@ -433,7 +521,7 @@ fn place_pieces(
     shown: &[(Entity, &PieceAt)],
     animate: bool,
 ) {
-    let wanted = wanted_pieces(table);
+    let wanted = wanted_pieces(table, kit);
     for (entity, at) in shown {
         if !wanted.contains(at) {
             commands.entity(*entity).despawn();
@@ -448,20 +536,28 @@ fn place_pieces(
             // which this stage does not draw yet.
             continue;
         };
-        let rest = kit.surface + kit.stone_height * (at.layer as f32 + 0.5);
-        let material = kit
-            .materials
-            .get(&at.piece.color)
-            .cloned()
+        let kind = kit.piece(&at.piece.piece);
+        let material = kind
+            .material
+            .clone()
+            .or_else(|| kit.materials.get(&at.piece.color).cloned())
             .unwrap_or_default();
-        let start = if animate { rest + DROP_HEIGHT } else { rest };
+        let mut rest = kit.set_down(
+            &at.piece.piece,
+            &at.piece.color,
+            *centre,
+            (&at.cell, at.layer),
+            at.under as f32 * 1e-6,
+        );
+        let to = rest.translation.y;
+        if animate {
+            rest.translation.y += DROP_HEIGHT;
+        }
         let mut piece = commands.spawn((
             Name::new(format!("{} at {}", at.piece.piece, at.cell)),
-            Mesh3d(kit.stone.clone()),
+            Mesh3d(kind.mesh.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(Vec3::new(centre.x, start, centre.z))
-                .with_rotation(lie(&at.cell, at.layer))
-                .with_scale(Vec3::splat(kit.stone_scale * size(&at.cell, at.layer))),
+            rest,
             // A click on a piece is a click on where it stands.
             Spot(at.cell.clone()),
             Pickable::default(),
@@ -471,7 +567,7 @@ fn place_pieces(
         if animate {
             piece.insert(Dropping {
                 timer: Timer::new(DROP_TIME, TimerMode::Once),
-                to: rest,
+                to,
             });
         }
     }
@@ -508,21 +604,61 @@ fn size(cell: &str, layer: usize) -> f32 {
     1.0 + (chance(cell, layer, 3) - 0.5) * 0.04
 }
 
+/// How a piece is set down on its position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stance {
+    turn: Quat,
+    /// How big it is against its model.
+    size: f32,
+    /// How far from the position's middle it is, across the board (x, z), in metres at the
+    /// full pitch.
+    aside: Vec2,
+}
+
+/// How a piece is set down, by the way its kind is: the same for the same place, and different
+/// from place to place, so each piece of a stack has its own. `facing` is the way its seat looks
+/// across the board, a turn about the vertical.
+fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> Stance {
+    let off = |what: u8, by: f32| (chance(cell, layer, what) - 0.5) * 2.0 * by;
+    let upright = |turn: f32| Stance {
+        turn: Quat::from_rotation_y(turn),
+        size: 1.0,
+        aside: Vec2::ZERO,
+    };
+    match stands {
+        Stands::Loose => Stance {
+            turn: lie(cell, layer),
+            size: size(cell, layer),
+            aside: Vec2::ZERO,
+        },
+        Stands::Upright => upright(yaw(cell, layer)),
+        Stands::Square => {
+            let quarters = (chance(cell, layer, 4) * 4.0).floor();
+            Stance {
+                aside: Vec2::new(off(7, SQUARE_ASIDE), off(8, SQUARE_ASIDE)),
+                ..upright(quarters * FRAC_PI_2 + off(5, SQUARE_OFF))
+            }
+        }
+        Stands::Forward => upright(facing + off(6, FORWARD_OFF)),
+    }
+}
+
 /// Every piece of the position, bottom of each stack first.
-fn wanted_pieces(table: &Table) -> Vec<PieceAt> {
-    table
-        .state
-        .state
-        .cells
-        .iter()
-        .flat_map(|(cell, stack)| {
-            stack.iter().enumerate().map(|(layer, piece)| PieceAt {
+fn wanted_pieces(table: &Table, kit: &Kit) -> Vec<PieceAt> {
+    let mut out = Vec::new();
+    for (cell, stack) in &table.state.state.cells {
+        let mut under = 0.0;
+        for (layer, piece) in stack.iter().enumerate() {
+            out.push(PieceAt {
                 cell: cell.clone(),
                 layer,
                 piece: piece.clone(),
-            })
-        })
-        .collect()
+                under: (under * 1e6_f32).round() as u32,
+            });
+            under += kit.piece(&piece.piece).height;
+        }
+    }
+    out
 }
 
 fn build_board(
@@ -738,20 +874,16 @@ fn build_board(
         ChildOf(root),
     ));
 
-    // Every piece is drawn as one model for now, whatever its kind: the generic stone, or the
-    // one the game's appearance gives.
-    let model = tools
+    // Each kind of piece the game's appearance gives a model is drawn as that; any other as the
+    // generic stone.
+    let stone = tools.piece_kit(None);
+    let pieces: HashMap<String, PieceKit> = tools
         .look
-        .and_then(|l| l.pieces.values().next())
-        .map_or(look::PIECE_MODEL, |p| p.model.as_str());
-    let stone = tools.server.load(
-        GltfAssetLabel::Primitive {
-            mesh: 0,
-            primitive: 0,
-        }
-        .from_asset(crate::assets::path(model)),
-    );
-    let stone_scale = pitch / PITCH;
+        .map(|l| &l.pieces)
+        .into_iter()
+        .flatten()
+        .map(|(id, piece)| (id.clone(), tools.piece_kit(Some(piece))))
+        .collect();
     let yours = table.yours();
     let mut ghost = yours
         .map(|s| tools.piece_material(&s.color, s.seat))
@@ -759,7 +891,7 @@ fn build_board(
         .build(tools.server);
     ghost.base_color = ghost.base_color.with_alpha(0.5);
     ghost.alpha_mode = AlphaMode::Blend;
-    let materials = seat_materials(&table.info, tools);
+    let materials = piece_materials(table, tools);
     let ghost = tools.materials.add(ghost);
     // A bowl of each seat's stones beside the board, for a game whose look has them.
     if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
@@ -779,9 +911,10 @@ fn build_board(
     }
     let kit = Kit {
         stone,
-        stone_height: STONE_THICKNESS * stone_scale,
-        stone_scale,
+        pieces,
+        scale: pitch / PITCH,
         materials,
+        facing: facings(&table.info),
         cell,
         target,
         ghost,
@@ -1062,15 +1195,47 @@ fn shade_goals(
     }
 }
 
-/// One material per seat colour word. A piece in a colour no seat plays is drawn in the default
-/// material, which no seat uses.
-fn seat_materials(info: &GameInfo, tools: &mut Tools) -> HashMap<String, Handle<StandardMaterial>> {
+/// One material per colour word: each seat's, each the game's look gives one though no seat
+/// plays it (a piece that is nobody's), and each a piece on the board has now. A piece in any
+/// other colour is drawn in the default material, which none of these is.
+fn piece_materials(table: &Table, tools: &mut Tools) -> HashMap<String, Handle<StandardMaterial>> {
+    let mut words: Vec<(String, u32)> = table
+        .info
+        .seats
+        .iter()
+        .map(|s| (s.color.clone(), s.seat))
+        .collect();
+    let others = tools
+        .look
+        .map(|l| l.seats.keys())
+        .into_iter()
+        .flatten()
+        .chain(table.state.state.cells.values().flatten().map(|p| &p.color));
+    for word in others {
+        if !words.iter().any(|(known, _)| known == word) {
+            // Past the seats, so a word that is not a colour gets one of its own.
+            words.push((word.clone(), words.len() as u32 + 1));
+        }
+    }
+    words
+        .into_iter()
+        .map(|(word, seat)| {
+            let spec = tools.piece_material(&word, seat);
+            let material = tools.material(&spec);
+            (word, material)
+        })
+        .collect()
+}
+
+/// The way each seat looks across the board, by its colour word: the first from the player's
+/// side to the far side, the others from their places round the table
+/// (`environment::seat_places`).
+fn facings(info: &GameInfo) -> HashMap<String, f32> {
+    let seats = info.seats.len().max(1) as f32;
     info.seats
         .iter()
-        .map(|s| {
-            let spec = tools.piece_material(&s.color, s.seat);
-            (s.color.clone(), tools.material(&spec))
-        })
+        .enumerate()
+        .map(|(i, s)| (s.color.clone(), TAU * i as f32 / seats))
         .collect()
 }
 
@@ -1107,24 +1272,40 @@ fn show_turn(
         Stage::Asking | Stage::Ready | Stage::Sending => turn.placed().collect(),
         Stage::Choosing | Stage::Failed => Vec::new(),
     };
-    if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c)) {
+    // Under the pointer too, where a click would put something (not where it would pick one up).
+    if let Some(cell) = hovering.0.as_deref().filter(|c| targets.contains(*c))
+        && turn.arriving(cell).is_some()
+    {
         shown.push(cell);
     }
     let layout = Layout::new(&table.info.board.positions);
+    let cells = &table.state.state.cells;
+    let colour = table.yours().map_or("", |s| s.color.as_str());
     for cell in shown {
         let Some(centre) = layout.centres.get(cell) else {
             continue;
         };
-        let below = table.state.state.cells.get(cell).map_or(0, Vec::len);
-        let y = kit.surface + kit.stone_height * (below as f32 + 0.5);
+        // The kind of piece that would stand there: the one the selections name, or the one
+        // that would come from where they say.
+        let coming = turn.arriving(cell).unwrap_or_default();
+        let id = coming
+            .piece
+            .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
+            .unwrap_or_default();
+        let stack = cells.get(cell).map_or(&[][..], Vec::as_slice);
+        let at = kit.set_down(
+            id,
+            colour,
+            *centre,
+            (cell, stack.len()),
+            kit.stack_height(stack),
+        );
         commands.spawn((
             Name::new(format!("Ghost at {cell}")),
             Ghost,
-            Mesh3d(kit.stone.clone()),
+            Mesh3d(kit.piece(id).mesh.clone()),
             MeshMaterial3d(kit.ghost.clone()),
-            Transform::from_translation(Vec3::new(centre.x, y, centre.z))
-                .with_rotation(lie(cell, below))
-                .with_scale(Vec3::splat(kit.stone_scale)),
+            at,
             ChildOf(root),
         ));
     }
@@ -1206,6 +1387,110 @@ mod tests {
         // Three columns plus the last row's shift of one cell; three rows √3/2 apart.
         let expected = Vec2::new(4.0, 1.0 + 2.0 * 0.866_025_4) * PITCH;
         assert!(layout.size.distance(expected) < 1e-5, "{}", layout.size);
+    }
+
+    #[test]
+    fn a_piece_is_set_down_as_its_kind_is() {
+        let up = |turn: Quat| (turn * Vec3::Y).distance(Vec3::Y);
+        // A stone, as before: turned any way, leaning a little, never quite one size, in the
+        // middle of its position.
+        let stone = stance(Stands::Loose, "c4", 0, 0.0);
+        assert_eq!(
+            (stone.turn, stone.size),
+            (lie("c4", 0), super::size("c4", 0))
+        );
+        assert!(up(stone.turn) > 0.0 && up(stone.turn) < 0.03);
+        assert_eq!(stone.aside, Vec2::ZERO);
+        // The others stand upright, the model's own size.
+        for stands in [Stands::Upright, Stands::Square, Stands::Forward] {
+            for cell in ["a1", "c4", "h8"] {
+                let set = stance(stands, cell, 1, 2.0);
+                assert!(up(set.turn) < 1e-6, "{stands:?} at {cell}");
+                assert_eq!(set.size, 1.0);
+                assert_eq!(stance(stands, cell, 1, 2.0), set, "the same again");
+            }
+        }
+        let yaw = |turn: Quat| turn.to_euler(EulerRot::YXZ).0;
+        let cells = ["a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8"];
+        // A block is square to the board, give or take; not every one the same quarter turn.
+        let mut quarters = Vec::new();
+        for cell in cells {
+            let turn = yaw(stance(Stands::Square, cell, 0, 0.0).turn);
+            let quarter = (turn / FRAC_PI_2).round();
+            assert!((turn - quarter * FRAC_PI_2).abs() <= SQUARE_OFF + 1e-5);
+            quarters.push(quarter.rem_euclid(4.0) as i32);
+        }
+        quarters.dedup();
+        assert!(quarters.len() > 1, "{quarters:?}");
+        // A piece with a face looks the way its seat does, give or take; a turned one any way.
+        // Both stand in the middle of their positions.
+        for cell in cells {
+            for facing in [0.0, FRAC_PI_2, 3.0] {
+                let set = stance(Stands::Forward, cell, 0, facing);
+                let off = (set.turn * Quat::from_rotation_y(-facing))
+                    .to_axis_angle()
+                    .1;
+                assert!(off <= FORWARD_OFF + 1e-5, "{off}");
+                assert_eq!(set.aside, Vec2::ZERO);
+            }
+            assert_eq!(stance(Stands::Upright, cell, 0, 0.0).aside, Vec2::ZERO);
+        }
+        let a = yaw(stance(Stands::Upright, "a1", 0, 0.0).turn);
+        let b = yaw(stance(Stands::Upright, "h8", 0, 0.0).turn);
+        assert!((a - b).abs() > 0.01);
+    }
+
+    #[test]
+    fn the_blocks_of_a_stack_do_not_line_up() {
+        // Ten blocks on one position, as a hand sets them down: each a little aside of the
+        // middle and a little askew, no two alike, none far enough to leave its space.
+        let stack: Vec<Stance> = (0..10)
+            .map(|layer| stance(Stands::Square, "c3", layer, 0.0))
+            .collect();
+        let askew = |s: &Stance| {
+            let turn = s.turn.to_euler(EulerRot::YXZ).0;
+            turn - (turn / FRAC_PI_2).round() * FRAC_PI_2
+        };
+        for (i, a) in stack.iter().enumerate() {
+            assert!(a.aside.abs().max_element() <= SQUARE_ASIDE, "{}", a.aside);
+            for b in &stack[i + 1..] {
+                assert!(a.aside.distance(b.aside) > 1e-5, "two in one place");
+                assert!((askew(a) - askew(b)).abs() > 1e-4, "two turned alike");
+            }
+        }
+        // Plainly so, not by a hair: among ten, some lie more than half a millimetre apart
+        // and some are turned more than two degrees apart.
+        let spread = |f: &dyn Fn(&Stance) -> f32| {
+            let all: Vec<f32> = stack.iter().map(f).collect();
+            all.iter().cloned().fold(f32::MIN, f32::max)
+                - all.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&|s| s.aside.x) > 0.0005 && spread(&|s| s.aside.y) > 0.0005);
+        assert!(spread(&askew) > 2f32.to_radians());
+        // A block 18.5 mm square, as far aside and askew as it may be, is inside its cell.
+        let half = 0.0185 / 2.0 * (SQUARE_OFF.cos() + SQUARE_OFF.sin()) + SQUARE_ASIDE;
+        assert!(half < PITCH * CELL_SCALE / 2.0, "{half}");
+        // The same block in the same place lies the same way, whenever it is drawn.
+        assert_eq!(stance(Stands::Square, "c3", 4, 0.0), stack[4]);
+        assert_ne!(stance(Stands::Square, "d3", 4, 0.0), stack[4]);
+    }
+
+    #[test]
+    fn each_seat_looks_across_the_board_from_its_place_at_the_table() {
+        let mut info = hex3_with_goals();
+        let seat = |seat: u32, word: &str| crate::net::api::SeatDef {
+            seat,
+            color: word.into(),
+            label: word.into(),
+        };
+        info.seats = vec![seat(1, "white"), seat(2, "black")];
+        let two = facings(&info);
+        assert_eq!(two["white"], 0.0, "the first, from the player's side");
+        assert!((two["black"] - TAU / 2.0).abs() < 1e-6, "the second, back");
+        info.seats.extend([seat(3, "red"), seat(4, "blue")]);
+        assert!((facings(&info)["black"] - TAU / 4.0).abs() < 1e-6, "four");
+        info.seats.clear();
+        assert!(facings(&info).is_empty());
     }
 
     #[test]
@@ -1292,6 +1577,258 @@ mod tests {
                 state: state(1, &["a1"]),
                 bots: vec![],
             })
+        }
+
+        /// A game on a 3×3 grid for two seats, white then black, by a game's id, with these
+        /// stacks: each piece as (kind, colour word), bottom first.
+        fn grid_table(id: &str, cells: &[(&str, &[(&str, &str)])]) -> Table {
+            let mut t = table();
+            t.info.id = id.into();
+            t.info.board.kind = "grid".into();
+            t.info.board.positions = (0..9)
+                .map(|i| {
+                    let id = format!("{}{}", (b'a' + i % 3) as char, 3 - i / 3);
+                    pos(&id, (i % 3) as f32, (i / 3) as f32)
+                })
+                .collect();
+            t.info.seats = [(1, "white"), (2, "black")]
+                .map(|(seat, word)| SeatDef {
+                    seat,
+                    color: word.into(),
+                    label: word.into(),
+                })
+                .to_vec();
+            t.state = stacks(1, cells);
+            t
+        }
+
+        fn stacks(seq: u64, cells: &[(&str, &[(&str, &str)])]) -> GameState {
+            let stack = |pieces: &[(&str, &str)]| {
+                pieces
+                    .iter()
+                    .map(|(piece, color)| PieceOnBoard {
+                        piece: piece.to_string(),
+                        color: color.to_string(),
+                    })
+                    .collect()
+            };
+            GameState {
+                state: Position {
+                    cells: cells
+                        .iter()
+                        .map(|(cell, pieces)| (cell.to_string(), stack(pieces)))
+                        .collect(),
+                },
+                status: "active".into(),
+                move_seq: seq,
+                ..Default::default()
+            }
+        }
+
+        /// Each piece shown, by its cell and layer: its kind, where it is, and its mesh and
+        /// material.
+        type Drawn = (
+            String,
+            Transform,
+            Handle<Mesh>,
+            Handle<StandardMaterial>,
+            Entity,
+        );
+
+        fn drawn(app: &mut App) -> HashMap<(String, usize), Drawn> {
+            let mut q = app.world_mut().query::<(
+                Entity,
+                &PieceAt,
+                &Transform,
+                &Mesh3d,
+                &MeshMaterial3d<StandardMaterial>,
+            )>();
+            q.iter(app.world())
+                .map(|(entity, at, transform, mesh, material)| {
+                    (
+                        (at.cell.clone(), at.layer),
+                        (
+                            at.piece.piece.clone(),
+                            *transform,
+                            mesh.0.clone(),
+                            material.0.clone(),
+                            entity,
+                        ),
+                    )
+                })
+                .collect()
+        }
+
+        fn with_looks() -> App {
+            let mut app = app();
+            app.insert_resource(Appearances::built_in());
+            app
+        }
+
+        #[test]
+        fn each_kind_of_piece_is_its_own_model_and_a_stack_stands_on_what_is_under_it() {
+            let mut app = with_looks();
+            let flat = assets::model_span("models/tak/flat.glb").unwrap();
+            let wall = assets::model_span("models/tak/wall.glb").unwrap();
+            // Tak's capstone is a pawn.
+            let cap = assets::model_span("models/chess/pawn.glb").unwrap();
+            let (flat, wall, cap) = (flat.1 - flat.0, wall.1 - wall.0, cap.1 - cap.0);
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                (
+                    "a1",
+                    &[("flat", "white"), ("flat", "black"), ("wall", "white")],
+                ),
+                ("b2", &[("flat", "black"), ("cap", "black")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("tak-5x5", cells));
+            app.update();
+            let shown = drawn(&mut app);
+            assert_eq!(shown.len(), 5);
+            let at = |cell: &str, layer: usize| shown[&(cell.to_string(), layer)].clone();
+            let middle = |cell: &str, layer: usize| at(cell, layer).1.translation.y - SURFACE;
+            // Each stands on its foot on what is under it: its middle half its height above.
+            assert!((middle("a1", 0) - flat / 2.0).abs() < 1e-6);
+            assert!((middle("a1", 1) - flat * 1.5).abs() < 1e-6);
+            assert!((middle("a1", 2) - (2.0 * flat + wall / 2.0)).abs() < 1e-6);
+            assert!((middle("b2", 1) - (flat + cap / 2.0)).abs() < 1e-6);
+            // A flat stone, a wall and a capstone are three models; two flat stones are one.
+            assert_eq!(at("a1", 0).2, at("a1", 1).2);
+            assert_ne!(at("a1", 0).2, at("a1", 2).2);
+            assert_ne!(at("b2", 0).2, at("b2", 1).2);
+            assert_ne!(at("a1", 2).2, at("b2", 1).2);
+            // Each seat's are its own wood.
+            assert_eq!(at("a1", 0).3, at("a1", 2).3);
+            assert_ne!(at("a1", 0).3, at("a1", 1).3);
+            // Blocks stand upright, whatever way they are turned.
+            for (_, transform, ..) in shown.values() {
+                assert!((transform.rotation * Vec3::Y).distance(Vec3::Y) < 1e-5);
+                assert_eq!(transform.scale, Vec3::ONE, "a block is its model's size");
+            }
+            // The blocks of a stack do not line up: each is a little aside of its position's
+            // middle, its own way. The capstone, a turned piece, stands in the middle.
+            let layout = Layout::new(&grid_table("tak-5x5", cells).info.board.positions);
+            let aside = |cell: &str, layer: usize| {
+                let off = at(cell, layer).1.translation - layout.centres[cell];
+                Vec2::new(off.x, off.z)
+            };
+            for layer in 0..3 {
+                let off = aside("a1", layer);
+                assert!(off.length() > 1e-6 && off.abs().max_element() <= SQUARE_ASIDE);
+            }
+            assert!(aside("a1", 0).distance(aside("a1", 1)) > 1e-5);
+            assert!(aside("a1", 1).distance(aside("a1", 2)) > 1e-5);
+            assert_eq!(aside("b2", 1), Vec2::ZERO);
+
+            // What is under a piece changes height: the piece is put down again, on it.
+            let before = at("b2", 1).4;
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(2, &[("b2", &[("wall", "black"), ("cap", "black")])]),
+            });
+            app.update();
+            let shown = drawn(&mut app);
+            assert_eq!(shown.len(), 2);
+            let capstone = &shown[&("b2".to_string(), 1)];
+            assert_ne!(capstone.4, before, "put down again");
+            assert!(capstone.1.translation.y > SURFACE + wall + cap / 2.0);
+        }
+
+        #[test]
+        fn a_piece_with_no_look_is_a_stone_and_one_that_is_nobodys_has_a_colour() {
+            let mut app = with_looks();
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("king", "white")]),
+                ("b2", &[("pawn", "green")]),
+                ("c3", &[("oddity", "mauve")]),
+                ("a3", &[("king", "black")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("fist", cells));
+            app.update();
+            let shown = drawn(&mut app);
+            let at = |cell: &str| shown[&(cell.to_string(), 0)].clone();
+            let nothing = Handle::<StandardMaterial>::default();
+            // The pawn that is neither seat's has the look its game gives its colour word; a
+            // piece the look does not know, in a colour no seat plays, is a stone of some colour.
+            for cell in ["a1", "b2", "c3", "a3"] {
+                assert_ne!(at(cell).3, nothing, "{cell}");
+            }
+            assert_ne!(at("b2").3, at("a1").3);
+            assert_ne!(at("c3").3, at("b2").3);
+            assert_ne!(at("c3").2, at("a1").2, "not a king's model");
+            let stone = (SURFACE + STONE_THICKNESS / 2.0) - at("c3").1.translation.y;
+            assert!(stone.abs() < 2e-4, "a stone lies on the board: {stone}");
+            // A king looks across the board from its seat's side: the first seat's to the far
+            // side, the second's back at it.
+            let looks = |cell: &str| at(cell).1.rotation * Vec3::NEG_Z;
+            assert!(looks("a1").z < -0.99, "{}", looks("a1"));
+            assert!(looks("a3").z > 0.99, "{}", looks("a3"));
+        }
+
+        #[test]
+        fn the_move_being_built_is_shown_as_the_piece_it_would_put_there() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use crate::play::Turn;
+
+            let mut app = with_looks();
+            let cells: &[(&str, &[(&str, &str)])] = &[("b2", &[("flat", "white")])];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("tak-5x5", cells));
+            app.update();
+            let place = |piece: &str, notation: &str| LegalSelection {
+                notation: notation.into(),
+                action: "place".into(),
+                to: Some("c3".into()),
+                from: None,
+                piece: Some(piece.into()),
+                gestures: vec![
+                    Gesture {
+                        kind: "piece".into(),
+                        value: piece.into(),
+                    },
+                    Gesture::pos("c3"),
+                ],
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options: vec![place("flat", "c3"), place("wall", "Sc3")],
+                complete: false,
+            });
+            turn.gesture(&Gesture {
+                kind: "piece".into(),
+                value: "wall".into(),
+            });
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            // Under the pointer: a wall, standing on the board.
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c3".into());
+            app.update();
+            let wall = assets::model_span("models/tak/wall.glb").unwrap();
+            let mut ghosts = app
+                .world_mut()
+                .query_filtered::<(&Mesh3d, &Transform), With<Ghost>>();
+            let shown: Vec<(Handle<Mesh>, Transform)> = ghosts
+                .iter(app.world())
+                .map(|(mesh, transform)| (mesh.0.clone(), *transform))
+                .collect();
+            assert_eq!(shown.len(), 1);
+            let (mesh, transform) = shown[0].clone();
+            assert!((transform.translation.y - (SURFACE - wall.0)).abs() < 1e-6);
+            let stood = drawn(&mut app);
+            assert_ne!(
+                mesh,
+                stood[&("b2".to_string(), 0)].2,
+                "not a flat stone's model"
+            );
+
+            // Over a position a click would put nothing on, nothing is shown.
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b2".into());
+            app.update();
+            let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
+            assert_eq!(ghosts.iter(app.world()).count(), 0);
         }
 
         fn pieces(app: &mut App) -> Vec<(String, bool)> {

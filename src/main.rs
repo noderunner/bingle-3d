@@ -28,11 +28,13 @@ mod look;
 mod net;
 mod new_game;
 mod play;
+mod props;
 // Used only by the headset so far.
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 mod ray_pointer;
 mod run_limit;
 mod scene;
+mod showcase;
 mod sign_in;
 mod slab;
 mod table;
@@ -188,6 +190,12 @@ fn main() -> AppExit {
                 }),
             },
         ));
+    if opts.showcase {
+        app.add_plugins(showcase::ShowcasePlugin {
+            card_face: opts.card_face.clone(),
+            card_back: opts.card_back.clone(),
+        });
+    }
     if let Some(limit) = run_limit::RunLimit::from_options(&opts) {
         app.add_plugins(run_limit::RunLimitPlugin(limit));
     }

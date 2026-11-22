@@ -30,8 +30,16 @@ Options:
                      connection on this machine, for ten seconds (no window)
   --environment NAME where the table stands, for this run: room (a plain table) or
                      garden
-  --view Y,P,R       where the camera starts: degrees round the table (0 is your
-                     side), degrees above it, metres from its middle (for pictures)
+  --view Y,P,R[,X,Z] where the camera starts: degrees round the table (0 is your
+                     side), degrees above it, metres from what it looks at; that is
+                     the table's middle, or the place X metres to its right and Z
+                     towards you (for pictures)
+  --showcase         lay every piece's model, some cards and the dice on the table,
+                     with nothing else: to look at an asset (with --view, --frames,
+                     --screenshot)
+  --card-face FILE   in the showcase, a picture (JPEG or PNG, 5 to 7) for the cards'
+                     faces
+  --card-back FILE   and one for their backs, in place of the client's own
   --vr               draw the table in a headset too, through OpenXR (only in a build
                      with the vr feature, which does so by itself when SteamVR is
                      already running). Home sits you at the table again
@@ -75,8 +83,13 @@ pub struct Options {
     pub voice_check: bool,
     /// Where the table stands, for this run: an environment's id.
     pub environment: Option<String>,
-    /// Where the camera starts, as `YAW,PITCH,RADIUS`.
+    /// Where the camera starts, as `YAW,PITCH,RADIUS[,X,Z]`.
     pub view: Option<String>,
+    /// Lay the piece models, cards and dice out on the table, to look at.
+    pub showcase: bool,
+    /// Pictures for the showcase's cards, from files.
+    pub card_face: Option<PathBuf>,
+    pub card_back: Option<PathBuf>,
     /// Draw in a headset too.
     pub vr: bool,
     /// Stay in the window, even with a headset waiting.
@@ -146,10 +159,13 @@ impl Options {
                 "--voice" => opts.voice = true,
                 "--vr" => opts.vr = true,
                 "--desktop" => opts.desktop = true,
+                "--showcase" => opts.showcase = true,
+                "--card-face" => opts.card_face = Some(PathBuf::from(value("a picture's file")?)),
+                "--card-back" => opts.card_back = Some(PathBuf::from(value("a picture's file")?)),
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--environment" => opts.environment = Some(value("an environment's name")?),
                 "--view" => {
-                    let v = value("YAW,PITCH,RADIUS")?;
+                    let v = value("YAW,PITCH,RADIUS[,X,Z]")?;
                     crate::camera::StartView::parse(&v).map_err(|e| format!("--view: {e}"))?;
                     opts.view = Some(v);
                 }
@@ -184,6 +200,9 @@ impl Options {
         }
         if opts.vr && opts.desktop {
             return Err("only one of --vr and --desktop".into());
+        }
+        if (opts.card_face.is_some() || opts.card_back.is_some()) && !opts.showcase {
+            return Err("--card-face and --card-back are for --showcase".into());
         }
         Ok(opts)
     }
@@ -348,6 +367,20 @@ mod tests {
                 .unwrap()
                 .looks_for_headset()
         );
+    }
+
+    #[test]
+    fn the_showcase_and_pictures_for_its_cards() {
+        let opts = Options::parse(["--showcase", "--card-face", "seven.png"]).unwrap();
+        assert!(opts.showcase);
+        assert_eq!(opts.card_face, Some(PathBuf::from("seven.png")));
+        assert_eq!(opts.card_back, None);
+        assert!(!Options::parse(["--frames", "3"]).unwrap().showcase);
+        assert!(
+            Options::parse(["--card-back=b.jpg"]).is_err(),
+            "a picture with nothing to put it on"
+        );
+        assert!(Options::parse(["--showcase", "--card-face"]).is_err());
     }
 
     #[test]

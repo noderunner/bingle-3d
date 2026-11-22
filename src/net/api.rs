@@ -814,6 +814,11 @@ pub struct LegalSelection {
     /// The position it places on or moves to, when it has one.
     #[serde(default)]
     pub to: Option<String>,
+    /// The position it moves from, and the kind of piece it places, when it says.
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub piece: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub gestures: Vec<Gesture>,
 }

@@ -1,0 +1,298 @@
+//! `--showcase`: every model the client has for a piece, in each material its games give it,
+//! with a few playing cards and the dice, laid out on the table with nothing else: to look at an
+//! asset in the client's own light, as the asset pipeline asks before one is called done
+//! (`assets-src/README.md`). A face is seen from one side here, as nowhere in Blender, so this is
+//! where a card mapped or wound the wrong way shows.
+//!
+//! The pieces are found in the appearance files, so a new one is here by itself, and no game is
+//! named. `--card-face` and `--card-back` try a picture (a JPEG or a PNG) on a card's sides.
+
+use std::path::{Path, PathBuf};
+
+use bevy::asset::RenderAssetUsages;
+use bevy::gltf::GltfAssetLabel;
+use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+use bevy::prelude::*;
+
+use crate::appearance::{Appearances, Stands};
+use crate::board::BoardBuilt;
+use crate::look::{self, MaterialSpec};
+use crate::{assets, props};
+
+pub struct ShowcasePlugin {
+    /// Pictures to try on the cards' sides, from files outside the client.
+    pub card_face: Option<PathBuf>,
+    pub card_back: Option<PathBuf>,
+}
+
+#[derive(Resource, Clone)]
+struct Pictures {
+    face: Option<PathBuf>,
+    back: Option<PathBuf>,
+}
+
+impl Plugin for ShowcasePlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(Pictures {
+            face: self.card_face.clone(),
+            back: self.card_back.clone(),
+        })
+        .add_systems(Startup, lay_out)
+        .add_systems(Update, clear_the_view);
+    }
+}
+
+/// Between two pieces in a row, between two rows, and between the rows and what lies in front;
+/// and how many pieces a row holds.
+const ACROSS: f32 = 0.034;
+const BACK: f32 = 0.044;
+const GAP: f32 = 0.03;
+const ROW: usize = 8;
+
+/// One piece to show: its model, what it is made of, and how its game stands it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shown {
+    pub model: String,
+    pub material: MaterialSpec,
+    pub stands: Stands,
+}
+
+/// Every piece model the appearances name, once in each material it is given: each
+/// appearance's seats in turn, in the files' order.
+pub fn pieces(all: &Appearances) -> Vec<Shown> {
+    let mut out: Vec<Shown> = Vec::new();
+    for look in &all.0 {
+        for seat in look.seats.values() {
+            let Some(theirs) = look.material(seat.pieces.as_ref()) else {
+                continue;
+            };
+            for piece in look.pieces.values() {
+                let material = look.material(piece.material.as_ref()).unwrap_or(theirs);
+                if out
+                    .iter()
+                    .any(|s| s.model == piece.model && s.material == *material)
+                {
+                    continue;
+                }
+                out.push(Shown {
+                    model: piece.model.clone(),
+                    material: material.clone(),
+                    stands: piece.stands,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Where each of `count` pieces stands on the table (x across, y towards the player): in rows
+/// of `ROW` going back from y = 0, each row centred.
+pub fn places(count: usize) -> Vec<Vec2> {
+    (0..count)
+        .map(|i| {
+            let (row, column) = (i / ROW, i % ROW);
+            let in_row = ROW.min(count - row * ROW);
+            let x = (column as f32 - (in_row as f32 - 1.0) / 2.0) * ACROSS;
+            Vec2::new(x, -(row as f32) * BACK)
+        })
+        .collect()
+}
+
+fn lay_out(
+    mut commands: Commands,
+    server: Res<AssetServer>,
+    all: Res<Appearances>,
+    pictures: Res<Pictures>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut built: MessageWriter<BoardBuilt>,
+) {
+    let pieces = pieces(&all);
+    let depth = (pieces.len().saturating_sub(1) / ROW) as f32 * BACK;
+    // In front of the pieces: the dice, then the cards. The whole is centred on the table.
+    let dice_at = GAP + props::DIE_SIDE / 2.0;
+    let cards_at = dice_at + props::DIE_SIDE / 2.0 + GAP + props::CARD_SIZE.y / 2.0;
+    let front = cards_at + props::CARD_SIZE.y / 2.0;
+    let shift = (depth - front) / 2.0;
+    let root = commands
+        .spawn((
+            Name::new("Showcase"),
+            Transform::from_xyz(0.0, 0.0, shift),
+            Visibility::default(),
+        ))
+        .id();
+
+    for (shown, spot) in pieces.iter().zip(places(pieces.len())) {
+        let Some((low, _)) = assets::model_span(&shown.model) else {
+            continue;
+        };
+        // Each as its model is, but one with a face turned a little, which shows it better
+        // than square on.
+        let turn = match shown.stands {
+            Stands::Forward => 0.6,
+            _ => 0.0,
+        };
+        commands.spawn((
+            Name::new(shown.model.clone()),
+            Mesh3d(
+                server.load(
+                    GltfAssetLabel::Primitive {
+                        mesh: 0,
+                        primitive: 0,
+                    }
+                    .from_asset(assets::path(&shown.model)),
+                ),
+            ),
+            MeshMaterial3d(materials.add(shown.material.build(&server))),
+            Transform::from_xyz(spot.x, -low, spot.y).with_rotation(Quat::from_rotation_y(turn)),
+            ChildOf(root),
+        ));
+    }
+
+    // The dice, each showing its number, one to six.
+    let die = [("body", look::die()), ("pips", look::pips())]
+        .map(|(part, spec)| (part, materials.add(spec.build(&server))));
+    for number in 1..=6u8 {
+        let x = (number as f32 - 3.5) * (props::DIE_SIDE + 0.012);
+        let at = Transform::from_xyz(x, props::DIE_SIDE / 2.0, dice_at).with_rotation(
+            Quat::from_rotation_y(0.35 * (number as f32 - 3.0)) * props::die_showing(number),
+        );
+        let whole = props::spawn(&mut commands, &server, props::DIE, &die, at);
+        commands.entity(whole).insert(ChildOf(root));
+    }
+
+    // The cards: one face up, one face down, and a few in a pile.
+    let mut side = |file: &Option<PathBuf>, without: MaterialSpec| {
+        let mut material = without.build(&server);
+        if let Some(file) = file {
+            match picture(file) {
+                Ok(image) => {
+                    material.base_color = Color::WHITE;
+                    material.base_color_texture = Some(images.add(image));
+                }
+                Err(e) => error!("{}: {e}", file.display()),
+            }
+        }
+        materials.add(material)
+    };
+    let card = [
+        ("face", side(&pictures.face, look::paper())),
+        (
+            "back",
+            side(&pictures.back, look::card_side(look::CARD_BACK)),
+        ),
+        ("edge", materials.add(look::paper().build(&server))),
+    ];
+    let lie = |x: f32, layer: usize, yaw: f32, face_up: bool| {
+        let y = props::CARD_SIZE.z * (layer as f32 + 0.5);
+        Transform::from_xyz(x, y, cards_at)
+            .with_rotation(Quat::from_rotation_y(yaw) * props::card_lies(face_up))
+    };
+    let step = props::CARD_SIZE.x + 0.012;
+    let mut cards = vec![lie(-step, 0, 0.08, true), lie(0.0, 0, -0.05, false)];
+    cards.extend((0..10).map(|layer| lie(step, layer, 0.02 * (layer % 3) as f32, false)));
+    for at in cards {
+        let whole = props::spawn(&mut commands, &server, props::CARD, &card, at);
+        commands.entity(whole).insert(ChildOf(root));
+    }
+
+    // The camera frames it as it frames a board.
+    let widest = ROW.min(pieces.len()) as f32 * ACROSS;
+    built.write(BoardBuilt {
+        size: Vec2::new(widest.max(3.0 * step), depth + front),
+    });
+}
+
+/// A picture from a file outside the client, to try on a card: any the client can read.
+fn picture(file: &Path) -> Result<Image, String> {
+    let extension = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if extension == "svg" {
+        return Err(
+            "an SVG is not a picture the client reads: make it a PNG or a JPEG first".into(),
+        );
+    }
+    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+    Image::from_buffer(
+        &bytes,
+        ImageType::Extension(&extension),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::linear(),
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Nothing but the table is in the picture: the interface (the login screen, at start) stands
+/// aside.
+fn clear_the_view(mut roots: Query<&mut Visibility, (With<Node>, Without<ChildOf>)>) {
+    for mut visibility in &mut roots {
+        if *visibility != Visibility::Hidden {
+            *visibility = Visibility::Hidden;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_piece_model_is_shown_once_in_each_material_it_is_given() {
+        let all = Appearances::built_in();
+        let shown = pieces(&all);
+        for look in &all.0 {
+            for piece in look.pieces.values() {
+                assert!(
+                    shown.iter().any(|s| s.model == piece.model),
+                    "{}",
+                    piece.model
+                );
+            }
+        }
+        for (i, a) in shown.iter().enumerate() {
+            for b in &shown[i + 1..] {
+                assert!(
+                    a.model != b.model || a.material != b.material,
+                    "{} twice",
+                    a.model
+                );
+            }
+        }
+        // A stone is in several games' looks, in the same two materials: shown twice, not more.
+        let stones = shown
+            .iter()
+            .filter(|s| s.model == look::PIECE_MODEL)
+            .count();
+        assert_eq!(stones, 2);
+    }
+
+    #[test]
+    fn the_rows_go_back_from_the_front_each_centred_and_nothing_touches() {
+        let all = places(2 * ROW + 3);
+        assert_eq!(all.len(), 2 * ROW + 3);
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert!(a.distance(*b) > 0.03, "{a} and {b}");
+            }
+        }
+        for row in all.chunks(ROW) {
+            let middle = row.iter().map(|p| p.x).sum::<f32>() / row.len() as f32;
+            assert!(middle.abs() < 1e-5, "a row of {} is centred", row.len());
+            assert!(row.iter().all(|p| p.y == row[0].y));
+        }
+        assert!(all[0].y > all[ROW].y && all[ROW].y > all[2 * ROW].y);
+        assert!(places(0).is_empty());
+    }
+
+    #[test]
+    fn a_picture_that_cannot_be_read_says_why() {
+        let svg = picture(Path::new("face.svg")).unwrap_err();
+        assert!(svg.contains("SVG"), "{svg}");
+        assert!(picture(Path::new("/no/such/file.png")).is_err());
+    }
+}

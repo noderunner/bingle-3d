@@ -4,9 +4,12 @@
 //!
 //! The files are `assets/appearance/*.toml`. Each names the games it is for by the server's
 //! game id, and may give:
-//! - `pieces.<piece id>.model`: the glTF model a piece is drawn as;
+//! - `pieces.<piece id>`: the glTF `model` a piece is drawn as (one the game does not name is
+//!   the generic stone), how it `stands` (`Stands`), and a `material` of its own, when it is not
+//!   its seat's;
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
-//!   its goal's edges are stained; `.colour`, the seat's colour in the panels;
+//!   its goal's edges are stained; `.colour`, the seat's colour in the panels. A colour word no
+//!   seat plays may have one too, for the pieces that are nobody's;
 //! - `materials.<name>`: those materials (`look::MaterialSpec`);
 //! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
 //!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
@@ -97,8 +100,31 @@ pub enum PlayOn {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PieceLook {
-    /// A glTF file; its first mesh is the piece.
+    /// A glTF file; its first mesh is the piece. The client stands it by its foot, and what is
+    /// on it in a stack by its height (`assets::model_span`).
     pub model: String,
+    /// How it is set down.
+    #[serde(default)]
+    pub stands: Stands,
+    /// What it is made of, whoever it belongs to; its seat's material without.
+    pub material: Option<String>,
+}
+
+/// How a piece is set down on its position.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stands {
+    /// As a stone put down by hand: turned any way, leaning a degree or so, no two quite the
+    /// same size.
+    #[default]
+    Loose,
+    /// Upright, turned any way: a turned piece, which looks the same from every side.
+    Upright,
+    /// Upright and square to the board, as a block is set down by hand: a quarter turn any way,
+    /// never quite true and never quite in the middle, so the blocks of a stack do not line up.
+    Square,
+    /// Upright, looking across the board from its seat's side: a piece with a face.
+    Forward,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -140,6 +166,11 @@ impl Appearance {
         for (id, piece) in &self.pieces {
             if !assets::exists(&piece.model) {
                 out.push(format!("piece {id}: no model {}", piece.model));
+            }
+            if let Some(name) = &piece.material
+                && !self.materials.contains_key(name)
+            {
+                out.push(format!("piece {id}: no material {name}"));
             }
         }
         for (id, picture) in &self.card.pictures {
@@ -321,12 +352,52 @@ mod tests {
     }
 
     #[test]
+    fn each_kind_of_piece_has_its_model_and_how_it_stands() {
+        let all = Appearances::built_in();
+        let piece = |game: &str, id: &str| {
+            all.for_game(game)
+                .and_then(|a| a.pieces.get(id))
+                .unwrap_or_else(|| panic!("{game}: {id}"))
+        };
+        // A stone lies as it falls; a block is square to the board; a piece with a face looks
+        // across it.
+        assert_eq!(piece("hex-11", "stone").stands, Stands::Loose);
+        assert_eq!(piece("tak-5x5", "flat").stands, Stands::Square);
+        assert_eq!(piece("tak-5x5", "cap").stands, Stands::Upright);
+        // Tak's capstone is a pawn, as a game of pawns' is.
+        assert_eq!(
+            piece("tak-5x5", "cap").model,
+            piece("breakthrough", "pawn").model
+        );
+        assert_eq!(piece("fist", "ace").stands, Stands::Forward);
+        assert_ne!(
+            piece("tak-5x5", "flat").model,
+            piece("tak-5x5", "wall").model
+        );
+        assert_ne!(
+            piece("draughts", "man").model,
+            piece("draughts", "king").model
+        );
+        // One piece id, two games, two models: a file is for the games that agree.
+        assert_ne!(
+            piece("fist", "pawn").model,
+            piece("breakthrough", "pawn").model
+        );
+        // A piece may be made of something of its own, and a colour no seat plays have a look.
+        let arrow = piece("amazons", "arrow");
+        let look = all.for_game("amazons").unwrap();
+        assert!(look.material(arrow.material.as_ref()).is_some());
+        assert!(all.for_game("fist").unwrap().seats.contains_key("green"));
+    }
+
+    #[test]
     fn mistakes_are_found() {
         let a = Appearance::parse(
             r#"
             games = ["g"]
             [pieces.stone]
             model = "models/none.glb"
+            material = "absent"
             [seats.red]
             pieces = "missing"
             [card.pictures]
@@ -334,7 +405,12 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 4, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 5, "{:?}", a.problems());
+        assert!(
+            Appearance::parse("games = [\"g\"]\n[pieces.p]\nmodel = \"m\"\nstands = \"askew\"")
+                .is_err(),
+            "a way of standing the client does not know is refused"
+        );
         assert!(
             Appearance::parse("games = []\ncolour = 1").is_err(),
             "unknown keys are refused, so a misspelling is not ignored"

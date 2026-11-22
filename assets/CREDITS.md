@@ -22,6 +22,7 @@ And the garden's:
 - **Kloofendal 28d Misty (Pure Sky)** (the sky): Greg Zaal, Jenelle van Heerden
 
 The stone's model and the stones' colours are made by the pipeline's own scripts, as are the
-bowls, and everything in the garden but its rocks: the table, the cushions, the platform, the
+bowls, the chessmen, the checkers, Tak's pieces, the playing card and its back, the die, and
+everything in the garden but its rocks: the table, the cushions, the platform, the
 maple, the bamboo, the shrubs, the lantern, the basin, the pond, the fence, the leaves, the trees
 beyond the fence and the hills.

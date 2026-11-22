@@ -157,8 +157,9 @@ rim stained and the cells along them shaded in its colour. The buttons at the bo
 choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
-the board's lines cross, each player's in a wooden bowl beside the board. The client needs a
-Bingle whose API is 1.6 or newer.
+the board's lines cross, each player's in a wooden bowl beside the board. Tak has its blocks,
+walls and capstones, stacked as they are played; draughts wooden checkers; and Breakthrough,
+Amazons, Brandubh and Fist turned chessmen. The client needs a Bingle whose API is 1.6 or newer.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,
@@ -172,7 +173,16 @@ cargo run -- --environment garden --view 60,15,2 --frames 200 --screenshot garde
 ```
 
 `--view YAW,PITCH,RADIUS` puts the camera somewhere for a picture: degrees round the table (0 is
-your side), degrees above it, and metres from its middle.
+your side), degrees above it, and metres from its middle. Two more numbers, `,X,Z`, aim it at a
+place on the table instead: metres to the right of the middle, and towards you.
+
+`--showcase` lays every piece's model on the table, with the dice and a few playing cards, and
+nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
+a PNG, 5 to 7) on the cards' sides.
+
+```sh
+cargo run -- --showcase --view 15,38,0.5
+```
 
 **In a headset**: the place and the table at their real size, controllers that point and click,
 the login and main screens on a screen across the table, the game's panel beside it, a menu,

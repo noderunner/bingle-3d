@@ -18,7 +18,25 @@ import common  # noqa: E402
 # than quietly committing them.
 BLENDER = (5, 3)
 
-STEPS = ["environment", "woods", "stones", "engraving", "cards", "surfaces", "tableware", "garden", "garden_light"]
+STEPS = [
+    "environment",
+    "woods",
+    "stones",
+    "engraving",
+    "cards",
+    "surfaces",
+    "tableware",
+    "chessmen",
+    "checkers",
+    "tak",
+    "playing_cards",
+    "dice",
+    "garden",
+    "garden_light",
+]
+
+# Not steps of the build: pictures to look at, in `target/asset-previews/`.
+LOOKS = ["previews", "piece_previews", "garden_previews"]
 
 
 def main():
@@ -29,9 +47,9 @@ def main():
             f"{BLENDER[0]}.{BLENDER[1]}"
         )
     steps = args or STEPS
-    unknown = [s for s in steps if s not in STEPS + ["previews", "garden_previews", "fetch"]]
+    unknown = [s for s in steps if s not in STEPS + LOOKS + ["fetch"]]
     if unknown:
-        raise SystemExit(f"unknown steps: {unknown}; the steps are {STEPS + ['previews']}")
+        raise SystemExit(f"unknown steps: {unknown}; the steps are {STEPS + LOOKS}")
     common.fetch()
     for step in steps:
         if step == "fetch":

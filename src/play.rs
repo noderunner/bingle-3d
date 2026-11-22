@@ -67,6 +67,14 @@ pub enum Outcome {
     Submit,
 }
 
+/// What a selection would stand on a position: the kind of piece, when the selections say, and
+/// where it comes from, when it moves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Arriving<'a> {
+    pub piece: Option<&'a str>,
+    pub from: Option<&'a str>,
+}
+
 /// The impulse this client's seat is on, and the move being built for it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Turn {
@@ -118,6 +126,33 @@ impl Turn {
     /// Where the selections made put something, to show it there before it is sent.
     pub fn placed(&self) -> impl Iterator<Item = &str> {
         self.made.iter().filter_map(|s| s.to.as_deref())
+    }
+
+    /// What the move being built would stand on `cell`: by the last selection made that puts
+    /// something there, else by the selections a click there could still become, as far as they
+    /// agree. `None` when it would put nothing there (a click that picks a piece up, say).
+    pub fn arriving(&self, cell: &str) -> Option<Arriving<'_>> {
+        fn of(s: &LegalSelection) -> Arriving<'_> {
+            Arriving {
+                piece: s.piece.as_deref(),
+                from: s.from.as_deref(),
+            }
+        }
+        let lands = |s: &&LegalSelection| s.to.as_deref() == Some(cell);
+        if let Some(made) = self.made.iter().rev().find(lands) {
+            return Some(of(made));
+        }
+        let mut options = self.matching().filter(lands).map(of);
+        let mut out = options.next()?;
+        for other in options {
+            if other.piece != out.piece {
+                out.piece = None;
+            }
+            if other.from != out.from {
+                out.from = None;
+            }
+        }
+        Some(out)
     }
 
     /// The server's answer to the last question.
@@ -512,12 +547,69 @@ mod tests {
             notation: notation.into(),
             action: "x".into(),
             to: to.map(Into::into),
+            from: None,
+            // As the server says it: the piece the selection's gestures choose.
+            piece: gestures
+                .iter()
+                .find(|(k, _)| *k == "piece")
+                .map(|(_, v)| v.to_string()),
             gestures: gestures.iter().map(|(k, v)| g(k, v)).collect(),
         }
     }
 
     fn place(cell: &str) -> LegalSelection {
         sel(cell, Some(cell), &[("piece", "stone"), ("pos", cell)])
+    }
+
+    /// A piece stepping from one position to another.
+    fn step(from: &str, to: &str) -> LegalSelection {
+        LegalSelection {
+            from: Some(from.into()),
+            ..sel(
+                &format!("{from}-{to}"),
+                Some(to),
+                &[("pos", from), ("pos", to)],
+            )
+        }
+    }
+
+    #[test]
+    fn what_a_click_would_stand_on_a_position_is_known_as_far_as_the_selections_agree() {
+        let mut t = Turn::new(1);
+        let flat = sel("b2", Some("b2"), &[("piece", "flat"), ("pos", "b2")]);
+        let wall = sel("Sb2", Some("b2"), &[("piece", "wall"), ("pos", "b2")]);
+        let only = sel("c3", Some("c3"), &[("piece", "flat"), ("pos", "c3")]);
+        t.answered(answer(
+            4,
+            vec![flat, wall, only, step("a1", "a2"), step("b1", "a2")],
+        ));
+        // Two kinds could go there: which is not known until one is chosen.
+        let b2 = t.arriving("b2").expect("something would be put there");
+        assert_eq!((b2.piece, b2.from), (None, None));
+        assert_eq!(t.arriving("c3").unwrap().piece, Some("flat"));
+        // Two pieces could step there: where from is not known, nor is it said what they are.
+        assert_eq!(t.arriving("a2"), Some(Arriving::default()));
+        // A click that picks a piece up puts nothing down, and nor does one nowhere.
+        assert_eq!(t.arriving("a1"), None);
+        assert_eq!(t.arriving("z9"), None);
+
+        assert_eq!(t.gesture(&g("piece", "wall")), Outcome::Changed);
+        assert_eq!(t.arriving("b2").unwrap().piece, Some("wall"));
+        assert_eq!(t.arriving("c3"), None, "no wall may go there");
+
+        // Once made, a selection says what it put where, whatever may follow.
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![step("a1", "a2"), step("b1", "a2")]));
+        assert_eq!(t.gesture(&g("pos", "a1")), Outcome::Changed);
+        assert_eq!(t.arriving("a2").unwrap().from, Some("a1"));
+        assert_eq!(t.gesture(&g("pos", "a2")), Outcome::Ask);
+        assert_eq!(
+            t.arriving("a2"),
+            Some(Arriving {
+                piece: None,
+                from: Some("a1")
+            })
+        );
     }
 
     fn swap() -> LegalSelection {

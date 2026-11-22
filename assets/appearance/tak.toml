@@ -1,0 +1,43 @@
+# How this client draws Tak (Bingle's ADR 0124: the server says what things are, and each client
+# decides how they look). Data only: nothing here changes the rules.
+#
+# Square blocks of pale and of dark wood, made by the asset pipeline
+# (`assets-src/blender/tak.py`): a flat stone is a block lying down, and a standing stone the
+# same block on its edge. The capstone is a chess pawn of the same wood.
+
+games = ["tak-3x3", "tak-4x4", "tak-5x5", "tak-6x6", "tak-7x7", "tak-8x8"]
+
+# `square`: set down by hand, square to the board: a quarter turn any way, never quite true and
+# never quite in the middle, so a stack's blocks do not line up.
+[pieces.flat]
+model = "models/tak/flat.glb"
+stands = "square"
+
+[pieces.wall]
+model = "models/tak/wall.glb"
+stands = "square"
+
+[pieces.cap]
+model = "models/chess/pawn.glb"
+stands = "upright"
+
+[seats.white]
+pieces = "pale"
+colour = [0.88, 0.78, 0.60]
+
+[seats.black]
+pieces = "dark"
+colour = [0.24, 0.16, 0.12]
+
+# Oiled wood: a soft sheen.
+[materials.pale]
+wood = "maple"
+tint = [1.0, 0.94, 0.82]
+clearcoat = 0.25
+clearcoat_roughness = 0.3
+
+[materials.dark]
+wood = "walnut"
+tint = [0.62, 0.55, 0.52]
+clearcoat = 0.25
+clearcoat_roughness = 0.3
