@@ -202,6 +202,12 @@ The positions a click would be taken on glow: a line of light traced round each,
 streaks rising from it. `--legal-moves` starts with every such position lit, and `--no-bloom`
 without the camera's bloom, as a headset sees the table.
 
+The client starts fullscreen, at the resolution the desktop is in. Esc, *Settings* turns
+fullscreen off and chooses a resolution (in fullscreen, one the monitor offers; in a window, the
+window's size), kept in `config.toml` (`fullscreen`, `resolution = "1920x1080"`). `--windowed`
+or `--fullscreen` chooses for one run; a run with `--frames` or `--screenshot` is a 1280×720
+window unless `--fullscreen` says.
+
 The window draws at most 60 frames a second, which a board game does not need more than, so the
 GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
 and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.

@@ -178,8 +178,13 @@ A game's own rules and its players' words keep their terms.
   (`Position::panel_actions`: a patience's cards) is no button. A game whose look names a
   score sheet in the view (`[cards] sheet`) has it drawn there, a box for each frame.
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
-  main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
-  stand aside (`escape_menu::closed`).
+  main screen, settings, logout to the login screen, quit; game options and profile greyed). While it is open, play's keys and the camera
+  stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display.
+- `src/display.rs`: fullscreen (the default: borderless at the desktop's resolution) or a
+  window, and the resolution (`DisplaySettings`; `offered`, `mode_for` and `window_mode` have no
+  Bevy systems in them), kept as `fullscreen` and `resolution` in `config.toml`. A run limited
+  by `--frames` or `--screenshot` is a 1280×720 window unless `--fullscreen`; a headset leaves
+  the window alone.
 - `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
   player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
   Bevy in it.

@@ -735,6 +735,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   (greyed until built) and *Quit*. It covers the window, so clicks reach neither the board nor
   the panels, and the move keys and the camera stand aside. A text field with the keyboard is
   let go of by the first Esc. Backspace now takes a gesture back, which Esc did before.
+- *Settings* is built (2026-11-23): fullscreen or a window, and the resolution (`display.rs`),
+  kept in `config.toml` (`fullscreen`, `resolution`). Fullscreen is the default (decision 14).
+  Esc on *Settings* goes back to the menu.
 - Found while building it: the interface is blended in linear light (the cameras are HDR), so a
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
   see-through, than the same colours on the web page. The new parts use opaque colours.
@@ -1070,3 +1073,16 @@ Proposed 2026-11-23, for the maintainer to settle (the frame limit's pull reques
     as far as is known; the Frame's runtime is untried) keeps its own setting, and the log says
     so. On a 144 Hz monitor 60 does not divide the refresh and a camera turning may judder:
     72 or 0 there.
+
+Proposed 2026-11-23, for the maintainer to settle (the fullscreen pull request):
+
+14. **The client starts fullscreen, at the desktop's resolution.** That is borderless
+    fullscreen on the monitor the window opens on: nothing is switched, and the resolution is
+    the one the monitor is already in, so it needs no detecting before the window exists. A
+    resolution chosen in *Settings* is, in fullscreen, an exclusive mode of the monitor's own
+    of that size (its highest refresh rate), greyed where the monitor lists no such mode; where
+    the platform cannot switch (Wayland), winit falls back to borderless at the desktop's
+    resolution. In a window it is the window's size; *Any size* leaves it to the player.
+    Resolutions larger than the monitor are not offered. A run limited by `--frames` or
+    `--screenshot` stays a 1280×720 window (`--fullscreen` to override), so a script's
+    picture is the same everywhere; a headset leaves the window alone.

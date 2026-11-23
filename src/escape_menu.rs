@@ -1,12 +1,13 @@
 //! The menu Esc opens over a game or the main screen: *Resume*, *Main Menu* (back to the main
 //! screen from a game; the game goes on at the server, as the game panel's *Back* leaves it),
-//! *Settings*, *Game Options* and *Profile* (not built yet, shown greyed), *Logout* (back to the
-//! login screen, the account's session ended, auto-login off) and *Quit* (to the desktop). On
-//! the main screen *Main Menu* and *Game Options* are greyed too. Not on the login screen.
+//! *Settings* (a page of its own: fullscreen or a window, and the resolution, `display.rs`),
+//! *Game Options* and *Profile* (not built yet, shown greyed), *Logout* (back to the login
+//! screen, the account's session ended, auto-login off) and *Quit* (to the desktop). On the main
+//! screen *Main Menu* and *Game Options* are greyed too. Not on the login screen.
 //!
 //! While it is open it covers the window: a click reaches neither the board nor the panels, and
-//! the move keys and the camera's keys stand aside. Esc closes it again; a text field that has
-//! the keyboard gives it up to the first Esc instead.
+//! the move keys and the camera's keys stand aside. Esc closes it again (from *Settings*, back to
+//! the menu first); a text field that has the keyboard gives it up to the first Esc instead.
 
 use bevy::input_focus::InputFocus;
 use bevy::picking::Pickable;
@@ -14,7 +15,10 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
+use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow};
+
 use crate::browser::{Action, colours};
+use crate::display::{self, DisplaySettings};
 use crate::fonts::UiFonts;
 use crate::login::{self, LoginScreen, Screen};
 use crate::net::{Connection, Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
@@ -32,7 +36,9 @@ impl Plugin for EscapeMenuPlugin {
                     toggle_on_escape,
                     close_off_the_main_screen.run_if(resource_changed::<Screen>),
                     show.run_if(
-                        resource_changed::<EscapeMenu>.or_eager(resource_changed::<WatchStatus>),
+                        resource_changed::<EscapeMenu>
+                            .or_eager(resource_changed::<WatchStatus>)
+                            .or_eager(resource_exists_and_changed::<DisplaySettings>),
                     ),
                     colour_items,
                 )
@@ -41,10 +47,19 @@ impl Plugin for EscapeMenuPlugin {
     }
 }
 
-/// Whether the menu is open.
+/// Whether the menu is open, and at which page.
 #[derive(Resource, Debug, Default)]
 pub struct EscapeMenu {
     pub open: bool,
+    pub page: Page,
+}
+
+/// The menu's pages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Page {
+    #[default]
+    Menu,
+    Settings,
 }
 
 /// Whether the menu is closed, for what stands aside while it is open (`play.rs`, the camera);
@@ -58,8 +73,15 @@ pub fn closed(menu: Option<&EscapeMenu>) -> bool {
 pub enum MenuAction {
     Resume,
     MainMenu,
+    Settings,
     Logout,
     Quit,
+    /// From *Settings* back to the menu.
+    Back,
+    /// Fullscreen, or a window.
+    Fullscreen,
+    /// A resolution, or none: the desktop's.
+    Resolution(Option<(u32, u32)>),
 }
 
 /// The menu's items, in order: a name, and what it does (`None`: greyed). In a game, or on the
@@ -68,7 +90,7 @@ fn items(in_game: bool) -> [(&'static str, Option<MenuAction>); 7] {
     [
         ("Resume", Some(MenuAction::Resume)),
         ("Main Menu", in_game.then_some(MenuAction::MainMenu)),
-        ("Settings", None),
+        ("Settings", Some(MenuAction::Settings)),
         ("Game Options", None),
         ("Profile", None),
         ("Logout", Some(MenuAction::Logout)),
@@ -88,12 +110,14 @@ pub struct MenuOverlay;
 /// How the window is dimmed behind the menu.
 pub const DIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
 
-/// An item that can be chosen (the others are greyed).
+/// An item that can be chosen (the others are greyed), and whether it is the choice made
+/// among others (a setting's).
 #[derive(Component)]
-struct MenuItem;
+struct MenuItem {
+    chosen: bool,
+}
 
-fn spawn_menu(mut commands: Commands, fonts: Res<UiFonts>) {
-    let f = &*fonts;
+fn spawn_menu(mut commands: Commands) {
     commands
         .spawn((
             MenuOverlay,
@@ -131,15 +155,6 @@ fn spawn_menu(mut commands: Commands, fonts: Res<UiFonts>) {
                 ))
                 .with_children(|menu| {
                     menu.spawn((
-                        Text::new("Menu"),
-                        f.semibold(22.0),
-                        TextColor(colours::TEXT),
-                        Node {
-                            margin: UiRect::bottom(px(6)),
-                            ..default()
-                        },
-                    ));
-                    menu.spawn((
                         MenuItems,
                         Node {
                             flex_direction: FlexDirection::Column,
@@ -161,13 +176,22 @@ fn item_node() -> Node {
 }
 
 fn item(f: &UiFonts, label: &str, action: MenuAction) -> impl Bundle {
+    choice(f, label, action, false, item_node())
+}
+
+/// An item, shown as the choice made (`chosen`) or not, laid out as `node` says.
+fn choice(f: &UiFonts, label: &str, action: MenuAction, chosen: bool, node: Node) -> impl Bundle {
     (
-        MenuItem,
+        MenuItem { chosen },
         Button,
         Action::Menu(action),
         Hovered::default(),
-        item_node(),
-        BackgroundColor(colours::BUTTON),
+        node,
+        BackgroundColor(if chosen {
+            colours::CHOSEN
+        } else {
+            colours::BUTTON
+        }),
         observe(on_item),
         children![(
             Text::new(label),
@@ -180,8 +204,12 @@ fn item(f: &UiFonts, label: &str, action: MenuAction) -> impl Bundle {
 
 /// An item not built yet: shown, and greyed.
 fn greyed(f: &UiFonts, label: &str) -> impl Bundle {
+    greyed_in(f, label, item_node())
+}
+
+fn greyed_in(f: &UiFonts, label: &str, node: Node) -> impl Bundle {
     (
-        item_node(),
+        node,
         BackgroundColor(colours::BLANK),
         children![(
             Text::new(label),
@@ -205,13 +233,34 @@ fn on_item(
     mut watching: ResMut<WatchStatus>,
     mut exit: MessageWriter<AppExit>,
     (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
+    display: Option<ResMut<DisplaySettings>>,
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
     };
-    menu.open = false;
+    // A setting is changed with the menu open, and kept for the next run.
+    let set = |change: &dyn Fn(&mut DisplaySettings)| {
+        if let Some(mut display) = display {
+            change(&mut display);
+            net.send(Request::RememberDisplay {
+                fullscreen: display.fullscreen,
+                resolution: display.resolution,
+            });
+        }
+    };
     match action {
-        MenuAction::Resume => {}
+        MenuAction::Settings => menu.page = Page::Settings,
+        MenuAction::Back => menu.page = Page::Menu,
+        MenuAction::Fullscreen => set(&|d| d.fullscreen = !d.fullscreen),
+        MenuAction::Resolution(size) => set(&|d| d.resolution = *size),
+        _ => menu.open = false,
+    }
+    match action {
+        MenuAction::Resume
+        | MenuAction::Settings
+        | MenuAction::Back
+        | MenuAction::Fullscreen
+        | MenuAction::Resolution(_) => {}
         MenuAction::MainMenu => {
             // As the game panel's Back: stop watching, and read the server's lists again.
             stop_watching(&net, &mut watching);
@@ -255,7 +304,12 @@ fn toggle_on_escape(
         focus.clear();
         return;
     }
+    if menu.open && menu.page == Page::Settings {
+        menu.page = Page::Menu;
+        return;
+    }
     menu.open = !menu.open;
+    menu.page = Page::Menu;
 }
 
 fn close_off_the_main_screen(screen: Res<Screen>, mut menu: ResMut<EscapeMenu>) {
@@ -264,12 +318,19 @@ fn close_off_the_main_screen(screen: Res<Screen>, mut menu: ResMut<EscapeMenu>) 
     }
 }
 
-/// Shows the menu, with its items for where it opens.
+/// Shows the menu, with its items for where it opens, or its settings.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system takes what it reads as parameters"
+)]
 fn show(
     mut commands: Commands,
     menu: Res<EscapeMenu>,
     watching: Res<WatchStatus>,
     fonts: Res<UiFonts>,
+    display: Option<Res<DisplaySettings>>,
+    window: Query<Option<&OnMonitor>, With<PrimaryWindow>>,
+    monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     mut overlay: Single<&mut Node, With<MenuOverlay>>,
     list: Single<Entity, With<MenuItems>>,
 ) {
@@ -282,10 +343,38 @@ fn show(
         return;
     }
     let f = &*fonts;
+    let title = |list: &mut ChildSpawnerCommands, text: &str| {
+        list.spawn((
+            Text::new(text),
+            f.semibold(22.0),
+            TextColor(colours::TEXT),
+            Node {
+                margin: UiRect::bottom(px(6)),
+                ..default()
+            },
+        ));
+    };
+    if menu.page == Page::Settings {
+        let display = display.as_deref().copied().unwrap_or(DisplaySettings {
+            fullscreen: true,
+            resolution: None,
+        });
+        let monitor = display::current_monitor(&window, &monitors);
+        commands
+            .entity(*list)
+            .despawn_related::<Children>()
+            .with_children(|list| {
+                title(list, "Settings");
+                settings(list, f, display, monitor);
+                list.spawn(item(f, "Back", MenuAction::Back));
+            });
+        return;
+    }
     commands
         .entity(*list)
         .despawn_related::<Children>()
         .with_children(|list| {
+            title(list, "Menu");
             for (label, action) in items(watching.is_watching()) {
                 match action {
                     Some(action) => {
@@ -299,14 +388,86 @@ fn show(
         });
 }
 
-type HoverChanged = (With<MenuItem>, Changed<Hovered>);
-
-fn colour_items(mut items: Query<(&Hovered, &mut BackgroundColor), HoverChanged>) {
-    for (hovered, mut bg) in &mut items {
-        bg.0 = if hovered.0 {
-            colours::BUTTON_HOVER
+/// The settings' items: fullscreen or not, and the resolutions this monitor offers (`monitor`:
+/// its size and modes, when known), in two columns under the desktop's own.
+fn settings(
+    list: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    display: DisplaySettings,
+    monitor: Option<((u32, u32), Vec<bevy::window::VideoMode>)>,
+) {
+    list.spawn(choice(
+        f,
+        if display.fullscreen {
+            "Fullscreen: On"
         } else {
-            colours::BUTTON
+            "Fullscreen: Off"
+        },
+        MenuAction::Fullscreen,
+        display.fullscreen,
+        item_node(),
+    ));
+    list.spawn((
+        Text::new("Resolution"),
+        f.regular(14.0),
+        TextColor(colours::MUTED),
+        Pickable::IGNORE,
+        Node {
+            margin: UiRect::top(px(4)),
+            ..default()
+        },
+    ));
+    let (size, modes) = monitor.map_or((None, Vec::new()), |(s, m)| (Some(s), m));
+    let own = match (display.fullscreen, size) {
+        (true, Some(size)) => format!("Desktop ({})", display::label(size)),
+        (true, None) => "Desktop".to_string(),
+        (false, _) => "Any size".to_string(),
+    };
+    list.spawn(choice(
+        f,
+        &own,
+        MenuAction::Resolution(None),
+        display.resolution.is_none(),
+        item_node(),
+    ));
+    let cell = || Node {
+        width: Val::Percent(48.0),
+        padding: UiRect::axes(px(6), px(8)),
+        border_radius: BorderRadius::all(px(6)),
+        justify_content: JustifyContent::Center,
+        ..default()
+    };
+    list.spawn(Node {
+        flex_wrap: FlexWrap::Wrap,
+        justify_content: JustifyContent::SpaceBetween,
+        row_gap: px(8),
+        ..default()
+    })
+    .with_children(|grid| {
+        for (size, usable) in display::offered(size, &modes, display.fullscreen) {
+            let label = display::label(size);
+            if usable {
+                grid.spawn(choice(
+                    f,
+                    &label,
+                    MenuAction::Resolution(Some(size)),
+                    display.resolution == Some(size),
+                    cell(),
+                ));
+            } else {
+                grid.spawn(greyed_in(f, &label, cell()));
+            }
+        }
+    });
+}
+
+fn colour_items(mut items: Query<(&MenuItem, &Hovered, &mut BackgroundColor), Changed<Hovered>>) {
+    for (item, hovered, mut bg) in &mut items {
+        bg.0 = match (item.chosen, hovered.0) {
+            (true, false) => colours::CHOSEN,
+            (true, true) => colours::CHOSEN_HOVER,
+            (false, false) => colours::BUTTON,
+            (false, true) => colours::BUTTON_HOVER,
         };
     }
 }
@@ -324,6 +485,10 @@ mod tests {
             .init_resource::<WatchStatus>()
             .init_resource::<EscapeMenu>()
             .init_resource::<Signing>()
+            .insert_resource(DisplaySettings {
+                fullscreen: true,
+                resolution: None,
+            })
             .insert_resource(Screen::Main)
             .insert_resource(LoginScreen::new("127.0.0.1:8080", true))
             .insert_resource(ServerStatus {
@@ -487,6 +652,48 @@ mod tests {
     }
 
     #[test]
+    fn settings_change_the_display_with_the_menu_open_and_keep_it() {
+        let (mut app, requests) = app();
+        press_escape(&mut app);
+        choose(&mut app, MenuAction::Settings);
+        let page = |app: &App| app.world().resource::<EscapeMenu>().page;
+        assert!(open(&app));
+        assert_eq!(page(&app), Page::Settings);
+
+        choose(&mut app, MenuAction::Fullscreen);
+        choose(&mut app, MenuAction::Resolution(Some((1600, 900))));
+        assert!(open(&app), "still open to choose more");
+        assert_eq!(
+            *app.world().resource::<DisplaySettings>(),
+            DisplaySettings {
+                fullscreen: false,
+                resolution: Some((1600, 900)),
+            }
+        );
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert_eq!(
+            asked.last(),
+            Some(&Request::RememberDisplay {
+                fullscreen: false,
+                resolution: Some((1600, 900)),
+            })
+        );
+
+        // Esc goes back to the menu, then closes it; it opens again at the menu.
+        press_escape(&mut app);
+        assert!(open(&app));
+        assert_eq!(page(&app), Page::Menu);
+        choose(&mut app, MenuAction::Settings);
+        choose(&mut app, MenuAction::Back);
+        assert_eq!(page(&app), Page::Menu);
+        press_escape(&mut app);
+        assert!(!open(&app));
+        app.world_mut().resource_mut::<EscapeMenu>().page = Page::Settings;
+        press_escape(&mut app);
+        assert_eq!(page(&app), Page::Menu, "opened at the menu");
+    }
+
+    #[test]
     fn quit_ends_the_app() {
         let (mut app, _requests) = app();
         choose(&mut app, MenuAction::Quit);
@@ -503,11 +710,8 @@ mod tests {
                 .map(|(n, _)| *n)
                 .collect()
         };
-        assert_eq!(greyed(true), ["Settings", "Game Options", "Profile"]);
-        assert_eq!(
-            greyed(false),
-            ["Main Menu", "Settings", "Game Options", "Profile"]
-        );
+        assert_eq!(greyed(true), ["Game Options", "Profile"]);
+        assert_eq!(greyed(false), ["Main Menu", "Game Options", "Profile"]);
         assert!(items(false).iter().any(|(n, _)| *n == "Logout"));
     }
 }

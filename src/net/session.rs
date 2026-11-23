@@ -299,6 +299,13 @@ impl Session {
         }
     }
 
+    pub fn remember_display(&mut self, fullscreen: bool, resolution: Option<(u32, u32)>) {
+        let resolution = resolution.map(crate::display::format);
+        if let Err(e) = self.store.remember_display(fullscreen, resolution) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
     /// The server's address as the player would write it, or as configured if it cannot be used.
     pub fn server(&self) -> String {
         match &self.url {
