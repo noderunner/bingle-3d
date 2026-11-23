@@ -570,6 +570,7 @@ mod tests {
                     value: format!("tile-{tile}"),
                 },
             ],
+            captures: Vec::new(),
         };
         let mut turn = Turn::new(1);
         let asking = hint(&turn, Some("Choose a Court."), &[]);

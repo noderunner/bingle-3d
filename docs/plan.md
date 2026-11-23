@@ -54,7 +54,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.8.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.10.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
@@ -470,12 +470,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   one on the space a click would shoot at. The server does not say what an aim puts down, so a
   game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
   nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
-  aimed at where it stands), and it was drawn as the generic stone. Such a target, a piece of
-  another's a click takes, glows red instead of in candlelight (`highlight::Tone`), and once
-  chosen the piece is see-through until the move is played (`board::show_taken`), so what the
-  confirming click captures is plain. A jump's captures are not shown: Fist's gestures name
-  them in its own words (`capture`, `spare`), and which piece a jump passes over is its rules';
-  the server saying which positions a selection takes from belongs in Bingle. A region the
+  aimed at where it stands), and it was drawn as the generic stone. A target a click takes a
+  piece on (a pin's) glows red instead of in candlelight (`highlight::Tone`), and what the move
+  being built takes is see-through until the move is played (`board::show_taken`), so what the
+  confirming click captures is plain: a pin once chosen, and each piece a jump captures once
+  the player says so rather than sparing it. Both come from what each legal selection captures,
+  which the server says from API 1.10 (bingle#269; `Turn::takes_at`, `Turn::taking`), so the
+  client reads no game's rules for them; it needs a server of 1.10 or newer. A region the
   board names may have its cells in a material of the look's (`[board.regions]`): Fist's keep
   is in a chessboard's dark squares. A chessboard's
   squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale

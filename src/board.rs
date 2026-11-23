@@ -2216,18 +2216,16 @@ fn show_turn(
         .filter(|(_, _, _, on_tile, _)| *on_tile)
         .map(|(_, c, ..)| c.id.as_str())
         .collect();
-    let yours = table.yours().map_or("", |s| s.color.as_str());
     for (entity, cell, was, on_tile, tone) in &cells {
         let id = cell.id.as_str();
         let wanted = lit
             && targets.contains(&cell.id)
             && previewed != Some(id)
             && (on_tile || !tiled.contains(&id));
-        let toned = match turn {
-            Some(turn) if wanted && takes_there(turn, id, table, yours, kit.aimed.is_some()) => {
-                Tone::Take
-            }
-            _ => Tone::Plain,
+        let toned = if wanted && turn.is_some_and(|t| t.takes_at(id)) {
+            Tone::Take
+        } else {
+            Tone::Plain
         };
         if wanted && !was {
             commands.entity(entity).insert((Lit, toned));
@@ -2574,32 +2572,6 @@ fn show_turn(
     }
 }
 
-/// Whether a click on `cell` takes the piece standing there, to light it so: the move aims
-/// there and puts nothing down (`aimed`: the game's look names a piece it puts there), and the
-/// piece is not the player's own (`yours`, a colour word). Fist's pin.
-fn takes_there(turn: &Turn, cell: &str, table: &Table, yours: &str, aimed: bool) -> bool {
-    !aimed && others_there(table, cell, yours) && turn.arriving(cell).is_some_and(|a| a.aimed)
-}
-
-/// Whether the piece on top at `cell` is another's than `yours`.
-fn others_there(table: &Table, cell: &str, yours: &str) -> bool {
-    let there = table.state.state.cells.get(cell).and_then(|s| s.last());
-    there.is_some_and(|p| p.color != yours)
-}
-
-/// The positions whose piece the selections made take, as `takes_there` lights them: each one
-/// aims at another's piece and puts nothing down. Shown see-through until the move is played.
-fn taken_by<'t>(turn: &'t Turn, table: &Table, yours: &str, aimed: bool) -> Vec<&'t str> {
-    if aimed {
-        return Vec::new();
-    }
-    turn.made
-        .iter()
-        .filter_map(|s| s.aim.as_deref())
-        .filter(|cell| others_there(table, cell, yours))
-        .collect()
-}
-
 /// A piece the move being built takes, shown see-through.
 #[derive(Component)]
 struct Taken;
@@ -2620,11 +2592,18 @@ fn show_taken(
     let (Some(table), Ok(kit)) = (&watch.table, kits.single()) else {
         return;
     };
-    let yours = table.yours().map_or("", |s| s.color.as_str());
-    let taken = watch
+    // What the server says the move takes (`Turn::taking`), but where a piece the move carries
+    // lands on it: the piece arriving stands in its place.
+    let taken: Vec<&str> = watch
         .turn
         .as_ref()
-        .map(|t| taken_by(t, table, yours, kit.aimed.is_some()))
+        .map(|t| {
+            let landing: Vec<&str> = t.made.iter().filter_map(|s| s.to.as_deref()).collect();
+            t.taking()
+                .into_iter()
+                .filter(|c| !landing.contains(c))
+                .collect()
+        })
         .unwrap_or_default();
     let cells = &table.state.state.cells;
     for (entity, at, mut material, was) in &mut pieces {
@@ -3961,6 +3940,7 @@ mod tests {
                     },
                     Gesture::pos("c3"),
                 ],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -4062,6 +4042,8 @@ mod tests {
                     piece: Some("yellow".into()),
                     aim: aim.map(Into::into),
                     gestures,
+                    // As the server says it (API 1.10): a pin takes the piece it aims at.
+                    captures: aim.map(|a| vec![a.into()]).unwrap_or_default(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -4170,6 +4152,7 @@ mod tests {
                 piece: None,
                 aim: Some(aim.into()),
                 gestures: vec![Gesture::pos("a1"), Gesture::pos(to), Gesture::pos(aim)],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -4584,6 +4567,7 @@ mod tests {
                         value: v.to_string(),
                     })
                     .collect(),
+                captures: Vec::new(),
             }
         }
 
@@ -5414,6 +5398,7 @@ mod tests {
                     },
                     Gesture::pos(cell),
                 ],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {

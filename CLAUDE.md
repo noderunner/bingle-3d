@@ -376,9 +376,10 @@ A game's own rules and its players' words keep their terms.
   drawn by a shader of our own (`src/highlight/cell_glow.wesl`, compiled in as
   `embedded://shaders/cell_glow.wesl`; Bevy 0.20's shaders are WESL), its light added to the
   picture; a point gets a ring small enough to read as a dot. A lit position's `Tone` (the
-  board's to say) is plain, or red where a click takes the piece standing there (an aim at
-  another's piece that puts nothing down: Fist's pin, `board::takes_there`); once chosen, that
-  piece is see-through until the move is played (`board::show_taken`). Tuned twice, for a camera that
+  board's to say) is plain, or red where a click takes the piece standing there
+  (`Turn::takes_at`, from API 1.10's `captures`: Fist's pin). What the move being built takes
+  (`Turn::taking`: a pin chosen, a jump's pieces captured) is see-through until the move is
+  played (`board::show_taken`). Tuned twice, for a camera that
   blooms and one that does not (`scene::BloomOn`: off in a headset, and with `--no-bloom`). **Another effect is
   another `Effect` and its arm in `light`**, nothing else. The outline's geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
 - `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
