@@ -17,6 +17,7 @@ mod clock;
 mod config;
 mod coordinates;
 mod cursor;
+mod display;
 mod environment;
 mod environment_choice;
 mod escape_menu;
@@ -100,7 +101,8 @@ fn main() -> AppExit {
     let plugins = DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Bingle".into(),
-            resolution: WindowResolution::new(1280, 720),
+            // As `display.rs` puts it, once the config is read.
+            resolution: WindowResolution::new(display::WINDOWED.0, display::WINDOWED.1),
             ..default()
         }),
         ..default()
@@ -224,6 +226,11 @@ fn main() -> AppExit {
     if !in_headset {
         app.add_plugins(cursor::CursorPlugin);
     }
+    app.add_plugins(display::DisplayPlugin {
+        fullscreen: opts.fullscreen,
+        limited: opts.last_frame().is_some(),
+        in_headset,
+    });
     app.add_plugins(frame_pace::FramePacePlugin {
         max_fps: opts.max_fps,
         vr_refresh_rate: opts.vr_refresh_rate,

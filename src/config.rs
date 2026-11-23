@@ -43,6 +43,13 @@ pub struct Config {
     /// (`frame_pace::DEFAULT_MAX_FPS` when there is none).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_fps: Option<u32>,
+    /// Whether the window covers its monitor (`display.rs`); true when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fullscreen: Option<bool>,
+    /// The resolution, as `1920x1080`: in fullscreen the monitor's mode, in a window its size;
+    /// the desktop's (in a window, the player's sizing) when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
     /// The display rate to ask a headset for, in Hz (72, 90, 120…), where its runtime lets the
     /// client choose; the runtime's own when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +173,20 @@ impl Store {
             return Ok(());
         }
         self.config.environment = Some(id.to_string());
+        self.save_config()
+    }
+
+    /// Remembers how the window stands: fullscreen or not, and at which resolution.
+    pub fn remember_display(
+        &mut self,
+        fullscreen: bool,
+        resolution: Option<String>,
+    ) -> io::Result<()> {
+        if self.config.fullscreen == Some(fullscreen) && self.config.resolution == resolution {
+            return Ok(());
+        }
+        self.config.fullscreen = Some(fullscreen);
+        self.config.resolution = resolution;
         self.save_config()
     }
 
@@ -321,6 +342,23 @@ mod tests {
         store.remember_environment("garden").unwrap();
         let again = Store::load(Some(tmp.0.clone()));
         assert_eq!(again.config.environment.as_deref(), Some("garden"));
+    }
+
+    #[test]
+    fn the_display_is_remembered() {
+        let tmp = TempDir::new("display");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        assert_eq!(store.config.fullscreen, None);
+        store
+            .remember_display(false, Some("1920x1080".into()))
+            .unwrap();
+        let mut again = Store::load(Some(tmp.0.clone()));
+        assert_eq!(again.config.fullscreen, Some(false));
+        assert_eq!(again.config.resolution.as_deref(), Some("1920x1080"));
+        again.remember_display(true, None).unwrap();
+        let again = Store::load(Some(tmp.0.clone()));
+        assert_eq!(again.config.fullscreen, Some(true));
+        assert_eq!(again.config.resolution, None);
     }
 
     #[test]

@@ -78,6 +78,16 @@ impl Plugin for NetPlugin {
             .insert_resource(crate::frame_pace::Kept {
                 max_fps: store.config.max_fps,
                 vr_refresh_rate: store.config.vr_refresh_rate,
+            })
+            .insert_resource(crate::display::Kept {
+                fullscreen: store.config.fullscreen,
+                resolution: store.config.resolution.as_deref().and_then(|r| {
+                    let size = crate::display::parse(r);
+                    if size.is_none() {
+                        warn!("config.toml: resolution {r:?} is not a size like 1920x1080");
+                    }
+                    size
+                }),
             });
         let session = Session::new(self.server.as_deref(), store);
         let status = ServerStatus {
@@ -180,6 +190,11 @@ pub enum Request {
     Remember { server: bool, auto_login: bool },
     /// Keep where the table stands (an environment's id) for the next run.
     RememberEnvironment(String),
+    /// Remember how the window stands (`display.rs`).
+    RememberDisplay {
+        fullscreen: bool,
+        resolution: Option<(u32, u32)>,
+    },
     /// Read the account's friends list.
     Friends,
     /// Change the friends list, or answer an invitation.
@@ -783,6 +798,13 @@ fn handle(
         }
         Request::RememberEnvironment(id) => {
             session.remember_environment(&id);
+            None
+        }
+        Request::RememberDisplay {
+            fullscreen,
+            resolution,
+        } => {
+            session.remember_display(fullscreen, resolution);
             None
         }
         Request::Trust(fp) => Some(connected(session.trust(fp))),

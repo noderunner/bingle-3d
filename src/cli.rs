@@ -44,6 +44,10 @@ Options:
                      with the vr feature, which does so by itself when SteamVR is
                      already running). Home sits you at the table again
   --desktop          stay in the window, even with SteamVR running
+  --fullscreen       cover the screen, for this run (the default, unless
+                     config.toml's fullscreen says; a run limited by --frames or
+                     --screenshot is in a window unless this says)
+  --windowed         draw in a window, for this run
   --legal-moves      start with every position a click would be taken on lit (L)
   --no-bloom         draw without the camera's bloom, as a headset sees the table
   --max-fps N        draw at most N frames a second, for this run (60 unless
@@ -101,6 +105,8 @@ pub struct Options {
     pub vr: bool,
     /// Stay in the window, even with a headset waiting.
     pub desktop: bool,
+    /// `--fullscreen` (true) or `--windowed` (false), in place of the config's.
+    pub fullscreen: Option<bool>,
     /// `--legal-moves`: the positions a click would be taken on start lit.
     pub legal_moves: bool,
     /// `--no-bloom`: the camera starts without bloom.
@@ -174,6 +180,11 @@ impl Options {
                 "--voice" => opts.voice = true,
                 "--vr" => opts.vr = true,
                 "--desktop" => opts.desktop = true,
+                "--fullscreen" | "--windowed" if opts.fullscreen.is_some() => {
+                    return Err("only one of --fullscreen and --windowed, once".into());
+                }
+                "--fullscreen" => opts.fullscreen = Some(true),
+                "--windowed" => opts.fullscreen = Some(false),
                 "--no-bloom" => opts.no_bloom = true,
                 "--legal-moves" => opts.legal_moves = true,
                 "--showcase" => opts.showcase = true,
@@ -264,6 +275,14 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_or_windowed_once() {
+        assert_eq!(parse(&[]).unwrap().fullscreen, None);
+        assert_eq!(parse(&["--fullscreen"]).unwrap().fullscreen, Some(true));
+        assert_eq!(parse(&["--windowed"]).unwrap().fullscreen, Some(false));
+        assert!(parse(&["--windowed", "--fullscreen"]).is_err());
+    }
+
+    #[test]
     fn max_fps_is_a_number() {
         assert_eq!(parse(&["--max-fps", "30"]).unwrap().max_fps, Some(30));
         assert_eq!(parse(&["--max-fps=0"]).unwrap().max_fps, Some(0));
@@ -315,7 +334,7 @@ mod tests {
         );
         assert!(parse(&["--screenshot"]).unwrap_err().contains("needs"));
         assert!(
-            parse(&["--fullscreen"])
+            parse(&["--teleport"])
                 .unwrap_err()
                 .contains("unknown option")
         );
