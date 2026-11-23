@@ -627,6 +627,13 @@ impl Turn {
                 Outcome::Changed
             };
         }
+        // A move that may end here is played as it is, as a whole one is: a patience's move
+        // that turns no card up may be followed by more in the same impulse, but each click
+        // that puts cards down is a move of its own.
+        if self.clicks_only && self.may_end {
+            self.stage = Stage::Ready;
+            return Outcome::Submit;
+        }
         self.options = selections.options;
         self.stage = Stage::Choosing;
         self.start_selection();
@@ -1454,6 +1461,31 @@ mod tests {
         assert_eq!(t.gesture(&g("action", "to-f")), Outcome::Ask);
         assert_eq!(t.answered(complete(3)), Outcome::Submit, "played at once");
         assert_eq!(t.submit(), Some(("m".into(), 3)));
+
+        // A move that may end where it is, with more that could follow it in the same impulse
+        // (one that turns no card up): played at once too, as it is.
+        let mut t = Turn::new(1);
+        t.clicks_only = true;
+        t.answered(answer(3, vec![card(&["from-t1-1", "to-t5"])]));
+        t.gesture(&g("action", "from-t1-1"));
+        assert_eq!(t.gesture(&g("action", "to-t5")), Outcome::Ask);
+        let more = Selections {
+            made: vec!["m".into()],
+            may_end: true,
+            ..answer(3, vec![card(&["from-t4-1", "to-t1"]), card(&["draw"])])
+        };
+        assert_eq!(t.answered(more.clone()), Outcome::Submit);
+        assert_eq!(t.submit(), Some(("m".into(), 3)), "only the move made");
+        // Without clicks_only it waits for the player to play it or go on.
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            3,
+            vec![card(&["from-t1-1", "to-t5"]), card(&["draw"])],
+        ));
+        t.gesture(&g("action", "from-t1-1"));
+        t.gesture(&g("action", "to-t5"));
+        assert_eq!(t.answered(more), Outcome::Changed);
+        assert_eq!((t.stage, t.can_play()), (Stage::Choosing, true));
 
         // Without, the one way is taken, and the whole move waits for the player.
         let mut t = Turn::new(1);

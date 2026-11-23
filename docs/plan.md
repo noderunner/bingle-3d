@@ -976,5 +976,8 @@ Proposed 2026-11-22, for the maintainer to settle (the patience pull request):
 12. **A patience's move plays as soon as it is whole.** Every other game previews the move
     that ends the impulse and waits for Enter or a second click; in a patience the click that
     puts the cards on a pile is that second click (the pile showed them there, see-through,
-    before it), and a game is hundreds of moves. Nothing is taken for the player either,
+    before it), and a game is hundreds of moves. That holds for a move the server says may
+    end the impulse as well as one that must (one that turns no card up may be followed by
+    more in the same impulse, ADR 0121): each is sent as it is made. Nothing is taken for the
+    player either,
     however few moves there are (`Turn::clicks_only`): a lone move is not made by itself.
