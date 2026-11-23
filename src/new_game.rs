@@ -372,6 +372,7 @@ mod tests {
                 counters: vec![],
                 opening: None,
                 reserves: Default::default(),
+                cards: None,
             },
             vec![BotInfo {
                 id: "mcts".into(),

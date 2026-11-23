@@ -218,6 +218,14 @@ pub fn within(outline: &[Vec2], at: Vec2) -> Vec2 {
         .unwrap_or(at)
 }
 
+/// Something the pointer's place on the table is read from, as it is from a board's spaces
+/// and pieces (`Spot`): a card, a pile's place, the cloth they lie on.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Surface;
+
+/// What the pointer's place is read from: a board's spaces and pieces, and any `Surface`.
+type OnTable = Or<(With<Spot>, With<Surface>)>;
+
 /// Where the pointer is over the board, while it is: what it is on (a space or a piece), and
 /// where it looks from, both in the world.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
@@ -236,7 +244,7 @@ pub fn on_surface(hit: Vec3, eye: Vec3, board: f32) -> Vec3 {
 }
 
 fn point(
-    spots: &Query<(), With<Spot>>,
+    spots: &Query<(), OnTable>,
     eyes: &Query<&GlobalTransform>,
     entity: Entity,
     hit: &HitData,
@@ -255,7 +263,7 @@ fn point(
 
 fn on_move(
     moved: On<PointerMove>,
-    spots: Query<(), With<Spot>>,
+    spots: Query<(), OnTable>,
     eyes: Query<&GlobalTransform>,
     mut on: ResMut<PointerOnBoard>,
 ) {
@@ -264,7 +272,7 @@ fn on_move(
 
 fn on_over(
     over: On<PointerOver>,
-    spots: Query<(), With<Spot>>,
+    spots: Query<(), OnTable>,
     eyes: Query<&GlobalTransform>,
     mut on: ResMut<PointerOnBoard>,
 ) {
@@ -273,7 +281,7 @@ fn on_over(
 
 /// Off a space or piece: off the board, unless the pointer is over another at once (its
 /// `PointerOver` follows).
-fn on_out(out: On<PointerOut>, spots: Query<(), With<Spot>>, mut on: ResMut<PointerOnBoard>) {
+fn on_out(out: On<PointerOut>, spots: Query<(), OnTable>, mut on: ResMut<PointerOnBoard>) {
     if spots.contains(out.entity) && on.0.is_some() {
         on.0 = None;
     }

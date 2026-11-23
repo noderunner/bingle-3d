@@ -551,6 +551,7 @@ mod tests {
                 counters: vec![],
                 opening: None,
                 reserves: Default::default(),
+                cards: None,
             },
             game: Game {
                 game_def_id: "g".into(),

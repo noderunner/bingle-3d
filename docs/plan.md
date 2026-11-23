@@ -660,7 +660,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     rank's label as the server gives them (`props::standard_face`), so no game is named. 1 MB
     together. No jokers: no game deals one yet.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
-- No game's cards or dice are drawn yet (card zones, below): `props.rs` holds only how the two
+- A patience's cards are drawn (below); no game's dice yet. `props.rs` holds how the two
   models are read. `--showcase` lays every piece model, the dice and some cards on the table,
   to look at an asset in the client's own light; `--card-face` and `--card-back` try a picture
   on a card, and `--view` takes a place on the table to look at.
@@ -682,7 +682,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   - A board of squares is plain wood: light and dark squares, where a game is known by them
     (draughts), would be an appearance's to ask for.
 - **Next**: the maintainer's eye on it, on the GPU; pictures on these games' cards in the main
-  screen; then card zones.
+  screen; then the card zones of games that are not a patience.
 
 ### The main screen and the escape menu (UI basics)
 
@@ -784,10 +784,48 @@ nothing of (decision 9). First draft, for the maintainer's eye.
   wait for more environments to measure; a light in the lantern after dark.
 - **Next**: the maintainer's eye on it; then what it says.
 
+### Patience: cards on the table (2026-11-22)
+
+Solitaire and its variants (draw three, Spider of one, two and four suits, FreeCell) are
+played, from Bingle's patience vocabulary (ADR 0122) and nothing of any one game's: any game
+that declares a patience plays the same way.
+
+- A game is played as a patience when it has cards and an action of the kind `patience`
+  (`patience::plays`). Its board (one cell) stands aside, and its cards lie on a dark green
+  cloth (`card_table.rs`): a row beyond with the stock and the waste, or the free cells, to the
+  left and the foundations, or the finished runs, to the right, and the columns below it,
+  fanned towards the player, closer when long. The vocabulary names the piles' zones
+  (`t1`…, `f1`…, `c1`…, `stock`, `waste`, `done`), so the layout is read from the zones the
+  position has: a game dealt whole (FreeCell) shows no stock. Each pile's place is printed on
+  the cloth.
+- A card's face is the usual deck's (`props::standard_face`, by its suit's symbol and rank);
+  one this client may not see lies face down. The waste fans its top three.
+- **Click and swap**: a click on a card a move starts with lifts it and the cards on it. They
+  hover just beyond the pointer, bobbing, held near their edge so what they are aimed at stays
+  in sight, and the pointer's arrow is hidden. Each pile they may go on glows; the one under
+  the pointer shows them see-through where they would land. A click there puts them down and
+  plays the move. A click on the pile they came from, on the bare cloth, a right-click or
+  Backspace puts them back; a click on another card that moves takes it instead. A card sent
+  home (`to-f`) is shown going to its suit's foundation when the view lists the suits
+  (`patience::home`), since the server, not the click, chooses which. The stock draws, turns
+  the waste back or deals, whichever is legal; *Finish* is the panel's button.
+- The gestures the view says are drawn on the table (`panel_actions`) are no buttons, and the
+  panel says to click where the cards go.
+- Cards go where the position puts them by the hand's own carrying, one after another (a row
+  dealt, a run off the table, *Finish*), over the piles and down; a card that was face down
+  where it came from (drawn, turned up in its column, dealt) turns over on the way.
+- Not built: dragging (the server's own words mention it; a press, move and release could
+  make the same two gestures); the suit's mark on an empty foundation; lighting the cards that
+  move (L lights a board's legal moves, not a patience's); the web page's flight home and
+  celebration when a game is won; a themed card set (ADR 0085); Bowling Solitaire, a game of
+  its own whose pins and balls are not the vocabulary's; a headset's ray pointer is not tried.
+- **Next**: the maintainer's eye on it, and a game played through.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
-  reserves and pools; tints, badges and counters by name; card zones for card games.
+  reserves and pools; tints, badges and counters by name; card zones for card games that are not
+  a patience.
 - More games: boards that are neither a grid nor hexagons, reserves beside the board (Tak's
   stones in hand), drawn from their definitions.
 - Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
@@ -930,3 +968,11 @@ Settled 2026-11-21, with the maintainer:
     Frame's build is cross-compiled against Valve's Steam Runtime 4 arm64 SDK sysroot, pinned
     by version and SHA-256, and runs in the Frame's `steamrt4 arm64` runtime. The first is
     0.0.1.
+
+Proposed 2026-11-22, for the maintainer to settle (the patience pull request):
+
+12. **A patience's move plays as soon as it is whole.** Every other game previews the move
+    that ends the impulse and waits for Enter or a second click; in a patience the click that
+    puts the cards on a pile is that second click (the pile showed them there, see-through,
+    before it), and a game is hundreds of moves. Nothing is taken for the player either,
+    however few moves there are (`Turn::clicks_only`): a lone move is not made by itself.

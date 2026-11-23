@@ -10,6 +10,7 @@ mod bowls;
 mod browser;
 mod call;
 mod camera;
+mod card_table;
 mod cli;
 mod clock;
 mod config;
@@ -30,6 +31,7 @@ mod login;
 mod look;
 mod net;
 mod new_game;
+mod patience;
 mod play;
 mod props;
 // Used only by the headset so far.
@@ -190,7 +192,11 @@ fn main() -> AppExit {
             },
             // Tab moves between the fields of a form.
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
-            (board::BoardPlugin, highlight::HighlightPlugin),
+            (
+                board::BoardPlugin,
+                card_table::CardTablePlugin,
+                highlight::HighlightPlugin,
+            ),
             sounds::SoundsPlugin {
                 on: !opts.no_audio_devices,
             },

@@ -162,6 +162,10 @@ pub struct Turn {
     /// Choices that are taken up by themselves once they are all that may be chosen next (the
     /// fences, once the piece has moved: the game's look's).
     pub auto_take: Vec<Gesture>,
+    /// Whether every gesture is the player's own, none taken for them however few moves
+    /// there are, and the move is played as soon as it is whole: a patience's, where a click
+    /// puts the cards in hand where they go (`patience.rs`).
+    pub clicks_only: bool,
 }
 
 impl Turn {
@@ -181,6 +185,7 @@ impl Turn {
             to_place: false,
             lifted: false,
             auto_take: Vec::new(),
+            clicks_only: false,
         }
     }
 
@@ -616,7 +621,11 @@ impl Turn {
         self.may_end = selections.may_end && !selections.made.is_empty();
         if selections.complete {
             self.stage = Stage::Ready;
-            return Outcome::Changed;
+            return if self.clicks_only {
+                Outcome::Submit
+            } else {
+                Outcome::Changed
+            };
         }
         self.options = selections.options;
         self.stage = Stage::Choosing;
@@ -634,8 +643,17 @@ impl Turn {
     pub fn send_failed(&mut self, problem: Problem) {
         *self = Turn {
             problem: Some(problem),
-            ..Turn::new(self.asked_at)
+            ..self.afresh()
         };
+    }
+
+    /// The same turn from nothing, asking again, with what the game's look set on it.
+    pub fn afresh(&self) -> Turn {
+        Turn {
+            auto_take: self.auto_take.clone(),
+            clicks_only: self.clicks_only,
+            ..Turn::new(self.asked_at)
+        }
     }
 
     /// A gesture from the player.
@@ -984,6 +1002,9 @@ impl Turn {
 
     /// Takes a choice from a list for the player when every selection still possible makes it.
     fn take_forced(&mut self) {
+        if self.clicks_only {
+            return;
+        }
         loop {
             let n = self.gestures.len();
             let forced = {
@@ -1095,6 +1116,10 @@ pub(crate) fn start_turn(
                         .collect()
                 })
                 .unwrap_or_default();
+            turn.clicks_only = watch
+                .table
+                .as_ref()
+                .is_some_and(|t| crate::patience::plays(&t.info));
             watch.turn = Some(turn);
             net::ask(&net, &watch);
         }
@@ -1148,8 +1173,7 @@ pub fn back(watch: &mut ResMut<WatchStatus>) {
 /// Asks the server again what may be selected, after it could not say.
 pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
     if let Some(turn) = watch.turn.as_mut() {
-        let asked_at = turn.asked_at;
-        *turn = Turn::new(asked_at);
+        *turn = turn.afresh();
         net::ask(net, watch);
     }
 }
@@ -1411,6 +1435,41 @@ mod tests {
                 aimed: false,
             })
         );
+    }
+
+    #[test]
+    fn with_clicks_only_nothing_is_chosen_for_the_player_and_a_whole_move_plays_itself() {
+        let card = |gestures: &[&str]| {
+            let gestures: Vec<(&str, &str)> = gestures.iter().map(|v| ("action", *v)).collect();
+            sel("m", None, &gestures)
+        };
+        // One move only, as a patience may have: it is not taken by itself.
+        let mut t = Turn::new(1);
+        t.clicks_only = true;
+        t.answered(answer(3, vec![card(&["from-t1-1", "to-f"])]));
+        assert_eq!(t.stage, Stage::Choosing);
+        assert!(t.gestures.is_empty(), "nothing lifted for the player");
+        assert_eq!(t.gesture(&g("action", "from-t1-1")), Outcome::Changed);
+        assert_eq!(t.gestures, [g("action", "from-t1-1")], "nor put down");
+        assert_eq!(t.gesture(&g("action", "to-f")), Outcome::Ask);
+        assert_eq!(t.answered(complete(3)), Outcome::Submit, "played at once");
+        assert_eq!(t.submit(), Some(("m".into(), 3)));
+
+        // Without, the one way is taken, and the whole move waits for the player.
+        let mut t = Turn::new(1);
+        t.answered(answer(3, vec![card(&["from-t1-1", "to-f"])]));
+        assert_eq!(t.stage, Stage::Asking, "taken and made");
+        assert_eq!(t.answered(complete(3)), Outcome::Changed);
+        assert_eq!(t.stage, Stage::Ready);
+
+        // Started again after a refusal, it is still so.
+        let mut t = Turn::new(1);
+        t.clicks_only = true;
+        t.auto_take = vec![g("action", "fence")];
+        t.send_failed(Problem::BadAddress("x".into()));
+        assert!(t.clicks_only);
+        assert_eq!(t.auto_take, [g("action", "fence")]);
+        assert!(t.problem.is_some());
     }
 
     /// A stack's move as Tak's server lists it: from a position, a count, then a position for

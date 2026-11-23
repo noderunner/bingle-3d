@@ -492,7 +492,7 @@ pub struct Player {
 }
 
 /// `GET /api/game-defs/{id}`: a game as the rules see it. Only what the client draws from.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct GameInfo {
     pub id: String,
     pub name: String,
@@ -519,6 +519,63 @@ pub struct GameInfo {
     /// or a counter's number.
     #[serde(default, deserialize_with = "null_as_default")]
     pub reserves: BTreeMap<String, u32>,
+    /// The suits and the kinds of card of a card game, and the zones its cards lie in (the
+    /// position names its cards by id only). None for a game with no cards.
+    #[serde(default)]
+    pub cards: Option<Cards>,
+}
+
+/// What a card game's cards are (`GameInfo.cards`). Only what the client draws from: not the
+/// colours of the web page's own drawing (Bingle's ADR 0124).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Cards {
+    /// Each suit by its id.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub suits: BTreeMap<String, Suit>,
+    /// Every kind of card the game has.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub types: Vec<CardType>,
+    /// The places cards can be.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub zones: Vec<ZoneDef>,
+}
+
+impl Cards {
+    /// The kind of a card on the table, by its id: a kind's id, with `#` and which of its
+    /// copies it is when the game has several (two decks).
+    pub fn type_of(&self, card: &str) -> Option<&CardType> {
+        let kind = card.split('#').next().unwrap_or(card);
+        self.types.iter().find(|t| t.id == kind)
+    }
+}
+
+/// A suit: how it is named and its pip, as text.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct Suit {
+    #[serde(default)]
+    pub label: String,
+    /// The text drawn as its pip (♠, or a short word).
+    #[serde(default)]
+    pub symbol: String,
+}
+
+/// A kind of card: its suit's id and its rank, when it has them.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct CardType {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub suit: String,
+    #[serde(default)]
+    pub rank: String,
+}
+
+/// A place cards can be.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct ZoneDef {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
 }
 
 /// A number each seat keeps in a reserve pool of that `id`, holding no pieces.
@@ -596,6 +653,10 @@ pub struct ActionDef {
     pub id: String,
     /// In words, such as "Swap sides".
     pub label: String,
+    /// The kind of action it is: what the rules do with it ("patience", a move of cards
+    /// between piles).
+    #[serde(rename = "type", default)]
+    pub kind: String,
 }
 
 /// A seat of a game definition.
@@ -612,7 +673,7 @@ pub struct SeatDef {
 }
 
 /// The board as the rules see it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Board {
     /// "grid", "hex" or "explicit".
     pub kind: String,
@@ -873,7 +934,7 @@ pub struct Selections {
 }
 
 /// One selection the seat may make, and the gestures that enter it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct LegalSelection {
     pub notation: String,
     pub action: String,
@@ -989,6 +1050,41 @@ pub struct Position {
     /// (`ext.view`: each seat's counters, the walls between positions). Kept as it came.
     #[serde(default)]
     pub ext: serde_json::Value,
+    /// A card game's cards, zone by zone, as this client may see them.
+    #[serde(default)]
+    pub cards: CardTable,
+}
+
+/// The cards of a game in progress: each zone's, by its name (a zone's id; `id:seat` for a
+/// seat's own).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct CardTable {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub zones: BTreeMap<String, CardZone>,
+}
+
+/// A zone's cards in order, the bottom one first.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct CardZone {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub cards: Vec<CardOnTable>,
+}
+
+/// One card where it lies: its id, empty for one whose face this client may not see, and
+/// whether it lies face up.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct CardOnTable {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub up: bool,
+}
+
+impl CardOnTable {
+    /// Whether its face is shown: it lies face up and this client may see it.
+    pub fn shown(&self) -> bool {
+        self.up && !self.id.is_empty()
+    }
 }
 
 impl Position {
@@ -1051,6 +1147,21 @@ impl Position {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// A list of words the view keeps by its name (a patience's suits, each foundation's in
+    /// turn); empty when it has none.
+    pub fn view_words(&self, name: &str) -> Vec<&str> {
+        self.ext["view"][name]
+            .as_array()
+            .map(|all| all.iter().filter_map(serde_json::Value::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    /// The choices the view says are drawn on the table rather than as buttons, as the start of
+    /// their values (a patience's `from-` and `to-`, and its stock's `draw`).
+    pub fn panel_actions(&self) -> Vec<&str> {
+        self.view_words("panel_actions")
     }
 
     /// The walls the view says stand between neighbouring positions (Fendo's fences), each by
@@ -1493,6 +1604,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_view_says_what_is_drawn_on_the_table_and_lists_words_by_name() {
+        let read = |json: &str| -> Position { serde_json::from_str(json).unwrap() };
+        let p = read(
+            r#"{"cells":{},"ext":{"view":{"panel_actions":["from-","draw"],
+            "suits":["hearts","spades",3]}}}"#,
+        );
+        assert_eq!(p.panel_actions(), ["from-", "draw"]);
+        assert_eq!(p.view_words("suits"), ["hearts", "spades"], "words only");
+        assert!(read(r#"{"cells":{}}"#).panel_actions().is_empty());
+        assert!(p.view_words("prompt").is_empty());
+    }
+
+    #[test]
+    fn a_card_game_reads_its_kinds_of_card_and_the_cards_where_they_lie() {
+        let cards: Cards = serde_json::from_str(
+            r##"{"suits":{"hearts":{"label":"Hearts","symbol":"♥","color":"#c00"}},
+            "suit_order":["hearts"],"back":{},"zones":null,
+            "types":[{"id":"hearts-A","suit":"hearts","rank":"A","label":"A","value":1}]}"##,
+        )
+        .unwrap();
+        assert_eq!(cards.type_of("hearts-A").unwrap().rank, "A");
+        assert_eq!(
+            cards.type_of("hearts-A#1").unwrap().id,
+            "hearts-A",
+            "a second deck's copy"
+        );
+        assert!(cards.type_of("spades-A").is_none());
+        assert!(cards.zones.is_empty());
+        let p: Position = serde_json::from_str(
+            r#"{"cells":{},"cards":{"zones":{"t1":{"cards":[{},{"id":"hearts-A","up":true}]},
+            "f1":{}}}}"#,
+        )
+        .unwrap();
+        let t1 = &p.cards.zones["t1"].cards;
+        assert!(!t1[0].shown() && t1[1].shown());
+        assert!(p.cards.zones["f1"].cards.is_empty());
+        assert!(
+            !CardOnTable {
+                id: "x".into(),
+                up: false
+            }
+            .shown(),
+            "face down"
+        );
     }
 
     #[test]
