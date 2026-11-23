@@ -1,6 +1,6 @@
 [package]
 name = "bingle-3d"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.97.1"
 description = "A 3D client for the Bingle game server, built with Bevy"
