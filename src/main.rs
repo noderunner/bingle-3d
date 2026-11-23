@@ -16,6 +16,7 @@ mod cli;
 mod clock;
 mod config;
 mod coordinates;
+mod cursor;
 mod environment;
 mod environment_choice;
 mod escape_menu;
@@ -216,6 +217,11 @@ fn main() -> AppExit {
     // A headset's eyes never bloom, so what glows is tuned for them there.
     #[cfg(not(feature = "vr"))]
     let in_headset = false;
+    // The pointer's hand, in place of the system's cursor: a headset's pointers are its
+    // controllers' rays.
+    if !in_headset {
+        app.add_plugins(cursor::CursorPlugin);
+    }
     app.insert_resource(scene::BloomOn(!opts.no_bloom && !in_headset))
         .insert_resource(board::ShowLegalMoves(opts.legal_moves));
     if opts.showcase {

@@ -1,7 +1,8 @@
 //! What the player holds while a move is built: a piece picked up, lifted over its space and
 //! bobbing gently; a piece put down where it was moved, carried there over the board and lowered
 //! onto it, quickly but plainly, before the move is sent; and what the move aims (an arrow), held
-//! under the pointer, bobbing too, the pointer's own arrow hidden while it takes its place.
+//! under the pointer, bobbing too, the pointer's hand (`cursor.rs`) hidden while it takes its
+//! place.
 //!
 //! The board (`board.rs`) says which piece is held or put where; this moves them there smoothly,
 //! every frame. The pointer's place on the board comes from picking, so a ray pointer in a
@@ -12,7 +13,7 @@ use std::f32::consts::TAU;
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{PointerMove, PointerOut, PointerOver};
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 
 use crate::play::Spot;
 use crate::sounds::Cue;
@@ -31,10 +32,7 @@ impl Plugin for HandPlugin {
             .add_observer(on_move)
             .add_observer(on_over)
             .add_observer(on_out)
-            .add_systems(
-                Update,
-                ((set_off, carry).chain(), hold, show_cursor).in_set(Hands),
-            );
+            .add_systems(Update, ((set_off, carry).chain(), hold).in_set(Hands));
     }
 }
 
@@ -417,20 +415,6 @@ fn hold(
     }
 }
 
-/// The pointer's own arrow is hidden while what the move aims is held in its place.
-fn show_cursor(
-    on: Res<PointerOnBoard>,
-    held: Query<(), With<Held>>,
-    mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
-) {
-    let visible = on.0.is_none() || held.is_empty();
-    for mut cursor in &mut windows {
-        if cursor.visible != visible {
-            cursor.visible = visible;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,12 +649,8 @@ mod tests {
     }
 
     #[test]
-    fn what_is_aimed_follows_the_pointer_and_hides_the_cursor() {
+    fn what_is_aimed_follows_the_pointer_and_waits_over_the_board_off_it() {
         let mut app = app();
-        let window = app
-            .world_mut()
-            .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
-            .id();
         let held = app
             .world_mut()
             .spawn((
@@ -688,7 +668,6 @@ mod tests {
             app.world().get::<Visibility>(held),
             Some(&Visibility::Hidden)
         );
-        assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
 
         // On a piece 2 cm tall, seen from above and in front: over the board behind it.
         let eye = Vec3::new(0.1, 0.5, 0.5);
@@ -704,10 +683,9 @@ mod tests {
             app.world().get::<Visibility>(held),
             Some(&Visibility::Inherited)
         );
-        assert!(!app.world().get::<CursorOptions>(window).unwrap().visible);
 
-        // Off the board (over a panel): it stays over the board, and the pointer's own arrow
-        // is back. (No window cursor here to say where: where it was.)
+        // Off the board (over a panel): it stays over the board. (No window cursor here to say
+        // where: where it was.)
         app.world_mut().resource_mut::<PointerOnBoard>().0 = None;
         app.update();
         assert_eq!(
@@ -716,12 +694,5 @@ mod tests {
         );
         let still = app.world().get::<Transform>(held).unwrap().translation;
         assert!(still.xz().distance(t.xz()) < 1e-6);
-        assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
-
-        // Nothing held: the cursor is the pointer's own, on the board or off it.
-        app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((Vec3::ZERO, Vec3::Y));
-        app.world_mut().entity_mut(held).despawn();
-        app.update();
-        assert!(app.world().get::<CursorOptions>(window).unwrap().visible);
     }
 }

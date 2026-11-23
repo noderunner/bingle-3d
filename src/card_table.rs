@@ -32,6 +32,7 @@ use crate::appearance::{Appearance, Appearances, CardsLook};
 use crate::assets;
 use crate::board::BoardBuilt;
 use crate::card_layout::Layout;
+use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
@@ -56,6 +57,9 @@ impl Plugin for CardTablePlugin {
             .add_observer(on_click)
             .add_observer(on_over)
             .add_observer(on_out)
+            .init_resource::<Under>()
+            .init_resource::<TableFeel>()
+            .add_systems(Update, sense.in_set(Sense))
             .add_systems(
                 Update,
                 (
@@ -1106,6 +1110,66 @@ fn on_click(
     }
 }
 
+/// What a click on a card or a pile of `zone` would do, for the pointer's hand: lift cards
+/// to move them, put down what is in hand or choose a pile (a pin, a ball), or nothing. As
+/// `on_click` decides: `from_top` is the card clicked, when its face is shown.
+fn feel(
+    zone: &str,
+    from_top: Option<usize>,
+    turn: Option<&Turn>,
+    by_look: Option<&CardsLook>,
+    chosen: &BTreeSet<String>,
+) -> Feel {
+    let Some(turn) = turn.filter(|t| t.stage == Stage::Choosing) else {
+        return Feel::Open;
+    };
+    if let Some(look) = by_look {
+        return match look_click(look, zone, chosen, &turn.options) {
+            LookClick::Nothing => Feel::Open,
+            LookClick::Choose(_) | LookClick::Play(_) => Feel::Point,
+        };
+    }
+    let lifted = patience::lifted(&turn.gestures);
+    let held = lifted.as_ref().map(|(z, n)| (z.as_str(), *n));
+    match patience::click(zone, from_top, held, &turn.choices(), &turn.options) {
+        Click::Gesture(g) if patience::lifted(std::slice::from_ref(&g)).is_some() => Feel::Grab,
+        Click::Gesture(_) | Click::PutBack => Feel::Point,
+        Click::Nothing => Feel::Open,
+    }
+}
+
+/// Says what a click on the cards under the pointer would do (`cursor.rs`).
+fn sense(
+    under: Res<Under>,
+    (cards, places): (Query<&CardAt>, Query<&PileOf, With<Place>>),
+    roots: Query<&CardRoot>,
+    (watch, together): (Res<WatchStatus>, Res<Together>),
+    mut table: ResMut<TableFeel>,
+) {
+    let Some((zone, from_top)) = under.chain.iter().find_map(|e| {
+        if let Ok(card) = cards.get(*e) {
+            Some((card.zone.as_str(), card.shown.then_some(card.from_top)))
+        } else {
+            places.get(*e).ok().map(|p| (p.0.as_str(), None))
+        }
+    }) else {
+        return;
+    };
+    let seq = watch.table.as_ref().map_or(0, |t| t.state.move_seq);
+    let by_look = watch
+        .table
+        .as_ref()
+        .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code))
+        .and_then(|r| r.by_look.as_ref());
+    table.set_if_neq(TableFeel(feel(
+        zone,
+        from_top,
+        watch.turn.as_ref(),
+        by_look,
+        &together.at(seq),
+    )));
+}
+
 /// Backspace lets go of what is chosen together, as it takes back what is in hand.
 fn let_go(keys: Option<Res<ButtonInput<KeyCode>>>, mut together: ResMut<Together>) {
     let pressed = keys.is_some_and(|k| k.just_pressed(KeyCode::Backspace));
@@ -1220,6 +1284,32 @@ mod tests {
             kind: "action".into(),
             value: value.into(),
         }
+    }
+
+    #[test]
+    fn the_hand_grabs_a_card_a_click_lifts_and_points_at_where_it_may_go() {
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.options = vec![LegalSelection {
+            notation: "t1-f".into(),
+            action: "patience".into(),
+            gestures: vec![act("from-t1-1"), act("to-f")],
+            ..Default::default()
+        }];
+        turn.stage = Stage::Choosing;
+        let none = BTreeSet::new();
+        assert_eq!(feel("t1", Some(1), Some(&turn), None, &none), Feel::Grab);
+        assert_eq!(feel("t3", Some(1), Some(&turn), None, &none), Feel::Open);
+        assert_eq!(
+            feel("t1", Some(1), None, None, &none),
+            Feel::Open,
+            "not ours"
+        );
+        // Lifted: the foundation it goes to is pointed at, and so is where it came from (a
+        // click there puts it back).
+        turn.gestures = vec![act("from-t1-1")];
+        assert_eq!(feel("f1", None, Some(&turn), None, &none), Feel::Point);
+        assert_eq!(feel("t1", Some(1), Some(&turn), None, &none), Feel::Point);
     }
 
     #[test]
