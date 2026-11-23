@@ -1,0 +1,34 @@
+# How this client draws Reversi (Bingle's ADR 0124: the server says what things are, and each
+# client decides how they look). Data only: nothing here changes the rules.
+#
+# Discs light on one side and dark on the other, as the game is played with: each seat's lie its
+# own side up, and one that changes hands is turned over where it lies (`sides.rs`).
+
+games = ["reversi"]
+
+[pieces.disc]
+model = "models/disc_large.glb"
+stands = "upright"
+sides = { light = "light", dark = "dark" }
+up = { black = "dark", white = "light" }
+
+[seats.black]
+pieces = "dark"
+colour = [0.08, 0.08, 0.09]
+
+[seats.white]
+pieces = "light"
+colour = [0.92, 0.90, 0.85]
+
+# Polished ivory and near black, as the generic disc's (`look::disc_light`, `disc_dark`).
+[materials.light]
+tint = [0.90, 0.88, 0.82]
+roughness = 0.3
+clearcoat = 0.4
+clearcoat_roughness = 0.12
+
+[materials.dark]
+tint = [0.045, 0.045, 0.05]
+roughness = 0.3
+clearcoat = 0.4
+clearcoat_roughness = 0.12

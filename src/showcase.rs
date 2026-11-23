@@ -60,6 +60,9 @@ pub struct Shown {
     pub model: String,
     pub material: MaterialSpec,
     pub stands: Stands,
+    /// For a piece of two sides: its model's parts with their materials, in the model's order,
+    /// and whether it lies turned over (`material` is then the side up's).
+    pub sides: Option<(Vec<(String, MaterialSpec)>, bool)>,
 }
 
 /// Every piece model the appearances name, once in each material it is given: each
@@ -67,12 +70,16 @@ pub struct Shown {
 pub fn pieces(all: &Appearances) -> Vec<Shown> {
     let mut out: Vec<Shown> = Vec::new();
     for look in &all.0 {
-        for seat in look.seats.values() {
+        for (word, seat) in &look.seats {
             let Some(theirs) = look.material(seat.pieces.as_ref()) else {
                 continue;
             };
             for piece in look.pieces.values() {
-                let material = look.material(piece.material.as_ref()).unwrap_or(theirs);
+                let sides = two_sides(look, piece, word);
+                let material = match &sides {
+                    Some((parts, turned)) => &parts[usize::from(*turned)].1,
+                    None => look.material(piece.material.as_ref()).unwrap_or(theirs),
+                };
                 if out
                     .iter()
                     .any(|s| s.model == piece.model && s.material == *material)
@@ -83,11 +90,34 @@ pub fn pieces(all: &Appearances) -> Vec<Shown> {
                     model: piece.model.clone(),
                     material: material.clone(),
                     stands: piece.stands,
+                    sides,
                 });
             }
         }
     }
     out
+}
+
+/// A piece of two sides as a seat's lie: its model's parts with their materials, and whether its
+/// second part's side is up. None for a piece of one, or one whose sides are not all there.
+fn two_sides(
+    look: &crate::appearance::Appearance,
+    piece: &crate::appearance::PieceLook,
+    word: &str,
+) -> Option<(Vec<(String, MaterialSpec)>, bool)> {
+    if piece.sides.is_empty() {
+        return None;
+    }
+    let parts: Option<Vec<(String, MaterialSpec)>> = assets::model_parts(&piece.model)
+        .into_iter()
+        .map(|part| {
+            let spec = look.materials.get(piece.sides.get(&part)?)?.clone();
+            Some((part, spec))
+        })
+        .collect();
+    let parts = parts.filter(|p| p.len() == 2)?;
+    let turned = piece.up.get(word) == Some(&parts[1].0);
+    Some((parts, turned))
 }
 
 /// Where each of `count` pieces stands on the table (x across, y towards the player): in rows
@@ -139,6 +169,19 @@ fn lay_out(
             Stands::Forward => 0.6,
             _ => 0.0,
         };
+        let at =
+            Transform::from_xyz(spot.x, -low, spot.y).with_rotation(Quat::from_rotation_y(turn));
+        if let Some((parts, turned)) = &shown.sides {
+            let parts: Vec<(&str, Handle<StandardMaterial>)> = parts
+                .iter()
+                .map(|(part, spec)| (part.as_str(), materials.add(spec.build(&server))))
+                .collect();
+            // Turned over as a disc is (`props::disc_shows`): about the axis across.
+            let at = at.with_rotation(props::disc_shows(!turned));
+            let whole = props::spawn(&mut commands, &server, &shown.model, &parts, at);
+            commands.entity(whole).insert(ChildOf(root));
+            continue;
+        }
         commands.spawn((
             Name::new(shown.model.clone()),
             Mesh3d(

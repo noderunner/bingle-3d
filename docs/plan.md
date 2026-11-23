@@ -551,7 +551,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   Which action builds on which side is the look's (`[fences] sides`: the API names the actions
   but not their sides). The panel's fence buttons still work.
 - Games of placing a stone (Go, Gomoku, Pente, Meridians, Hex, Havannah, Mycelium, Reversi,
-  Yavalath) play alike: each seat's stones in a turned bowl beside the board (the looks:
+  Yavalath) play alike: each seat's stones in a turned bowl beside the board (Reversi's discs
+  excepted, below) (the looks:
   `points.toml`, `hex.toml`, and `stones.toml` for the rest, slate and shell, and jade for
   Mycelium's green), and on the player's turn the pointer is the stone, floating and bobbing as
   Amazons' arrow and Fendo's fence are, with a see-through stone on the point or cell under it;
@@ -677,13 +678,23 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     and markers that turn over; their looks (and the game itself, a private one) come later,
     from outside this repository (decision 2). Generic ivory and near-black for now
     (`look::disc_light`, `disc_dark`).
+  - **Reversi's discs** (2026-11-23): the same disc 24 mm across (`disc_large.glb`), to fill a
+    28 mm square. A piece's look may give it two sides (`sides`, the material of each of its
+    model's two parts, and `up`, which side each seat's lie up); the board draws any piece of
+    such a kind, wherever it is made, as its upper half and a child for its lower
+    (`board::dress_sides`, after everything that makes a piece), the halves' materials swapped
+    for a seat whose second side is up, since the halves are each other's mirror image. A disc
+    that changes hands is the same disc turned over where it lies (`sides.rs`): raised, half a
+    turn away from the move played, and down again, each further from the move a little later
+    than the one before, with the soft sound of a capture as each lands. No bowls: a heap of
+    stones would not do for discs, and a disc in hand comes from under the pointer as before.
 - A patience's cards are drawn (below); no game's dice, discs or rings yet. `props.rs` holds how
   these models are read. `--showcase` lays every piece model, the discs and rings, the dice and
   some cards on the table,
   to look at an asset in the client's own light; `--card-face` and `--card-back` try a picture
   on a card, and `--view` takes a place on the table to look at.
 - Cost: 3 MB of models. A chessman is 3,700 to 6,500 triangles, a checker 5,000, a die 2,900,
-  a disc 3,000 and a ring 4,600;
+  a disc 3,000 (3,900 the large one) and a ring 4,600;
   a board full of them (Fist's thirty) is over 100,000, and held the display's 60 frames a
   second on the maintainer's GPU. Not measured on the Steam Frame.
 - Open:

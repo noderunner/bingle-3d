@@ -273,7 +273,9 @@ A game's own rules and its players' words keep their terms.
 - `src/appearance.rs`: per-game appearance files (`assets/appearance/*.toml`, by game id): each
   kind of piece's model, how it stands (`Stands`: a stone lies loose, a block square to the
   board but never quite, a piece with a face looks across it) and a material of its own if it
-  has one; what a
+  has one, or two sides (`sides`, `up`: a disc light on one side and dark on the other, each
+  seat's its own side up; `src/sides.rs`, no Bevy systems, which half is which and how one
+  changing hands is turned over, `board::dress_sides` and `flip_pieces` drawing it); what a
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
   (`[sounds]`), a chessboard's two
