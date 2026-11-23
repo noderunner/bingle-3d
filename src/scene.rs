@@ -225,6 +225,11 @@ type CameraToLight = (
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 pub struct Headset;
 
+/// A 3D camera that draws something of its own apart from the table (the pointer's hand,
+/// `cursor.rs`): it gets none of the environment's light, nor its effects.
+#[derive(Component)]
+pub struct Apart;
+
 /// Gives every 3D camera the light of the environment chosen: a new camera, and every camera
 /// when another is chosen.
 fn light_cameras(
@@ -233,7 +238,7 @@ fn light_cameras(
     all: Res<Environments>,
     server: Res<AssetServer>,
     bloom_on: Res<BloomOn>,
-    cameras: Query<CameraToLight, With<Camera3d>>,
+    cameras: Query<CameraToLight, (With<Camera3d>, Without<Apart>)>,
 ) {
     let Some(env) = all.chosen(&chosen) else {
         return;

@@ -24,6 +24,7 @@ use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
 use crate::camera::{PIXELS_PER_LINE, PointerOverUi, WheelTaken};
+use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Selections};
 use crate::net::session::Problem;
@@ -35,6 +36,8 @@ impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovering>()
             .init_resource::<WheelTaken>()
+            .init_resource::<Under>()
+            .init_resource::<TableFeel>()
             .init_resource::<SideAim>()
             .add_observer(on_click)
             .add_observer(on_over)
@@ -47,6 +50,7 @@ impl Plugin for PlayPlugin {
                     right_click,
                     take_wheel.run_if(resource_changed::<WatchStatus>),
                     wheel,
+                    sense.in_set(Sense),
                 ),
             );
     }
@@ -816,6 +820,25 @@ impl Turn {
             .collect()
     }
 
+    /// Whether a click on `at` would pick up what stands there, to move it: before anything is
+    /// clicked towards the selection, a selection still possible moves a piece from there and
+    /// begins with a click on it; or it is the piece every click moves, not yet lifted.
+    pub fn picks_up(&self, at: &str) -> bool {
+        if self.stage != Stage::Choosing || self.holding() {
+            return false;
+        }
+        if self.unclicked_from() == Some(at) {
+            return true;
+        }
+        let n = self.gestures.len();
+        let click = Gesture::pos(at);
+        self.targets().contains(at)
+            && self.matching().any(|o| {
+                o.from.as_deref() == Some(at)
+                    && o.gestures[n..].iter().find(|g| g.is_pos()) == Some(&click)
+            })
+    }
+
     /// The choices that are not positions (a piece, a count, an action such as a swap), for the
     /// panel to offer as buttons, in the order the server lists them. A choice that a click on
     /// the board makes by itself is left out: where only stones can be placed, a click on a cell
@@ -1253,6 +1276,80 @@ fn on_click(
     }
 }
 
+/// Something of the board's a click is taken on, as `on_click` sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clickable<'a> {
+    Spot(&'a str),
+    Choice(&'a Gesture),
+    TakeUp(&'a [Gesture]),
+    TakeToPlace(&'a [Gesture]),
+}
+
+/// What a click on `what` would do, for the pointer's hand: pick up a piece (one a click picks
+/// up, or what a bowl, a supply or a stock gives), choose it (a position a click is taken on,
+/// or where what is taken up is aimed), or nothing. `aimed`: something taken up is aimed at a
+/// place a click on the board puts it.
+pub fn feel(turn: Option<&Turn>, what: Clickable, aimed: bool) -> Feel {
+    let Some(turn) = turn.filter(|t| t.stage == Stage::Choosing) else {
+        return Feel::Open;
+    };
+    let takes = |outcome: Outcome| {
+        if outcome == Outcome::Ignored {
+            Feel::Open
+        } else {
+            Feel::Grab
+        }
+    };
+    match what {
+        Clickable::Spot(_) if turn.taken().is_some() && !turn.taken_after_click() => {
+            if aimed {
+                Feel::Point
+            } else {
+                Feel::Open
+            }
+        }
+        Clickable::Spot(at) if turn.picks_up(at) => Feel::Grab,
+        Clickable::Spot(at) if turn.targets().contains(at) => Feel::Point,
+        Clickable::Spot(_) => Feel::Open,
+        Clickable::Choice(g) => takes(turn.clone().gesture(g)),
+        Clickable::TakeUp(g) => takes(turn.clone().take_up(g)),
+        Clickable::TakeToPlace(g) => takes(turn.clone().take_to_place(g)),
+    }
+}
+
+/// Says what a click on the board under the pointer would do (`cursor.rs`), as `on_click`
+/// finds what was clicked: the first thing outwards from what was hit that is the board's.
+fn sense(
+    under: Res<Under>,
+    (spots, choices, takes, places): (
+        Query<&Spot>,
+        Query<&Choice>,
+        Query<&TakeUp>,
+        Query<&TakeToPlace>,
+    ),
+    (watch, aim): (Res<WatchStatus>, Res<SideAim>),
+    mut table: ResMut<TableFeel>,
+) {
+    let what = under.chain.iter().find_map(|e| {
+        if let Ok(spot) = spots.get(*e) {
+            Some(Clickable::Spot(&spot.0))
+        } else if let Ok(choice) = choices.get(*e) {
+            Some(Clickable::Choice(&choice.0))
+        } else if let Ok(take) = takes.get(*e) {
+            Some(Clickable::TakeUp(&take.0))
+        } else {
+            places.get(*e).ok().map(|p| Clickable::TakeToPlace(&p.0))
+        }
+    });
+    if let Some(what) = what {
+        table.set_if_neq(TableFeel(feel(
+            watch.turn.as_ref(),
+            what,
+            aim.choice.is_some(),
+        )));
+    }
+}
+
 fn on_over(over: On<PointerOver>, spots: Query<&Spot>, mut hovering: ResMut<Hovering>) {
     if let Ok(spot) = spots.get(over.entity)
         && hovering.0.as_ref() != Some(&spot.0)
@@ -1432,6 +1529,41 @@ mod tests {
                 &[("pos", from), ("pos", to)],
             )
         }
+    }
+
+    #[test]
+    fn the_hand_grabs_a_piece_a_click_picks_up_and_points_at_where_it_may_go() {
+        let flat = sel("b2", Some("b2"), &[("piece", "flat"), ("pos", "b2")]);
+        let wall = sel("Sb2", Some("b2"), &[("piece", "wall"), ("pos", "b2")]);
+        let only = sel("c3", Some("c3"), &[("piece", "flat"), ("pos", "c3")]);
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![step("a1", "a2"), step("a1", "a3"), flat, wall, only],
+        ));
+        let at = |t: &Turn, cell: &str| feel(Some(t), Clickable::Spot(cell), false);
+        assert!(t.picks_up("a1"));
+        assert!(!t.picks_up("a2") && !t.picks_up("b2"));
+        assert_eq!(at(&t, "a1"), Feel::Grab, "a piece to move");
+        assert_eq!(at(&t, "c3"), Feel::Point, "a cell a piece is placed on");
+        assert_eq!(at(&t, "b2"), Feel::Open, "not until which piece is chosen");
+        assert_eq!(at(&t, "a2"), Feel::Open, "nothing to click there yet");
+        // What a bowl or a supply gives is picked up, when it may be chosen.
+        let take =
+            |t: &Turn, kind: &str| feel(Some(t), Clickable::Choice(&g("piece", kind)), false);
+        assert_eq!(take(&t, "wall"), Feel::Grab);
+        assert_eq!(take(&t, "cap"), Feel::Open);
+        assert_eq!(
+            feel(None, Clickable::Spot("a1"), false),
+            Feel::Open,
+            "not our turn"
+        );
+
+        // Picked up: where it may go is pointed at, and it is not picked up again.
+        t.gesture(&g("pos", "a1"));
+        assert!(!t.picks_up("a1"));
+        assert_eq!(at(&t, "a2"), Feel::Point);
+        assert_eq!(at(&t, "a3"), Feel::Point);
     }
 
     #[test]

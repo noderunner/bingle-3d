@@ -301,12 +301,21 @@ A game's own rules and its players' words keep their terms.
   move being built: what it places as see-through pieces (solid once the move is sent), a piece
   it moves held over its space or carried to where it goes, and what it aims held under the
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
-  then is lowered: `travel`) and hides the pointer's arrow while an aimed piece takes its place;
-  off the board (over a panel), what is held under the pointer waits over the board's edge where
-  the pointer is beyond it (`hand::within`, `BoardEdge`), and the arrow is back. Where every
+  then is lowered: `travel`), and the pointer's hand gives way while an aimed piece takes its
+  place; off the board (over a panel), what is held under the pointer waits over the board's
+  edge where the pointer is beyond it (`hand::within`, `BoardEdge`), and the hand is back. Where every
   click places one stone (Go, Hex, Reversi: `Turn::auto_hand`), the stone is held under the
   pointer by itself and carried from there to where it is placed. The pointer's place is read
   from a board's `Spot`s and from anything marked `hand::Surface` (a card, the cloth).
+- `src/cursor.rs`: the pointer, which is the client's own: the system's cursor is never shown
+  over the window. A small glove of capsules (`pose`, `bones`: no Bevy systems), drawn by a
+  camera of its own (`scene::Apart`, so it gets none of the table's light) into an image shown
+  at the pointer over every panel: open over nothing, palm down to pick up over what a click
+  picks up, pointing over what a click chooses (a button, here). What a click on the table
+  would do is the table's to say: a system in `cursor::Sense` reads `Under` and writes
+  `TableFeel` (`play::feel` for the board, `card_table`'s `feel` for cards), deciding as its
+  click would. Hidden while what the move aims is held under the pointer, and not added in a
+  headset.
 - `src/patience.rs`: a patience (Bingle's ADR 0122), which any game may declare
   (`patience::plays`: it has cards and actions of the kind `patience`): the vocabulary's piles
   by their zones (`t1`…, `f1`…, `c1`…, `stock`, `waste`, `done`), its gestures (`from-t3-2`,

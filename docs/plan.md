@@ -708,6 +708,16 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - Found while building it: the interface is blended in linear light (the cameras are HDR), so a
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
   see-through, than the same colours on the web page. The new parts use opaque colours.
+- The pointer is the client's own (`cursor.rs`), never the system's cursor, which some
+  platforms showed again now and then while it was meant to be hidden under a piece in hand: a
+  small glove of capsules, drawn by a camera of its own into an image shown at the pointer, over
+  every panel. It is open over nothing, relaxed palm down over what a click picks up (a piece
+  to move, a bowl, a seat's supply, a stock's tile, a card to lift), and points over what a
+  click chooses (a lit position, a pile a card may go on, a button). It is hidden while what
+  the move aims is held in its place, as the system's arrow was. The table says what a click
+  would do (`play::feel`, `card_table`'s `feel`), from the server's legal selections, as a
+  click would. A drawn pointer trails the system's by a frame; the hand is not drawn in a
+  headset, whose pointers are rays.
 
 ### The login screen
 
