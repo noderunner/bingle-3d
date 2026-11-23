@@ -444,6 +444,8 @@ A game's own rules and its players' words keep their terms.
   `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
   fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
+- `src/frame_pace.rs`: the most frames a second the window draws (60 by default; `max_fps` in
+  `config.toml`, `--max-fps`): each frame ends waiting for the next to be due. Not in a headset.
 - `scripts/release-build.sh`: a release for one platform (Linux, Windows, the Steam Frame), as
   `.github/workflows/release.yml` runs it on a tag (plan, decision 11). The Frame's is
   cross-built against Valve's sysroot (`scripts/frame-sysroot.sh`); `scripts/openxr-loader.sh`

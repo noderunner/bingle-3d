@@ -1051,3 +1051,16 @@ Proposed 2026-11-22, for the maintainer to settle (the patience pull request):
     more in the same impulse, ADR 0121): each is sent as it is made. Nothing is taken for the
     player either,
     however few moves there are (`Turn::clicks_only`): a lone move is not made by itself.
+
+Proposed 2026-11-23, for the maintainer to settle (the frame limit's pull request):
+
+13. **The window draws at most 60 frames a second by default.** A board game needs no more,
+    and the monitor's pace (vsync) on a laptop panel can be 144 or 240: at 240 a frame every
+    4 ms, each the whole table with its effects, kept two and a half cores and the GPU busy for
+    nothing. Measured on the maintainer's 2080 Ti, at the 1280×720 window, showcase: uncapped
+    ~250 fps, 2.6 cores, 160 W at the GPU; at 60, 0.65 of a core and 71 W, against 59 W idle.
+    The effects themselves are cheap (about 1.1 ms of GPU a frame, SSAO the largest at 0.22),
+    so they stay. `max_fps` in `config.toml` sets it (0 is the monitor's pace), `--max-fps`
+    for a run; a settings screen will show it. In a headset there is no limit: it sets the
+    pace. On a 144 Hz monitor 60 does not divide the refresh and a camera turning may judder:
+    72 or 0 there.

@@ -46,6 +46,8 @@ Options:
   --desktop          stay in the window, even with SteamVR running
   --legal-moves      start with every position a click would be taken on lit (L)
   --no-bloom         draw without the camera's bloom, as a headset sees the table
+  --max-fps N        draw at most N frames a second, for this run (60 unless
+                     config.toml's max_fps says; 0 is the monitor's pace)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -100,6 +102,8 @@ pub struct Options {
     pub legal_moves: bool,
     /// `--no-bloom`: the camera starts without bloom.
     pub no_bloom: bool,
+    /// `--max-fps`: the most frames a second, in place of the config's.
+    pub max_fps: Option<u32>,
     pub help: bool,
 }
 
@@ -187,6 +191,12 @@ impl Options {
                     }
                     opts.frames = Some(n);
                 }
+                "--max-fps" => {
+                    let v = value("a number of frames a second")?;
+                    opts.max_fps = Some(v.parse().map_err(|_| {
+                        format!("--max-fps: {v:?} is not a number of frames a second")
+                    })?);
+                }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
                 "--server" => opts.server = Some(value("an address")?),
                 "--watch" | "--watch-bots" | "--play-bot" | "--host" | "--join"
@@ -239,6 +249,17 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Options, String> {
         Options::parse(args.iter().copied())
+    }
+
+    #[test]
+    fn max_fps_is_a_number() {
+        assert_eq!(parse(&["--max-fps", "30"]).unwrap().max_fps, Some(30));
+        assert_eq!(parse(&["--max-fps=0"]).unwrap().max_fps, Some(0));
+        assert!(
+            parse(&["--max-fps", "fast"])
+                .unwrap_err()
+                .contains("not a number")
+        );
     }
 
     #[test]

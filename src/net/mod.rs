@@ -74,7 +74,8 @@ impl Plugin for NetPlugin {
         }
         let auto_login = store.config.auto_login;
         // Where the table stands is the scene's to build; the config is this thread's to keep.
-        app.insert_resource(crate::environment::Kept(store.config.environment.clone()));
+        app.insert_resource(crate::environment::Kept(store.config.environment.clone()))
+            .insert_resource(crate::frame_pace::Kept(store.config.max_fps));
         let session = Session::new(self.server.as_deref(), store);
         let status = ServerStatus {
             server: session.server(),

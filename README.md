@@ -202,6 +202,10 @@ The positions a click would be taken on glow: a line of light traced round each,
 streaks rising from it. `--legal-moves` starts with every such position lit, and `--no-bloom`
 without the camera's bloom, as a headset sees the table.
 
+The window draws at most 60 frames a second, which a board game does not need more than, so the
+GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
+and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.
+
 `--showcase` lays every piece's model on the table, with the dice and a few playing cards of the
 usual deck, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
 a PNG, 5 to 7) on the cards' sides.

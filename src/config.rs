@@ -39,6 +39,10 @@ pub struct Config {
     /// when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    /// The most frames a second the window draws, 0 for the monitor's pace
+    /// (`frame_pace::DEFAULT_MAX_FPS` when there is none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_fps: Option<u32>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
