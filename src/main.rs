@@ -23,6 +23,7 @@ mod escape_menu;
 mod families;
 mod fences;
 mod fonts;
+mod frame_pace;
 mod friends;
 mod game_panel;
 mod hand;
@@ -223,6 +224,11 @@ fn main() -> AppExit {
     if !in_headset {
         app.add_plugins(cursor::CursorPlugin);
     }
+    app.add_plugins(frame_pace::FramePacePlugin {
+        max_fps: opts.max_fps,
+        vr_refresh_rate: opts.vr_refresh_rate,
+        in_headset,
+    });
     app.insert_resource(scene::BloomOn(!opts.no_bloom && !in_headset))
         .insert_resource(board::ShowLegalMoves(opts.legal_moves));
     if opts.showcase {

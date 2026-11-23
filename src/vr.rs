@@ -348,6 +348,7 @@ mod headset {
     use super::*;
     use crate::environment::{Chosen, Environments};
     use crate::escape_menu::{self, EscapeMenu};
+    use crate::frame_pace::{self, HeadsetRate};
     use crate::net::{Net, WatchStatus};
     use crate::play;
     use crate::ray_pointer::{self, RayPointer, RayPointerPlugin};
@@ -385,6 +386,8 @@ mod headset {
         let mut exts = OxrInitPlugin::default().exts;
         // Asked for, not needed: a runtime without it says so in the log and goes on.
         exts.raw_mut().other.push(FRAME_EXTENSION.to_vec());
+        // To choose the display's rate (`frame_pace::HeadsetRate`); not every runtime has it.
+        exts.raw_mut().fb_display_refresh_rate = true;
         add_xr_plugins(plugins.disable::<PipelinedRenderingPlugin>()).set(OxrInitPlugin {
             app_info: AppInfo {
                 name: "Bingle".into(),
@@ -424,7 +427,7 @@ mod headset {
                 (unpace_window, make_actions.run_if(session_available)),
             )
             .add_systems(OxrSendActionBindings, suggest_bindings)
-            .add_systems(XrSessionCreated, give_hands)
+            .add_systems(XrSessionCreated, (give_hands, ask_for_rate))
             .add_systems(XrPreDestroySession, take_hands)
             .add_systems(
                 PreUpdate,
@@ -562,6 +565,40 @@ mod headset {
                 }
                 Err(e) => warn!("headset: no pointer for {}: {e}", HANDS[number]),
             }
+        }
+    }
+
+    /// Asks the display for the rate chosen (`frame_pace::HeadsetRate`), or the nearest it
+    /// offers, where the runtime lets the client choose. The runtime then paces the frames.
+    fn ask_for_rate(
+        rate: Option<Res<HeadsetRate>>,
+        enabled: Option<Res<OxrEnabledExtensions>>,
+        session: Res<OxrSession>,
+    ) {
+        let Some(wanted) = rate.and_then(|r| r.0) else {
+            return;
+        };
+        if !enabled.is_some_and(|e| e.0.raw().fb_display_refresh_rate) {
+            warn!(
+                "headset: {wanted} Hz was asked for, but this runtime does not let an \
+                 application choose the display's rate: set it in the runtime's own settings"
+            );
+            return;
+        }
+        let offered = match session.enumerate_display_refresh_rates() {
+            Ok(offered) => offered,
+            Err(e) => {
+                warn!("headset: the display's rates could not be read: {e}");
+                return;
+            }
+        };
+        let Some(rate) = frame_pace::headset_rate(wanted, &offered) else {
+            warn!("headset: the display offers no rate to choose from");
+            return;
+        };
+        match session.request_display_refresh_rate(rate) {
+            Ok(()) => info!("headset: asked for {rate} Hz ({wanted} wanted; offered {offered:?})"),
+            Err(e) => warn!("headset: {rate} Hz could not be asked for: {e}"),
         }
     }
 
