@@ -448,11 +448,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - A position a click would be taken on glows (`highlight.rs`): a line of light traced round
   its edge and short streaks of light rising from it, slowly moving, drawn by a shader of the
   client's own and added to the picture; a point's is a ring small enough to read as a dot.
-  It replaced an amber stain of the cell's own material, which is kept, off by default, to lay
-  under the glow (T) while it is judged. The board only marks what is lit and its outline, so
-  another effect can take the glow's place. The glow is tuned twice, for a camera that blooms
-  and one that does not: a headset's eyes have no bloom, and B (or `--no-bloom`) shows the
-  window as they see it. Fence sides are no longer lit: the see-through fence on the side aimed
+  It replaced an amber stain of the cell's own material; laid under the glow, the stain was
+  judged not needed, and is gone. The board only marks what is lit and its outline, so another
+  effect can take the glow's place. The glow is tuned twice: for the window's camera, which
+  blooms (the chosen look), and for where there is no bloom, a headset's eyes; `--no-bloom`
+  shows the window as they see it. Fence sides are no longer lit: the see-through fence on the side aimed
   at shows where one goes.
 - Lighting the legal moves is off by default (at the start of most games every position is one,
   and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through

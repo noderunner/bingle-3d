@@ -51,7 +51,6 @@ impl Plugin for ScenePlugin {
             (
                 build_environment.run_if(resource_changed::<Chosen>),
                 light_cameras,
-                bloom_cameras.run_if(resource_changed::<BloomOn>),
                 focus_on_orbit,
                 spawn_model,
                 lay_seats,
@@ -62,7 +61,7 @@ impl Plugin for ScenePlugin {
     }
 }
 
-/// Whether the flat cameras bloom (B, or `--no-bloom`). A headset's eyes never do; in a headset
+/// Whether the flat cameras bloom (not with `--no-bloom`). A headset's eyes never do; in a headset
 /// run it is off for every camera, so the glow of what is lit (`highlight.rs`), which is tuned
 /// for one or the other, is tuned for the eyes.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,20 +82,6 @@ fn bloom() -> Bloom {
             threshold_softness: 0.3,
         },
         ..Bloom::OLD_SCHOOL
-    }
-}
-
-/// A camera of the window's, lit (`light_cameras` has given it its effects).
-type FlatCamera = (With<Camera3d>, With<LitFor>, Without<Headset>);
-
-/// Turns the flat cameras' bloom on or off.
-fn bloom_cameras(mut commands: Commands, on: Res<BloomOn>, cameras: Query<Entity, FlatCamera>) {
-    for camera in &cameras {
-        if on.0 {
-            commands.entity(camera).insert(bloom());
-        } else {
-            commands.entity(camera).remove::<Bloom>();
-        }
     }
 }
 

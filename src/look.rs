@@ -291,24 +291,6 @@ pub fn groove() -> MaterialSpec {
     }
 }
 
-/// A cell a click would be taken on: the board, stained amber and lit warmly, plainly enough to
-/// see at a glance (a glow alone barely showed on the paler woods).
-pub fn lit_cell() -> MaterialSpec {
-    lit_square(&board())
-}
-
-/// A cell a click would be taken on, of a board or a chessboard's square: its own wood stained
-/// amber and glowing softly. Light alone barely shows on a pale square, which is near white already; the stain
-/// shows on it, and the glow on a dark one.
-pub fn lit_square(square: &MaterialSpec) -> MaterialSpec {
-    let [r, g, b] = square.tint.unwrap_or([1.0; 3]);
-    MaterialSpec {
-        tint: Some([r, g * 0.86, b * 0.52]),
-        glow: Some([0.4, 0.27, 0.04]),
-        ..square.clone()
-    }
-}
-
 /// A goal's edge of the board (its rim and sides), stained in its seat's colour (or a plain dark
 /// stain for a goal every seat shares). Satin, not gloss: the sides face the room's window, and a
 /// gloss there shows the window rather than the wood.
@@ -432,7 +414,6 @@ mod tests {
         let looks = [
             board(),
             groove(),
-            lit_cell(),
             goal(None),
             piece(Color::BLACK),
             paper(),

@@ -338,14 +338,11 @@ A game's own rules and its players' words keep their terms.
   drawn by a shader of our own (`src/highlight/cell_glow.wesl`, compiled in as
   `embedded://shaders/cell_glow.wesl`; Bevy 0.20's shaders are WESL), its light added to the
   picture; a point gets a ring small enough to read as a dot. Tuned twice, for a camera that
-  blooms and one that does not (`scene::BloomOn`: off in a headset). **Another effect is
-  another `Effect` and its arm in `light`**, nothing else. The old amber stain of the
-  position's own material (`Tint`) can be laid under it, off by default. The outline's
-  geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
-- `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C),
+  blooms and one that does not (`scene::BloomOn`: off in a headset, and with `--no-bloom`). **Another effect is
+  another `Effect` and its arm in `light`**, nothing else. The outline's geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
+- `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
   lighting the legal moves (L, `board::ShowLegalMoves`, off by default; `--legal-moves` starts
-  with it on), the glow (G), the tint under it (T) and the camera's bloom (B; `--no-bloom`
-  starts without it, as a headset sees the table).
+  with it on).
 - `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera. How far back it goes is
   the environment's (`Reach`); `--view` puts it somewhere for a picture (`StartView`), looking at

@@ -39,7 +39,7 @@ use bevy::prelude::*;
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
 use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
-use crate::highlight::{Lit, Outline, Tint};
+use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
@@ -440,7 +440,6 @@ struct Kit {
 enum TintKit {
     Laid {
         piece: String,
-        lit: Handle<StandardMaterial>,
         outline: Outline,
     },
     Stamp {
@@ -1260,23 +1259,17 @@ fn build_board(
                 MeshMaterial3d(lines),
                 ChildOf(root),
             ));
-            let target = tools.material(&look::lit_cell());
             let cell_mesh = shape.mesh(pitch, CELL_SCALE, CELL_HEIGHT);
             let cell_outline =
                 Outline::space(slab::cell_corners(shape, pitch * CELL_SCALE), CELL_HEIGHT);
-            // A chessboard's two materials by turns, if the game's look has them, each lit as
-            // the board is.
+            // A chessboard's two materials by turns, if the game's look has them.
             let squares = tools
                 .look
                 .and_then(|l| l.board.squares.clone())
                 .map(|names| {
                     let look = tools.look.expect("a look has the names");
                     let specs = names.map(|n| look.materials.get(&n).cloned());
-                    specs.map(|spec| {
-                        let spec = spec?;
-                        let lit = look::lit_square(&spec);
-                        Some((tools.material(&spec), tools.material(&lit)))
-                    })
+                    specs.map(|spec| Some(tools.material(&spec?)))
                 });
             let turns = squares
                 .as_ref()
@@ -1284,17 +1277,16 @@ fn build_board(
                 .unwrap_or_default();
             for (id, centre) in &layout.centres {
                 let at = *centre + Vec3::Y * BOARD_HEIGHT;
-                let (rest, lit) = squares
+                let material = squares
                     .as_ref()
                     .and_then(|s| s[turns.get(id).copied().unwrap_or(0)].clone())
-                    .unwrap_or_else(|| (wood.clone(), target.clone()));
+                    .unwrap_or_else(|| wood.clone());
                 commands.spawn((
                     Name::new(format!("Cell {id}")),
                     Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
-                    MeshMaterial3d(rest.clone()),
+                    MeshMaterial3d(material),
                     Transform::from_translation(at),
                     Cell { id: id.clone() },
-                    Tint { rest, lit },
                     cell_outline.clone(),
                     Spot(id.clone()),
                     Pickable::default(),
@@ -1343,16 +1335,10 @@ fn build_board(
                 MeshMaterial3d(lines),
                 ChildOf(root),
             ));
-            // Each point is a disc a click lands on: unseen, but tinted while a click there
-            // would be taken, if the tint is on.
+            // Each point is a disc a click lands on, unseen; it glows while a click there
+            // would be taken (`highlight.rs`).
             let unseen = tools.materials.add(StandardMaterial {
                 base_color: Color::NONE,
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            });
-            let glowing = tools.materials.add(StandardMaterial {
-                base_color: Color::srgba(1.0, 0.86, 0.5, 0.22),
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
                 ..default()
@@ -1370,10 +1356,6 @@ fn build_board(
                     MeshMaterial3d(unseen.clone()),
                     Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + 0.0003)),
                     Cell { id: id.clone() },
-                    Tint {
-                        rest: unseen.clone(),
-                        lit: glowing.clone(),
-                    },
                     Outline::point(pitch, 0.0),
                     Spot(id.clone()),
                     Pickable::default(),
@@ -1730,11 +1712,6 @@ fn build_board(
     for (key, said) in tools.look.map(|l| &l.tints).into_iter().flatten() {
         let kit = match Tinted::of(said) {
             Some(Tinted::Laid(piece)) => {
-                let spec = tools
-                    .look
-                    .and_then(|l| l.material(l.pieces.get(&piece)?.material.as_ref()))
-                    .cloned()
-                    .unwrap_or_else(look::board);
                 // The tile's top, as its model is: the board's cell's shape, as wide across as
                 // the model.
                 let bounds = tools
@@ -1745,7 +1722,6 @@ fn build_board(
                     bounds.map_or((PITCH * CELL_SCALE, 0.0), |(lo, hi)| (hi.x - lo.x, hi.y));
                 TintKit::Laid {
                     piece,
-                    lit: tools.material(&look::lit_square(&spec)),
                     outline: Outline::space(slab::cell_corners(shape, across), top),
                 }
             }
@@ -2890,24 +2866,16 @@ fn show_tints(
         // A click on it is a click on its position.
         let spot = (Spot(at.cell.clone()), Pickable::default());
         match &kit.tints[&at.key] {
-            TintKit::Laid {
-                piece,
-                lit,
-                outline,
-            } => {
+            TintKit::Laid { piece, outline } => {
                 let kind = kit.piece(piece);
                 let rest = kind.material.clone().unwrap_or_default();
                 commands.spawn((
                     name,
                     Mesh3d(kind.mesh.clone()),
-                    MeshMaterial3d(rest.clone()),
+                    MeshMaterial3d(rest),
                     kit.set_down(piece, "", *centre, (&at.cell, 0), 0.0),
                     Cell {
                         id: at.cell.clone(),
-                    },
-                    Tint {
-                        rest,
-                        lit: lit.clone(),
                     },
                     outline.clone(),
                     at.clone(),
@@ -5256,9 +5224,11 @@ mod tests {
             app.world_mut().resource_mut::<WatchStatus>().table =
                 Some(grid_table("breakthrough", &[]));
             app.update();
-            let mut q = app.world_mut().query_filtered::<&Tint, With<Cell>>();
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<Cell>>();
             let materials: std::collections::HashSet<_> =
-                q.iter(app.world()).map(|c| c.rest.clone()).collect();
+                q.iter(app.world()).map(|m| m.0.clone()).collect();
             assert_eq!(materials.len(), 1);
             let mut borders = app.world_mut().query::<&Name>();
             assert!(!borders.iter(app.world()).any(|n| n.as_str() == "Border"));

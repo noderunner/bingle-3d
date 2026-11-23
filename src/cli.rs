@@ -45,8 +45,7 @@ Options:
                      already running). Home sits you at the table again
   --desktop          stay in the window, even with SteamVR running
   --legal-moves      start with every position a click would be taken on lit (L)
-  --no-bloom         start with the camera's bloom off (B turns it on), as a headset
-                     sees the table
+  --no-bloom         draw without the camera's bloom, as a headset sees the table
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)

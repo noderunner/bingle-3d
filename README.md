@@ -199,9 +199,8 @@ your side), degrees above it, and metres from its middle. Two more numbers, `,X,
 place on the table instead: metres to the right of the middle, and towards you.
 
 The positions a click would be taken on glow: a line of light traced round each, with short
-streaks rising from it. *Glow* (G), *Tint* (T, an amber stain under the glow, off at first) and
-*Bloom* (B) turn its parts on and off to compare. `--legal-moves` starts with every such
-position lit, and `--no-bloom` without the camera's bloom, as a headset sees the table.
+streaks rising from it. `--legal-moves` starts with every such position lit, and `--no-bloom`
+without the camera's bloom, as a headset sees the table.
 
 `--showcase` lays every piece's model on the table, with the dice and a few playing cards of the
 usual deck, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or

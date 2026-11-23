@@ -6,12 +6,9 @@
 //! position's top (the ring), and thin streaks of light rising a little from that edge (the
 //! ribbon), both slowly moving: a shader of our own (`highlight/cell_glow.wesl`), its light added
 //! to what is behind it. A point (a Go board's crossing) gets a ring so small it reads as a dot.
-//! The glow is tuned twice: brighter than white where the camera blooms, so the bloom spreads
-//! it, and softer and wider where it does not (a headset's eyes, or with bloom turned off:
+//! The glow is tuned twice: a little brighter than white where the camera blooms, so its core
+//! blooms, and softer and wider where it does not (a headset's eyes, or `--no-bloom`:
 //! `scene::BloomOn`).
-//!
-//! The older look, the position's own material stained amber (`Tint`), can be laid under the
-//! effect, and is off by default (`HighlightStyle`).
 //!
 //! The outline's geometry (`walk`, `ring`, `ribbon`) has no systems in it.
 
@@ -60,50 +57,31 @@ impl Plugin for HighlightSystems {
             .init_resource::<Effects>()
             .add_systems(
                 PostUpdate,
-                (tune, unlight, light, tint)
+                (tune, unlight, light)
                     .chain()
                     .before(TransformSystems::Propagate),
             );
     }
 }
 
-/// How lit positions are shown: an effect, and whether the position's own material is stained
-/// under it too.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+/// How lit positions are shown. When it changes, what is lit is drawn again in the new style.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HighlightStyle {
     pub effect: Effect,
-    pub tint: bool,
 }
 
-impl Default for HighlightStyle {
-    fn default() -> Self {
-        HighlightStyle {
-            effect: Effect::Glow,
-            tint: false,
-        }
-    }
-}
-
-/// What is drawn on a lit position. Another effect is another variant here, and its own arm of
-/// `Effects::spawn`: nothing outside this module changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What is drawn on a lit position. Another effect is another variant here, and its own arm in
+/// `light`: nothing outside this module changes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Effect {
-    /// Nothing but the tint, if that is on.
-    None,
     /// The traced edge and the streaks rising from it.
+    #[default]
     Glow,
 }
 
 /// A position a click would be taken on, which the board marks while it is one.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lit;
-
-/// What a lit position is stained with, and its own material otherwise, for the tint.
-#[derive(Component, Debug, Clone, PartialEq)]
-pub struct Tint {
-    pub rest: Handle<StandardMaterial>,
-    pub lit: Handle<StandardMaterial>,
-}
 
 /// A position's outline as its highlight traces it, in its entity's own space: the corners round
 /// its middle (x, z), the height of its top, and whether it is a space or a point.
@@ -488,7 +466,6 @@ fn light(
             continue;
         }
         match style.effect {
-            Effect::None => {}
             Effect::Glow => {
                 let made = effects
                     .meshes
@@ -507,23 +484,6 @@ fn light(
                     ));
                 }
             }
-        }
-    }
-}
-
-/// Stains a lit position's own material, while the style says.
-fn tint(
-    style: Res<HighlightStyle>,
-    mut tinted: Query<(&Tint, Has<Lit>, &mut MeshMaterial3d<StandardMaterial>)>,
-) {
-    for (tint, lit, mut material) in &mut tinted {
-        let wanted = if lit && style.tint {
-            &tint.lit
-        } else {
-            &tint.rest
-        };
-        if material.0 != *wanted {
-            material.0 = wanted.clone();
         }
     }
 }
@@ -613,7 +573,6 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
-            .init_asset::<StandardMaterial>()
             .init_asset::<GlowMaterial>()
             .add_plugins(HighlightSystems);
         app
@@ -641,59 +600,6 @@ mod tests {
         app.world_mut().entity_mut(cell).remove::<Lit>();
         app.update();
         assert_eq!(parts(&mut app), 0);
-    }
-
-    #[test]
-    fn another_effect_takes_the_place_of_the_glow_on_what_is_lit() {
-        let mut app = app();
-        app.world_mut()
-            .spawn((Outline::space(square(0.01), 0.0), Transform::default(), Lit));
-        app.update();
-        assert_eq!(parts(&mut app), 2);
-        app.world_mut().resource_mut::<HighlightStyle>().effect = Effect::None;
-        app.update();
-        assert_eq!(parts(&mut app), 0);
-        app.world_mut().resource_mut::<HighlightStyle>().effect = Effect::Glow;
-        app.update();
-        assert_eq!(parts(&mut app), 2);
-    }
-
-    #[test]
-    fn the_tint_is_laid_only_when_the_style_says() {
-        let mut app = app();
-        let (rest, lit) = {
-            let mut m = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
-            (
-                m.add(StandardMaterial::default()),
-                m.add(StandardMaterial::default()),
-            )
-        };
-        let cell = app
-            .world_mut()
-            .spawn((
-                Tint {
-                    rest: rest.clone(),
-                    lit: lit.clone(),
-                },
-                MeshMaterial3d(rest.clone()),
-                Lit,
-            ))
-            .id();
-        let shown = |app: &App| {
-            app.world()
-                .get::<MeshMaterial3d<StandardMaterial>>(cell)
-                .unwrap()
-                .0
-                .clone()
-        };
-        app.update();
-        assert_eq!(shown(&app), rest, "off by default");
-        app.world_mut().resource_mut::<HighlightStyle>().tint = true;
-        app.update();
-        assert_eq!(shown(&app), lit);
-        app.world_mut().entity_mut(cell).remove::<Lit>();
-        app.update();
-        assert_eq!(shown(&app), rest);
     }
 
     #[test]
