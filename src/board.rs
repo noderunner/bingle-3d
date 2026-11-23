@@ -39,6 +39,7 @@ use bevy::prelude::*;
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
 use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
+use crate::highlight::{Lit, Outline, Tint};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
@@ -329,13 +330,11 @@ struct PieceAt {
     under: u32,
 }
 
-/// A cell of the board, which is lit while a click on it would be taken, and otherwise its own
-/// material.
+/// A position of the board, which is lit while a click on it would be taken (`highlight::Lit`:
+/// how that looks is `highlight.rs`'s).
 #[derive(Component)]
 struct Cell {
     id: String,
-    rest: Handle<StandardMaterial>,
-    lit: Handle<StandardMaterial>,
 }
 
 /// A see-through piece: part of the move being built, or where a click would put one.
@@ -436,11 +435,13 @@ struct Kit {
 }
 
 /// How the positions the view tints with one key are drawn: a piece laid there (a tile), lit
-/// as a cell is while a click there would be taken; or a stamp printed there.
+/// as a cell is while a click there would be taken (its outline in its own space); or a stamp
+/// printed there.
 enum TintKit {
     Laid {
         piece: String,
         lit: Handle<StandardMaterial>,
+        outline: Outline,
     },
     Stamp {
         mesh: Handle<Mesh>,
@@ -479,16 +480,13 @@ struct FromStock {
 
 /// Fences: one's mesh and material, where its foot is below its middle (metres at the full
 /// pitch), where one taken from the bowl waits (over its rim), the side of its square each
-/// fence-building choice puts it on (a step to the neighbour beyond), and a side a click would
-/// put one on, lit.
+/// fence-building choice puts it on (a step to the neighbour beyond).
 struct FenceKit {
     mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
     foot: f32,
     over: Vec3,
     sides: HashMap<String, Vec2>,
-    side_mesh: Handle<Mesh>,
-    side_lit: Handle<StandardMaterial>,
 }
 
 impl FenceKit {
@@ -517,10 +515,6 @@ struct WallAt(String);
 /// named as the wall it makes.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct HeldFence(Option<String>);
-
-/// A side of a square a click would put the fence taken on, by the choice that builds there.
-#[derive(Component)]
-struct SideTarget(String);
 
 /// One pool of a seat's supply: its id, the kind of piece a click on it takes, where each of
 /// its pieces stands, and how high they stand.
@@ -1268,6 +1262,8 @@ fn build_board(
             ));
             let target = tools.material(&look::lit_cell());
             let cell_mesh = shape.mesh(pitch, CELL_SCALE, CELL_HEIGHT);
+            let cell_outline =
+                Outline::space(slab::cell_corners(shape, pitch * CELL_SCALE), CELL_HEIGHT);
             // A chessboard's two materials by turns, if the game's look has them, each lit as
             // the board is.
             let squares = tools
@@ -1297,11 +1293,9 @@ fn build_board(
                     Mesh3d(tools.meshes.add(look::world_uvs(cell_mesh.clone(), at))),
                     MeshMaterial3d(rest.clone()),
                     Transform::from_translation(at),
-                    Cell {
-                        id: id.clone(),
-                        rest,
-                        lit,
-                    },
+                    Cell { id: id.clone() },
+                    Tint { rest, lit },
+                    cell_outline.clone(),
                     Spot(id.clone()),
                     Pickable::default(),
                     ChildOf(root),
@@ -1349,8 +1343,8 @@ fn build_board(
                 MeshMaterial3d(lines),
                 ChildOf(root),
             ));
-            // Each point is a disc a click lands on: unseen, but glowing softly while a click
-            // there would be taken.
+            // Each point is a disc a click lands on: unseen, but tinted while a click there
+            // would be taken, if the tint is on.
             let unseen = tools.materials.add(StandardMaterial {
                 base_color: Color::NONE,
                 alpha_mode: AlphaMode::Blend,
@@ -1375,11 +1369,12 @@ fn build_board(
                     Mesh3d(disc.clone()),
                     MeshMaterial3d(unseen.clone()),
                     Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + 0.0003)),
-                    Cell {
-                        id: id.clone(),
+                    Cell { id: id.clone() },
+                    Tint {
                         rest: unseen.clone(),
                         lit: glowing.clone(),
                     },
+                    Outline::point(pitch, 0.0),
                     Spot(id.clone()),
                     Pickable::default(),
                     ChildOf(root),
@@ -1705,11 +1700,6 @@ fn build_board(
         ));
         let rim = assets::model_span(&said.bowl).map_or(0.04, |(_, high)| high) * size;
         let (low, _) = assets::model_span(&said.model).unwrap_or((-0.003, 0.003));
-        let side_lit = tools.materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.78, 0.36),
-            emissive: LinearRgba::rgb(0.9, 0.55, 0.12),
-            ..default()
-        });
         let mut ghost = wood.on_board(tools.wood).build(tools.server);
         ghost.base_color = ghost.base_color.with_alpha(0.6);
         ghost.alpha_mode = AlphaMode::Blend;
@@ -1732,10 +1722,6 @@ fn build_board(
                 .iter()
                 .map(|(id, [x, y])| (id.clone(), Vec2::new(*x, *y)))
                 .collect(),
-            side_mesh: tools
-                .meshes
-                .add(Plane3d::new(Vec3::Y, Vec2::new(pitch * 0.42, pitch * 0.09))),
-            side_lit,
         }
     });
     // How the view's tints are drawn: a piece of the look laid on the position, lit as a cell
@@ -1749,9 +1735,18 @@ fn build_board(
                     .and_then(|l| l.material(l.pieces.get(&piece)?.material.as_ref()))
                     .cloned()
                     .unwrap_or_else(look::board);
+                // The tile's top, as its model is: the board's cell's shape, as wide across as
+                // the model.
+                let bounds = tools
+                    .look
+                    .and_then(|l| l.pieces.get(&piece))
+                    .and_then(|p| assets::model_bounds(&p.model));
+                let (across, top) =
+                    bounds.map_or((PITCH * CELL_SCALE, 0.0), |(lo, hi)| (hi.x - lo.x, hi.y));
                 TintKit::Laid {
                     piece,
                     lit: tools.material(&look::lit_square(&spec)),
+                    outline: Outline::space(slab::cell_corners(shape, across), top),
                 }
             }
             Some(Tinted::Stamp { material, size }) => {
@@ -2177,7 +2172,7 @@ fn show_turn(
     watch: Res<WatchStatus>,
     (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
-    mut cells: Query<(&Cell, &mut MeshMaterial3d<StandardMaterial>)>,
+    cells: Query<(Entity, &Cell, Has<Lit>, Has<TintAt>)>,
     mut pieces: Query<TurnPiece>,
     (ghosts, held, in_flight): (Query<Entity, With<Ghost>>, AimedHeld, Query<&FromBowl>),
 ) {
@@ -2195,14 +2190,22 @@ fn show_turn(
         .0
         .as_deref()
         .filter(|_| turn.is_some_and(Turn::taken_after_click));
-    for (cell, mut material) in &mut cells {
-        let wanted = if lit && targets.contains(&cell.id) && previewed != Some(cell.id.as_str()) {
-            &cell.lit
-        } else {
-            &cell.rest
-        };
-        if material.0 != *wanted {
-            material.0 = wanted.clone();
+    // A cell a tile lies on is lit on the tile.
+    let tiled: Vec<&str> = cells
+        .iter()
+        .filter(|(.., on_tile)| *on_tile)
+        .map(|(_, c, ..)| c.id.as_str())
+        .collect();
+    for (entity, cell, was, on_tile) in &cells {
+        let id = cell.id.as_str();
+        let wanted = lit
+            && targets.contains(&cell.id)
+            && previewed != Some(id)
+            && (on_tile || !tiled.contains(&id));
+        if wanted && !was {
+            commands.entity(entity).insert(Lit);
+        } else if !wanted && was {
+            commands.entity(entity).remove::<Lit>();
         }
     }
 
@@ -2887,7 +2890,11 @@ fn show_tints(
         // A click on it is a click on its position.
         let spot = (Spot(at.cell.clone()), Pickable::default());
         match &kit.tints[&at.key] {
-            TintKit::Laid { piece, lit } => {
+            TintKit::Laid {
+                piece,
+                lit,
+                outline,
+            } => {
                 let kind = kit.piece(piece);
                 let rest = kind.material.clone().unwrap_or_default();
                 commands.spawn((
@@ -2897,9 +2904,12 @@ fn show_tints(
                     kit.set_down(piece, "", *centre, (&at.cell, 0), 0.0),
                     Cell {
                         id: at.cell.clone(),
+                    },
+                    Tint {
                         rest,
                         lit: lit.clone(),
                     },
+                    outline.clone(),
                     at.clone(),
                     spot,
                     ChildOf(root),
@@ -3101,25 +3111,21 @@ fn show_tints(
 
 /// The walls the position has, each a fence on the side its two squares share (one that has
 /// just appeared drops in, but one the player put there); and the move being built's: a fence
-/// taken from the bowl waits over it, the sides it may go on lit, and once one is chosen it is
-/// carried there and set down.
-/// The fences `show_fences` keeps: the position's walls, the fence in hand, the sides lit.
+/// taken from the bowl waits over it, and once a side is chosen it is carried there and set
+/// down. Where it may go is not lit: the see-through fence on the side aimed at shows it.
+/// The fences `show_fences` keeps: the position's walls and the fence in hand.
 type FenceParts<'w, 's> = (
     Query<'w, 's, (Entity, &'static WallAt)>,
     Query<'w, 's, (Entity, &'static HeldFence)>,
-    Query<'w, 's, Entity, With<SideTarget>>,
 );
 
 fn show_fences(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
-    (walls, held, sides): FenceParts,
+    (walls, held): FenceParts,
     mut room: Local<String>,
 ) {
-    for side in &sides {
-        commands.entity(side).despawn();
-    }
     let (Some(table), Ok((root, kit))) = (&watch.table, roots.single()) else {
         return;
     };
@@ -3199,30 +3205,6 @@ fn show_fences(
         }
     }
 
-    // Where the fence taken may go: the sides of the square the piece ends on, lit.
-    if let (Some(choices), Some(turn)) = (&taken, turn) {
-        let cell = turn
-            .gestures
-            .iter()
-            .rev()
-            .find(|g| g.is_pos())
-            .map(|g| g.value.as_str());
-        for choice in choices {
-            let Some((_, at)) = cell.and_then(|c| kit.fence_on(&layout, c, &choice.value)) else {
-                continue;
-            };
-            commands.spawn((
-                Name::new(format!("Side for {}", choice.value)),
-                SideTarget(choice.value.clone()),
-                Mesh3d(fence.side_mesh.clone()),
-                MeshMaterial3d(fence.side_lit.clone()),
-                Transform::from_translation(at.translation.with_y(kit.surface + 0.0004))
-                    .with_rotation(at.rotation),
-                ChildOf(root),
-            ));
-        }
-    }
-
     // The position's walls.
     let wanted: Vec<(String, Transform)> = table
         .state
@@ -3285,7 +3267,6 @@ fn fence_aim(
     mut aim: ResMut<SideAim>,
     mut ghosts: Query<(&mut Transform, &mut Visibility), With<FenceGhost>>,
     mut held: Query<&mut Transform, InHandFence>,
-    mut sides: Query<(&SideTarget, &mut Visibility), Without<FenceGhost>>,
 ) {
     let places: Vec<(Gesture, Transform)> = (|| {
         let table = watch.table.as_ref()?;
@@ -3357,15 +3338,6 @@ fn fence_aim(
                 vis.set_if_neq(Visibility::Hidden);
             }
         }
-    }
-    // The side aimed at shows the fence, not its light.
-    for (side, mut vis) in &mut sides {
-        let here = aimed.is_some_and(|(g, _)| g.value == side.0);
-        vis.set_if_neq(if here {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        });
     }
     if let Some((_, at)) = aimed {
         for mut t in &mut held {
@@ -3973,14 +3945,8 @@ mod tests {
                 (carry.copied(), spot.0.clone())
             };
             let lit = |app: &mut App| {
-                let mut q = app
-                    .world_mut()
-                    .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
-                let mut out: Vec<String> = q
-                    .iter(app.world())
-                    .filter(|(c, m)| m.0 == c.lit)
-                    .map(|(c, _)| c.id.clone())
-                    .collect();
+                let mut q = app.world_mut().query_filtered::<&Cell, With<Lit>>();
+                let mut out: Vec<String> = q.iter(app.world()).map(|c| c.id.clone()).collect();
                 out.sort();
                 out
             };
@@ -4810,10 +4776,8 @@ mod tests {
             assert_eq!(shown[0].1, held[0].3, "the tile in hand's model");
             // In place of the cell's light there; the others it may go on still lit.
             let lit = |app: &mut App, id: &str| {
-                let mut q = app
-                    .world_mut()
-                    .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
-                q.iter(app.world()).any(|(c, m)| c.id == id && m.0 == c.lit)
+                let mut q = app.world_mut().query_filtered::<&Cell, With<Lit>>();
+                q.iter(app.world()).any(|c| c.id == id)
             };
             assert!(!lit(&mut app, "c2"));
             assert!(lit(&mut app, "c1"));
@@ -5011,13 +4975,9 @@ mod tests {
             // Under the pointer, as an aimed piece is.
             let mut q = app.world_mut().query_filtered::<&HeldFence, With<Held>>();
             assert_eq!(q.single(app.world()).unwrap().0, None);
-            let mut q = app.world_mut().query_filtered::<&Name, With<SideTarget>>();
-            let mut lit: Vec<String> = q
-                .iter(app.world())
-                .map(|n| n.as_str().trim_start_matches("Side for ").to_string())
-                .collect();
-            lit.sort();
-            assert_eq!(lit, ["fence-e", "fence-n"]);
+            // Where it may go is not lit: nothing of the board is.
+            let mut q = app.world_mut().query_filtered::<(), With<Lit>>();
+            assert_eq!(q.iter(app.world()).count(), 0, "the sides are not lit");
             // The pointer near b2's east side aims there: a see-through fence on it.
             let layout_now = layout.clone();
             let east = (layout_now.centres["b2"] + layout_now.centres["c2"]) / 2.0;
@@ -5059,12 +5019,6 @@ mod tests {
             };
             let side = (layout.centres["b2"] + layout.centres["c2"]) / 2.0;
             assert!(to.translation.xz().distance(side.xz()) < 1e-5);
-            let mut q = app.world_mut().query_filtered::<(), With<SideTarget>>();
-            assert_eq!(
-                q.iter(app.world()).count(),
-                0,
-                "nothing lit once it is down"
-            );
         }
 
         #[test]
@@ -5302,7 +5256,7 @@ mod tests {
             app.world_mut().resource_mut::<WatchStatus>().table =
                 Some(grid_table("breakthrough", &[]));
             app.update();
-            let mut q = app.world_mut().query::<&Cell>();
+            let mut q = app.world_mut().query_filtered::<&Tint, With<Cell>>();
             let materials: std::collections::HashSet<_> =
                 q.iter(app.world()).map(|c| c.rest.clone()).collect();
             assert_eq!(materials.len(), 1);

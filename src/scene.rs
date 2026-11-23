@@ -10,7 +10,7 @@
 //! - ambient occlusion (SSAO), so a stone is grounded on the board and the cut lines are dark;
 //! - temporal antialiasing (TAA), which keeps fine grain from shimmering and smooths the shadows'
 //!   edges (the sun's are filtered over time); SSAO and TAA both need MSAA off;
-//! - a little bloom on the brightest highlights;
+//! - a little bloom on the brightest highlights, unless it is turned off (`BloomOn`);
 //! - a shallow depth of field, focused where the orbit camera looks.
 //!
 //! A model is drawn node by node from its glTF file, which has no materials of its own: each
@@ -45,11 +45,13 @@ impl Plugin for ScenePlugin {
             ..default()
         })
         .init_resource::<Built>()
+        .init_resource::<BloomOn>()
         .add_systems(
             Update,
             (
                 build_environment.run_if(resource_changed::<Chosen>),
                 light_cameras,
+                bloom_cameras.run_if(resource_changed::<BloomOn>),
                 focus_on_orbit,
                 spawn_model,
                 lay_seats,
@@ -57,6 +59,44 @@ impl Plugin for ScenePlugin {
             )
                 .chain(),
         );
+    }
+}
+
+/// Whether the flat cameras bloom (B, or `--no-bloom`). A headset's eyes never do; in a headset
+/// run it is off for every camera, so the glow of what is lit (`highlight.rs`), which is tuned
+/// for one or the other, is tuned for the eyes.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BloomOn(pub bool);
+
+impl Default for BloomOn {
+    fn default() -> Self {
+        BloomOn(true)
+    }
+}
+
+/// Only what is brighter than white glows (a highlight on a stone), so nothing else is veiled.
+fn bloom() -> Bloom {
+    Bloom {
+        intensity: 0.12,
+        prefilter: BloomPrefilter {
+            threshold: 1.2,
+            threshold_softness: 0.3,
+        },
+        ..Bloom::OLD_SCHOOL
+    }
+}
+
+/// A camera of the window's, lit (`light_cameras` has given it its effects).
+type FlatCamera = (With<Camera3d>, With<LitFor>, Without<Headset>);
+
+/// Turns the flat cameras' bloom on or off.
+fn bloom_cameras(mut commands: Commands, on: Res<BloomOn>, cameras: Query<Entity, FlatCamera>) {
+    for camera in &cameras {
+        if on.0 {
+            commands.entity(camera).insert(bloom());
+        } else {
+            commands.entity(camera).remove::<Bloom>();
+        }
     }
 }
 
@@ -207,6 +247,7 @@ fn light_cameras(
     chosen: Res<Chosen>,
     all: Res<Environments>,
     server: Res<AssetServer>,
+    bloom_on: Res<BloomOn>,
     cameras: Query<CameraToLight, With<Camera3d>>,
 ) {
     let Some(env) = all.chosen(&chosen) else {
@@ -243,6 +284,9 @@ fn light_cameras(
         if headset {
             commands.entity(camera).insert(Msaa::Sample4);
         } else {
+            if bloom_on.0 {
+                commands.entity(camera).insert(bloom());
+            }
             commands.entity(camera).insert((
                 Msaa::Off,
                 TemporalAntiAliasing::default(),
@@ -252,16 +296,6 @@ fn light_cameras(
                     // At table scale: a stone, a cut line, the board's edge.
                     radius: 0.02,
                     constant_object_thickness: 0.004,
-                },
-                // Only what is brighter than white glows (a highlight on a stone), so nothing else
-                // is veiled.
-                Bloom {
-                    intensity: 0.12,
-                    prefilter: BloomPrefilter {
-                        threshold: 1.2,
-                        threshold_softness: 0.3,
-                    },
-                    ..Bloom::OLD_SCHOOL
                 },
                 DepthOfField {
                     mode: DepthOfFieldMode::Gaussian,

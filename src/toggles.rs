@@ -4,6 +4,11 @@
 //! - Coordinates (C): the board's coordinates, engraved along its edges (`coordinates.rs`).
 //! - Legal moves (L): lighting every position a click would be taken on (`board.rs`). Off by
 //!   default: at the start of a game every position is one, and the whole board lights up.
+//! - Bloom (B): the flat camera's bloom, and the glow of what is lit tuned for it or without it
+//!   (`scene::BloomOn`), to compare with what a headset shows.
+//! - Glow (G): the glow on a lit position (`highlight::Effect`); off, only the tint shows it.
+//! - Tint (T): a lit position's own material stained under its glow (`highlight::HighlightStyle`),
+//!   off by default.
 
 use bevy::input_focus::InputFocus;
 use bevy::picking::Pickable;
@@ -15,6 +20,8 @@ use crate::board::ShowLegalMoves;
 use crate::browser::colours;
 use crate::coordinates::ShowCoordinates;
 use crate::fonts::UiFonts;
+use crate::highlight::{Effect, HighlightStyle};
+use crate::scene::BloomOn;
 
 pub struct TogglesPlugin;
 
@@ -30,15 +37,27 @@ impl Plugin for TogglesPlugin {
 enum Toggle {
     Coordinates,
     LegalMoves,
+    Bloom,
+    Glow,
+    Tint,
 }
 
 impl Toggle {
-    const ALL: [Toggle; 2] = [Toggle::LegalMoves, Toggle::Coordinates];
+    const ALL: [Toggle; 5] = [
+        Toggle::LegalMoves,
+        Toggle::Glow,
+        Toggle::Tint,
+        Toggle::Bloom,
+        Toggle::Coordinates,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Toggle::Coordinates => "Coordinates",
             Toggle::LegalMoves => "Legal moves",
+            Toggle::Bloom => "Bloom",
+            Toggle::Glow => "Glow",
+            Toggle::Tint => "Tint",
         }
     }
 
@@ -46,6 +65,9 @@ impl Toggle {
         match self {
             Toggle::Coordinates => KeyCode::KeyC,
             Toggle::LegalMoves => KeyCode::KeyL,
+            Toggle::Bloom => KeyCode::KeyB,
+            Toggle::Glow => KeyCode::KeyG,
+            Toggle::Tint => KeyCode::KeyT,
         }
     }
 }
@@ -55,6 +77,8 @@ impl Toggle {
 struct Settings<'w> {
     coordinates: ResMut<'w, ShowCoordinates>,
     legal_moves: ResMut<'w, ShowLegalMoves>,
+    bloom: ResMut<'w, BloomOn>,
+    highlight: ResMut<'w, HighlightStyle>,
 }
 
 impl Settings<'_> {
@@ -62,6 +86,9 @@ impl Settings<'_> {
         match toggle {
             Toggle::Coordinates => self.coordinates.0,
             Toggle::LegalMoves => self.legal_moves.0,
+            Toggle::Bloom => self.bloom.0,
+            Toggle::Glow => self.highlight.effect == Effect::Glow,
+            Toggle::Tint => self.highlight.tint,
         }
     }
 
@@ -69,6 +96,14 @@ impl Settings<'_> {
         match toggle {
             Toggle::Coordinates => self.coordinates.0 = !self.coordinates.0,
             Toggle::LegalMoves => self.legal_moves.0 = !self.legal_moves.0,
+            Toggle::Bloom => self.bloom.0 = !self.bloom.0,
+            Toggle::Glow => {
+                self.highlight.effect = match self.highlight.effect {
+                    Effect::Glow => Effect::None,
+                    Effect::None => Effect::Glow,
+                }
+            }
+            Toggle::Tint => self.highlight.tint = !self.highlight.tint,
         }
     }
 }
@@ -158,6 +193,8 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<ShowCoordinates>()
             .init_resource::<ShowLegalMoves>()
+            .init_resource::<BloomOn>()
+            .init_resource::<HighlightStyle>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_systems(Update, toggle_with_keys);
         app
@@ -183,6 +220,27 @@ mod tests {
         assert!(
             !app.world().resource::<ShowCoordinates>().0,
             "the other untouched"
+        );
+    }
+
+    #[test]
+    fn b_turns_bloom_off_and_on_and_t_the_tint_on_and_off() {
+        let mut app = app();
+        assert!(app.world().resource::<BloomOn>().0, "on at first");
+        press(&mut app, KeyCode::KeyB);
+        assert!(!app.world().resource::<BloomOn>().0);
+        assert!(
+            !app.world().resource::<HighlightStyle>().tint,
+            "off at first"
+        );
+        press(&mut app, KeyCode::KeyT);
+        assert!(app.world().resource::<HighlightStyle>().tint);
+        press(&mut app, KeyCode::KeyB);
+        assert!(app.world().resource::<BloomOn>().0);
+        press(&mut app, KeyCode::KeyG);
+        assert_eq!(
+            app.world().resource::<HighlightStyle>().effect,
+            Effect::None
         );
     }
 
