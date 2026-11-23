@@ -24,6 +24,12 @@
 //!   printed on it. A key without one is not drawn;
 //! - `stock.counts`: the view's count of each kind of piece both seats have still to place (a
 //!   draft's tiles), shown beside the board.
+//! - `cards`: a card game's table, laid out here rather than by a vocabulary the client knows
+//!   (`card_table.rs`): where each of its zones lies (`piles.<zone>.at`, in metres, the whole
+//!   centred on the table by itself) and how its cards lie (`spread`), the choice a click on it
+//!   makes (`click`), which choices are made together, several in any order, before the one
+//!   that plays them (`together`: the start of their values), and the view's score sheet to
+//!   show beside the game (`sheet`, by its name in the view).
 //!
 //! The private overlay's games (plan, decision 2) will add files from a folder; this is where
 //! they will be read.
@@ -72,6 +78,35 @@ pub struct Appearance {
     pub tints: BTreeMap<String, TintLook>,
     /// What both seats have still to place, counted in the view, beside the board.
     pub stock: Option<StockLook>,
+    /// A card game's table, laid out as this file says (`card_table.rs`).
+    pub cards: Option<CardsLook>,
+}
+
+/// A card game's table as this file lays it out: its piles, the choices clicks on them make,
+/// and its score sheet.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardsLook {
+    /// Choices made together, several in any order, before the one that plays them: the start
+    /// of their values (a set of pins, then the ball that knocks them down). The server lists
+    /// a move's in its own order; the client sends them so.
+    pub together: Option<String>,
+    /// The view's score sheet, by its name in the view: frames, each with its marks and, once
+    /// scored, its total.
+    pub sheet: Option<String>,
+    /// Each zone's pile, by the zone's id.
+    pub piles: BTreeMap<String, PileLook>,
+}
+
+/// Where a zone's pile lies (its first card's middle, x and z in metres: any origin, the whole
+/// is centred), how its cards lie, and the choice a click on it makes.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PileLook {
+    pub at: [f32; 2],
+    #[serde(default)]
+    pub spread: crate::card_layout::Spread,
+    pub click: Option<String>,
 }
 
 /// How a position the view tints with one key is drawn: a piece of the file's laid on it (a

@@ -819,9 +819,39 @@ that declares a patience plays the same way.
 - Not built: dragging (the server's own words mention it; a press, move and release could
   make the same two gestures); the suit's mark on an empty foundation; lighting the cards that
   move (L lights a board's legal moves, not a patience's); the web page's flight home and
-  celebration when a game is won; a themed card set (ADR 0085); Bowling Solitaire, a game of
-  its own whose pins and balls are not the vocabulary's; a headset's ray pointer is not tried.
+  celebration when a game is won; a themed card set (ADR 0085); a headset's ray pointer is not
+  tried. (Bowling Solitaire, below.)
 - **Next**: the maintainer's eye on it, and a game played through.
+
+### Bowling Solitaire: a card game laid by its look (2026-11-23)
+
+Bowling Solitaire is not a patience: its rules are written in Go, and a play is pins, then the
+ball that knocks them down (`pin-e`, `pin-f`, `pin-g`, `ball-1`). So its look lays it out, and
+shared code names no game:
+
+- An appearance file's `[cards]` (`bowling-solitaire.toml`) says where each zone's pile lies
+  (in metres, the whole centred on the table by itself) and how its cards lie, the choice a
+  click on it makes, which choices are made `together`, and the view's score sheet. Any card
+  game may have one; a game with cards and one is laid on the cloth as a patience is
+  (`card_table::on_table`), its cards from the view's `table` when the position keeps none of
+  its own (`Position::card_zones`).
+- The pins are a rack, the back row farthest from the player; the three ball piles stand to
+  the right in line with the front pin, and what is out of play is fanned beyond them.
+- A click on a pin chooses it, or lets it go, in any order (`card_table::Together`, kept by
+  the client, as the web page keeps it); a chosen pin hovers over its place. The ball piles
+  whose top card knocks down exactly the pins chosen glow, and a click on one throws it: the
+  play's gestures are sent in the order the server lists them (`throw`, `Turn::enter_all`,
+  since `Turn` alone takes a pin clicked first as ambiguous when one play reaches it straight
+  away and another after another pin). The ball and the pins are carried out of play, and the
+  next ball turns up. A click on the bare cloth, or Backspace, lets the pins go. *End this
+  ball* is the panel's button.
+- The panel shows the score sheet (the view's `bowling`): ten frames with their marks and
+  totals, the one being played outlined, and the score.
+- A game of one seat is started with *Play* (the patience's work), so it is started from its
+  card in the main screen.
+- Not built: which pins a ball could take, lit before any is chosen (L); the score sheet's
+  strike and spare marks are the server's, drawn as text.
+- **Next**: the maintainer's eye on it, and a game bowled through.
 
 ### After that
 

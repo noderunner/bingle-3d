@@ -175,7 +175,8 @@ A game's own rules and its players' words keep their terms.
   beside a watched game: what the seat on impulse is asked, in the server's words when its
   view says (`Position::impulse_words`), else generic hints, as also once the player has
   chosen something (`hint`). A choice the view says is drawn on the table
-  (`Position::panel_actions`: a patience's cards) is no button.
+  (`Position::panel_actions`: a patience's cards) is no button. A game whose look names a
+  score sheet in the view (`[cards] sheet`) has it drawn there, a box for each frame.
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`).
@@ -313,9 +314,17 @@ A game's own rules and its players' words keep their terms.
   the stock, waste and free cells left and the foundations right, beyond the columns, which
   fan towards the player), which gesture a click makes (`click`), and the foundation a card
   goes home to when the view lists the suits (`home`). No Bevy systems in it.
-  `src/card_table.rs`: a patience's cards on a cloth in place of its board (the board stands
-  aside: `sync_board`), from the position's card zones (`Position::cards`) and the faces of
-  the usual deck (`props::standard_face`). A click on a card a move starts with lifts it and
+  `src/card_layout.rs`: where a card game's piles lie and each card of a pile (`Layout`:
+  squared, fanned, or down towards the player); a patience's from its vocabulary, any other
+  game's where its look puts them (`Layout::placed`).
+  `src/card_table.rs`: a card game's cards on a cloth in place of its board (the board stands
+  aside: `sync_board`), for a patience or a game whose look has `[cards]` (`on_table`), from
+  the position's card zones (`Position::card_zones`: a declared game's own, else the view's
+  `table`) and the faces of the usual deck (`props::standard_face`). A game laid by its look
+  plays by the choice its look gives each pile (`look_click`): those made `together` (a
+  rack's pins) are chosen in any order, kept by the client (`Together`) and hover; the piles
+  that would play exactly them (the balls) glow, and a click there sends the move's gestures
+  in the server's order (`throw`, `Turn::enter_all`). In a patience, a click on a card a move starts with lifts it and
   those on it: they hover under the pointer, held near their edge, the arrow hidden
   (`hand::Held` on an anchor they follow); the piles they may go on glow, the one under the
   pointer shows them see-through where they would land, and a click there plays the move at
@@ -342,7 +351,8 @@ A game's own rules and its players' words keep their terms.
   piece dropped; a stack clicked is taken whole; `lifted` the piece every click moves, where
   its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
   it and held under the pointer; `clicks_only` a turn where nothing is chosen for the player
-  and a whole move plays itself, a patience's); its systems turn clicks on a `Spot` (a board cell or a
+  and a whole move plays itself, a card game's; `enter_all` a whole selection's gestures at
+  once, put together by the player in an order of their own); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh

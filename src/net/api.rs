@@ -1149,6 +1149,44 @@ impl Position {
             .unwrap_or_default()
     }
 
+    /// Each zone's cards, bottom first, by the zone's name: the position's own (a declared
+    /// game's), else the view's table of them (a game whose rules are written in Go), where a
+    /// zone of which nothing may be seen gives only its count, as that many cards face down.
+    pub fn card_zones(&self) -> BTreeMap<String, Vec<CardOnTable>> {
+        if !self.cards.zones.is_empty() {
+            return self
+                .cards
+                .zones
+                .iter()
+                .map(|(zone, z)| (zone.clone(), z.cards.clone()))
+                .collect();
+        }
+        let Some(table) = self.ext["view"]["table"].as_array() else {
+            return BTreeMap::new();
+        };
+        table
+            .iter()
+            .filter_map(|z| {
+                let id = z["id"].as_str()?;
+                let name = match z["owner"].as_u64().filter(|o| *o > 0) {
+                    Some(owner) => format!("{id}:{owner}"),
+                    None => id.to_string(),
+                };
+                let cards: Vec<CardOnTable> = match z["cards"].as_array() {
+                    Some(cards) => cards
+                        .iter()
+                        .map(|c| serde_json::from_value(c.clone()).unwrap_or_default())
+                        .collect(),
+                    None => {
+                        let count = z["count"].as_u64().unwrap_or(0).min(1000) as usize;
+                        vec![CardOnTable::default(); count]
+                    }
+                };
+                Some((name, cards))
+            })
+            .collect()
+    }
+
     /// A list of words the view keeps by its name (a patience's suits, each foundation's in
     /// turn); empty when it has none.
     pub fn view_words(&self, name: &str) -> Vec<&str> {
@@ -1619,6 +1657,10 @@ mod tests {
         assert!(p.view_words("prompt").is_empty());
     }
 
+    fn read_empty() -> Position {
+        serde_json::from_str(r#"{"cells":{}}"#).unwrap()
+    }
+
     #[test]
     fn a_card_game_reads_its_kinds_of_card_and_the_cards_where_they_lie() {
         let cards: Cards = serde_json::from_str(
@@ -1640,6 +1682,11 @@ mod tests {
             "f1":{}}}}"#,
         )
         .unwrap();
+        assert_eq!(
+            p.card_zones()["t1"],
+            p.cards.zones["t1"].cards,
+            "the position's own"
+        );
         let t1 = &p.cards.zones["t1"].cards;
         assert!(!t1[0].shown() && t1[1].shown());
         assert!(p.cards.zones["f1"].cards.is_empty());
@@ -1651,6 +1698,21 @@ mod tests {
             .shown(),
             "face down"
         );
+
+        // A game whose rules are written in Go: the view's table, a hidden zone by its count.
+        let p: Position = serde_json::from_str(
+            r#"{"cells":{},"ext":{"view":{"table":[
+            {"id":"ball1","count":3,"cards":[{},{},{"id":"spades-7","up":true}]},
+            {"id":"stock","count":2},{"id":"hand","owner":2,"count":1,"cards":[{}]},
+            {"count":4}]}}}"#,
+        )
+        .unwrap();
+        let zones = p.card_zones();
+        assert_eq!(zones.len(), 3, "one with no id is left out");
+        assert!(zones["ball1"][2].shown() && !zones["ball1"][0].shown());
+        assert_eq!(zones["stock"], vec![CardOnTable::default(); 2]);
+        assert_eq!(zones["hand:2"].len(), 1, "a seat's own zone, by its owner");
+        assert!(read_empty().card_zones().is_empty());
     }
 
     #[test]

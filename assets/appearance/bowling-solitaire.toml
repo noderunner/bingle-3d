@@ -1,0 +1,72 @@
+# How this client lays out Bowling Solitaire (Bingle's ADR 0124: the server says what things
+# are, and each client decides how they look). Data only: nothing here changes the rules.
+#
+# Its cards lie on a cloth: the ten pins as a rack, the back row (a to d) farthest from the
+# player and j nearest; the three ball piles to the right, in line with j; the cards out of play
+# beyond them. A click on a pin chooses it, or lets it go; a click on a ball pile that knocks
+# down exactly the pins chosen throws it. The score sheet is the view's `bowling`.
+
+games = ["bowling-solitaire"]
+
+[cards]
+# A play is pins, in any order the player picks them, then a ball.
+together = "pin-"
+sheet = "bowling"
+
+# Where each pile's first card lies (x across, z towards the player, in metres: the whole is
+# centred on the table), and the choice a click on it makes.
+[cards.piles.pina]
+at = [-0.111, -0.147]
+click = "pin-a"
+
+[cards.piles.pinb]
+at = [-0.037, -0.147]
+click = "pin-b"
+
+[cards.piles.pinc]
+at = [0.037, -0.147]
+click = "pin-c"
+
+[cards.piles.pind]
+at = [0.111, -0.147]
+click = "pin-d"
+
+[cards.piles.pine]
+at = [-0.074, -0.049]
+click = "pin-e"
+
+[cards.piles.pinf]
+at = [0.0, -0.049]
+click = "pin-f"
+
+[cards.piles.ping]
+at = [0.074, -0.049]
+click = "pin-g"
+
+[cards.piles.pinh]
+at = [-0.037, 0.049]
+click = "pin-h"
+
+[cards.piles.pini]
+at = [0.037, 0.049]
+click = "pin-i"
+
+[cards.piles.pinj]
+at = [0.0, 0.147]
+click = "pin-j"
+
+[cards.piles.ball1]
+at = [0.21, 0.147]
+click = "ball-1"
+
+[cards.piles.ball2]
+at = [0.285, 0.147]
+click = "ball-2"
+
+[cards.piles.ball3]
+at = [0.36, 0.147]
+click = "ball-3"
+
+[cards.piles.gone]
+at = [0.25, -0.049]
+spread = "fanned"

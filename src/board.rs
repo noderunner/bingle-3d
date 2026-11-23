@@ -824,9 +824,9 @@ fn sync_board(
         commands.insert_resource(BoardEdge::default());
         return;
     };
-    // A patience's cards are laid in place of its board, which is nothing to look at
+    // A card game's cards are laid in place of its board, which is nothing to look at
     // (`card_table.rs`).
-    if crate::patience::plays(&table.info) {
+    if crate::card_table::on_table(&table.info, drawing.appearances.for_game(&table.info.id)) {
         for (root, ..) in &roots {
             commands.entity(root).despawn();
         }
