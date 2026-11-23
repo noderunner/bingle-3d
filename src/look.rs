@@ -364,6 +364,25 @@ pub fn pips() -> MaterialSpec {
     }
 }
 
+/// A two-sided disc's light side: ivory, polished. A ring in a showcase wears it too.
+pub fn disc_light() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.90, 0.88, 0.82]),
+        roughness: Some(0.3),
+        clearcoat: Some(0.4),
+        clearcoat_roughness: Some(0.12),
+        ..default()
+    }
+}
+
+/// A two-sided disc's dark side: near black, as polished as the light.
+pub fn disc_dark() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.045, 0.045, 0.05]),
+        ..disc_light()
+    }
+}
+
 /// The colour a seat is drawn in. A seat's colour word is an identifier, not a colour, but most
 /// games name their seats after the colour players know them by, so a word this client knows is
 /// drawn as that colour. Any other word gets a colour from a palette by seat, so that every seat

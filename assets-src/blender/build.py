@@ -34,6 +34,7 @@ STEPS = [
     "playing_cards",
     "card_faces",
     "dice",
+    "discs",
     "garden",
     "garden_light",
 ]

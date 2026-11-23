@@ -1,10 +1,11 @@
-//! Cards and dice: what lies on a table beside a board, or in place of one. The models are the
-//! asset pipeline's (`assets-src/blender/playing_cards.py`, `dice.py`); this is how the client
-//! reads them: a model's parts, a card turned over, the picture on the face of a card of the
-//! usual deck, a die turned to show a number. Their generic looks are in `look.rs`.
+//! Cards, dice, and discs with their rings: what lies on a table beside a board, or in place of
+//! one. The models are the asset pipeline's (`assets-src/blender/playing_cards.py`, `dice.py`,
+//! `discs.py`); this is how the client reads them: a model's parts, a card turned over, the
+//! picture on the face of a card of the usual deck, a die turned to show a number, a disc
+//! showing either side. Their generic looks are in `look.rs`.
 //!
-//! Nothing draws a game's cards or dice with them yet (plan: card zones); `showcase.rs` lays
-//! them out to look at.
+//! No game draws its dice, discs or rings with them yet; `showcase.rs` lays them out to look
+//! at.
 
 use std::f32::consts::PI;
 
@@ -43,6 +44,17 @@ pub const DIE: &str = "models/die.glb";
 /// Across, in metres.
 pub const DIE_SIDE: f32 = 0.016;
 
+/// A disc light on one side and dark on the other, lying light side up about its middle. Its
+/// parts are `light` and `dark`, each a face and the half of the edge beside it.
+pub const DISC: &str = "models/disc.glb";
+/// Across and through, in metres.
+pub const DISC_SIZE: Vec2 = Vec2::new(0.015, 0.0036);
+
+/// A ring a disc lies inside, about its middle: one part, made of what its seat's pieces are.
+pub const RING: &str = "models/ring.glb";
+/// Across, the hole across, and how tall, in metres.
+pub const RING_SIZE: Vec3 = Vec3::new(0.025, 0.017, 0.007);
+
 /// One part of a model's first mesh, by its place.
 pub fn part(server: &AssetServer, file: &str, index: usize) -> Handle<Mesh> {
     server.load(
@@ -61,6 +73,16 @@ pub fn card_lies(face_up: bool) -> Quat {
         Quat::IDENTITY
     } else {
         Quat::from_rotation_z(PI)
+    }
+}
+
+/// How a disc lies: light side up, as its model does, or turned over about the axis across the
+/// table, dark side up.
+pub fn disc_shows(light: bool) -> Quat {
+    if light {
+        Quat::IDENTITY
+    } else {
+        Quat::from_rotation_x(PI)
     }
 }
 
@@ -120,6 +142,8 @@ mod tests {
     fn the_models_have_the_parts_the_client_names() {
         assert_eq!(assets::model_parts(CARD), ["face", "back", "edge"]);
         assert_eq!(assets::model_parts(DIE), ["body", "pips"]);
+        assert_eq!(assets::model_parts(DISC), ["light", "dark"]);
+        assert_eq!(assets::model_parts(RING), [""]);
     }
 
     #[test]
@@ -201,6 +225,24 @@ mod tests {
         assert!((high + low).abs() < 1e-6, "about its middle");
         let (low, high) = assets::model_span(DIE).unwrap();
         assert!((high - low - DIE_SIDE).abs() < 1e-5, "{}", high - low);
+        let (low, high) = assets::model_span(DISC).unwrap();
+        assert!((high - low - DISC_SIZE.y).abs() < 1e-5, "{}", high - low);
+        assert!((high + low).abs() < 1e-5, "about its middle");
+        let (low, high) = assets::model_span(RING).unwrap();
+        assert!((high - low - RING_SIZE.z).abs() < 1e-5, "{}", high - low);
+    }
+
+    #[test]
+    fn a_disc_lies_in_a_ring_and_rings_on_neighbouring_points_do_not_touch() {
+        // With a millimetre to spare, so a disc dropped in a ring is not seen to cut it.
+        const {
+            assert!(RING_SIZE.y - DISC_SIZE.x >= 0.002 - 1e-6);
+            assert!(RING_SIZE.x < 0.028, "a lattice of 28 mm");
+            assert!(
+                RING_SIZE.z > DISC_SIZE.y,
+                "the ring stands above a disc inside it"
+            );
+        }
     }
 
     #[test]
@@ -217,6 +259,17 @@ mod tests {
         assert!(one.cross(two).dot(three) > 0.0);
         assert_eq!(die_side(0), None);
         assert_eq!(die_showing(9), Quat::IDENTITY);
+    }
+
+    #[test]
+    fn a_disc_turned_over_shows_its_dark_side_up() {
+        assert_eq!(disc_shows(true), Quat::IDENTITY);
+        let over = disc_shows(false);
+        assert!((over * Vec3::Y).distance(Vec3::NEG_Y) < 1e-5);
+        assert!(
+            (over * Vec3::X).distance(Vec3::X) < 1e-5,
+            "turned about the axis across"
+        );
     }
 
     #[test]

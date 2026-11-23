@@ -7,7 +7,7 @@ changed by a person or an agent, and made again (plan, decision 8).
 bash scripts/assets.sh                 # every step (the table below)
 bash scripts/assets.sh stones          # one step
 bash scripts/assets.sh previews        # render the assets in Cycles, to look at
-bash scripts/assets.sh piece_previews  # the same for the chessmen, checkers, Tak, cards and dice
+bash scripts/assets.sh piece_previews  # the same for the chessmen, checkers, Tak, cards, dice and discs
 bash scripts/assets.sh garden_previews # the same for the garden, from where a player sits
 ```
 
@@ -55,10 +55,11 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
 | `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
+| `discs` | `models/disc.glb`: a disc 15 mm across and 3.6 mm thick, light on one side and dark on the other; `models/ring.glb`: a ring 25 mm across and 7 mm tall that a disc lies inside | each turned from a profile, the disc's faces dished inside a rim; the disc's faces with the half of the edge beside each are its two parts, `light` (up, as it lies) and `dark` |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
 | `garden_light` | `environment/garden_{diffuse,specular,sky}.ktx2`: the garden's light, and its sky | Cycles renders the garden from just above the table, all the way round, under the sun and sky that `assets/environments/garden.toml` gives the client; that panorama is filtered as the room's photograph is. The sky is a photograph (pure sky, no ground), turned to put its sun where the garden's is, with the sun itself clipped out |
 | `previews` | `target/asset-previews/*.png`, not shipped | Cycles, with the materials of `assets/appearance/hex.toml` |
-| `piece_previews` | `target/asset-previews/{chess,checkers,tak,blooms,fendo,cards-dice,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card and the die in their generic look, `src/look.rs`, with two of the usual deck's faces); `PIECE_VIEWS=chess,tak` renders only those |
+| `piece_previews` | `target/asset-previews/{chess,checkers,tak,blooms,fendo,cards-dice,discs,…}.png`, not shipped | Cycles, each piece made as its step makes it, in the materials its appearance file gives it (the card, the die and the disc in their generic look, `src/look.rs`, with two of the usual deck's faces); `PIECE_VIEWS=chess,tak` renders only those |
 | `garden_previews` | `target/asset-previews/garden-*.png`, not shipped | Cycles, the garden from the client's camera at a few places, and from high above (`GARDEN_VIEWS=garden-seat,garden-plan` renders only those) |
 
 The sounds (`sounds/{tick,thump,key,tock,cheer,groan}.ogg`) are not Blender's: `python3
@@ -82,7 +83,8 @@ How the client reads them:
   stood by its foot, and what is on it in a stack is raised by its height, so nothing else
   says how tall it is. The pieces here are centred on their middle. One with a face (a knight)
   looks to the far side of the table, +y in Blender: the client turns it for its seat.
-- **A model of several parts** (a card's face, back and edge; a die's body and pips) has a
+- **A model of several parts** (a card's face, back and edge; a die's body and pips; a disc's
+  light and dark sides) has a
   material slot for each and is exported with them (`meshkit.export_glb(…, materials=True)`),
   so each part carries a name: the client gives each name a material (`props::spawn`).
 - **Materials** are not in the models: an appearance file (`assets/appearance/*.toml`) or the
