@@ -10,6 +10,9 @@
 //! blooms, and softer and wider where it does not (a headset's eyes, or `--no-bloom`:
 //! `scene::BloomOn`).
 //!
+//! A lit position has a tone (`Tone`), which the board says: plain, or one where a click takes
+//! a piece, whose glow is red.
+//!
 //! The outline's geometry (`walk`, `ring`, `ribbon`) has no systems in it.
 
 use std::collections::HashMap;
@@ -82,6 +85,19 @@ pub enum Effect {
 /// A position a click would be taken on, which the board marks while it is one.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Lit;
+
+/// What a click on a lit position does, as its light shows it. Without one, plain.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Tone {
+    /// Anything: candlelight.
+    #[default]
+    Plain,
+    /// Takes the piece standing there (Fist's pin): red.
+    Take,
+}
+
+/// Each tone, in the order of `Effects::glow`.
+const TONES: [Tone; 2] = [Tone::Plain, Tone::Take];
 
 /// A position's outline as its highlight traces it, in its entity's own space: the corners round
 /// its middle (x, z), the height of its top, and whether it is a space or a point.
@@ -314,8 +330,10 @@ pub struct Glow {
     pub part: Vec4,
 }
 
-/// The light's colour: a warm candlelight, linear.
+/// The light's colour, linear: a warm candlelight, and for a piece a click takes, red, a little
+/// stronger, as red alone is darker to the eye.
 const GLOW_COLOUR: Vec4 = Vec4::new(1.0, 0.55, 0.16, 1.0);
+const TAKE_COLOUR: Vec4 = Vec4::new(1.25, 0.1, 0.06, 1.0);
 
 impl Glow {
     /// The ring's or the ribbon's, of a space or a point, where the camera blooms or does not.
@@ -324,7 +342,7 @@ impl Glow {
     /// line is no brighter than the picture can show, and a wider halo of its own stands in for
     /// the bloom. A space's line lies along its edge; a point's is drawn in and spread over its
     /// little ring, so the ring fills to a soft dot.
-    pub fn tuned(ribbon: bool, trace: Trace, bloom: bool) -> Self {
+    pub fn tuned(ribbon: bool, trace: Trace, bloom: bool, tone: Tone) -> Self {
         let (line, halo, reach, streaks, foot) = if bloom {
             (1.6, 0.6, 0.35, 2.0, 0.9)
         } else {
@@ -336,7 +354,10 @@ impl Glow {
             Trace::Point => (0.5, 0.45),
         };
         Glow {
-            colour: GLOW_COLOUR,
+            colour: match tone {
+                Tone::Plain => GLOW_COLOUR,
+                Tone::Take => TAKE_COLOUR,
+            },
             ring: Vec4::new(line, at, width, halo),
             // Two brighter stretches go round every 5 s; the whole breathes every 3.
             ring_motion: Vec4::new(reach, 0.3, 0.2, 1.0 / 3.0),
@@ -376,11 +397,11 @@ impl Material for GlowMaterial {
     }
 }
 
-/// What the effects are drawn with: the glow's materials (a space's ring and ribbon, then a
-/// point's), made on first use, and the meshes made for each outline so far.
+/// What the effects are drawn with: the glow's materials (for each tone, a space's ring and
+/// ribbon, then a point's), made on first use, and the meshes made for each outline so far.
 #[derive(Resource, Default)]
 struct Effects {
-    glow: Option<[[Handle<GlowMaterial>; 2]; 2]>,
+    glow: Option<[[[Handle<GlowMaterial>; 2]; 2]; 2]>,
     meshes: HashMap<OutlineKey, [Handle<Mesh>; 2]>,
 }
 
@@ -405,19 +426,23 @@ fn tune(
         return;
     }
     let made = effects.glow.get_or_insert_with(|| {
-        TRACES.map(|trace| {
-            [false, true].map(|ribbon| {
-                materials.add(GlowMaterial {
-                    glow: Glow::tuned(ribbon, trace, bloom.0),
+        TONES.map(|tone| {
+            TRACES.map(|trace| {
+                [false, true].map(|ribbon| {
+                    materials.add(GlowMaterial {
+                        glow: Glow::tuned(ribbon, trace, bloom.0, tone),
+                    })
                 })
             })
         })
     });
     if !fresh {
-        for (trace, pair) in TRACES.iter().zip(made.iter()) {
-            for (ribbon, handle) in [false, true].into_iter().zip(pair) {
-                if let Some(mut m) = materials.get_mut(handle) {
-                    m.glow = Glow::tuned(ribbon, *trace, bloom.0);
+        for (tone, traces) in TONES.iter().zip(made.iter()) {
+            for (trace, pair) in TRACES.iter().zip(traces) {
+                for (ribbon, handle) in [false, true].into_iter().zip(pair) {
+                    if let Some(mut m) = materials.get_mut(handle) {
+                        m.glow = Glow::tuned(ribbon, *trace, bloom.0, *tone);
+                    }
                 }
             }
         }
@@ -450,21 +475,46 @@ fn unlight(
     }
 }
 
-/// Puts the effect on positions newly lit, and on every lit one when the style changes.
+/// A lit position as `light` sees it: its outline, its light, its tone, and what is drawn on
+/// it.
+type Lighting = (
+    Entity,
+    &'static Outline,
+    Ref<'static, Lit>,
+    Option<Ref<'static, Tone>>,
+    Option<&'static Children>,
+);
+
+/// Puts the effect on positions newly lit, on every lit one when the style changes, and again
+/// on one whose tone changes.
 fn light(
     mut commands: Commands,
     style: Res<HighlightStyle>,
     mut effects: ResMut<Effects>,
     mut meshes: ResMut<Assets<Mesh>>,
-    added: Query<(Entity, &Outline, Ref<Lit>)>,
+    added: Query<Lighting>,
+    parts: Query<(), With<EffectPart>>,
 ) {
     let Some(glow) = effects.glow.clone() else {
         return;
     };
-    for (entity, outline, lit) in &added {
-        if !lit.is_added() && !style.is_changed() {
+    for (entity, outline, lit, tone, children) in &added {
+        let fresh = lit.is_added() || style.is_changed();
+        let toned = tone.as_ref().is_some_and(|t| t.is_changed());
+        if !fresh && !toned {
             continue;
         }
+        // Lit already, in another tone: what was drawn goes first (`unlight` took it off
+        // otherwise).
+        if !fresh {
+            for child in children.into_iter().flatten() {
+                if parts.contains(*child) {
+                    commands.entity(*child).despawn();
+                }
+            }
+        }
+        let tone = tone.map_or(Tone::Plain, |t| *t);
+        let glow = &glow[TONES.iter().position(|t| *t == tone).unwrap_or(0)];
         match style.effect {
             Effect::Glow => {
                 let made = effects
@@ -562,11 +612,15 @@ mod tests {
 
     #[test]
     fn bloom_tunes_the_line_brighter_than_white_and_without_it_no_brighter() {
-        assert!(Glow::tuned(false, Trace::Space, true).ring.x > 1.2);
-        assert!(Glow::tuned(false, Trace::Space, false).ring.x <= 1.2);
-        assert_eq!(Glow::tuned(true, Trace::Space, false).part.x, 1.0);
+        let plain = Tone::Plain;
+        assert!(Glow::tuned(false, Trace::Space, true, plain).ring.x > 1.2);
+        assert!(Glow::tuned(false, Trace::Space, false, plain).ring.x <= 1.2);
+        assert_eq!(Glow::tuned(true, Trace::Space, false, plain).part.x, 1.0);
         // A point's line is drawn in from its edge, to fill its ring.
-        assert!(Glow::tuned(false, Trace::Point, true).ring.y > 0.3);
+        assert!(Glow::tuned(false, Trace::Point, true, plain).ring.y > 0.3);
+        // Where a click takes a piece, red.
+        let red = Glow::tuned(false, Trace::Space, true, Tone::Take).colour;
+        assert!(red.x > 4.0 * red.y && red.x > 4.0 * red.z, "{red}");
     }
 
     fn app() -> App {
@@ -602,11 +656,44 @@ mod tests {
         assert_eq!(parts(&mut app), 0);
     }
 
+    /// The colour of each glow drawn.
+    fn colours(app: &mut App) -> Vec<Vec4> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&MeshMaterial3d<GlowMaterial>, With<EffectPart>>();
+        let handles: Vec<_> = q.iter(app.world()).map(|m| m.0.clone()).collect();
+        let materials = app.world().resource::<Assets<GlowMaterial>>();
+        handles
+            .iter()
+            .map(|h| materials.get(h).unwrap().glow.colour)
+            .collect()
+    }
+
+    #[test]
+    fn a_position_where_a_click_takes_a_piece_glows_red_and_changes_with_its_tone() {
+        let mut app = app();
+        let cell = app
+            .world_mut()
+            .spawn((Outline::space(square(0.01), 0.0), Transform::default()))
+            .id();
+        app.update();
+        app.world_mut().entity_mut(cell).insert((Lit, Tone::Take));
+        app.update();
+        assert_eq!(colours(&mut app), [TAKE_COLOUR; 2]);
+        // Plain now, still lit: drawn again, once, in candlelight.
+        app.world_mut().entity_mut(cell).insert(Tone::Plain);
+        app.update();
+        assert_eq!(colours(&mut app), [GLOW_COLOUR; 2]);
+        app.world_mut().entity_mut(cell).remove::<(Lit, Tone)>();
+        app.update();
+        assert_eq!(parts(&mut app), 0);
+    }
+
     #[test]
     fn the_glow_is_tuned_again_when_bloom_is_turned_off() {
         let mut app = app();
         app.update();
-        let handle = app.world().resource::<Effects>().glow.clone().unwrap()[0][0].clone();
+        let handle = app.world().resource::<Effects>().glow.clone().unwrap()[0][0][0].clone();
         let line = |app: &App| {
             app.world()
                 .resource::<Assets<GlowMaterial>>()

@@ -470,7 +470,10 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   one on the space a click would shoot at. The server does not say what an aim puts down, so a
   game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
   nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
-  aimed at where it stands), and it was drawn as the generic stone. A chessboard's
+  aimed at where it stands), and it was drawn as the generic stone. Such a target, a piece of
+  another's a click takes, glows red instead of in candlelight (`highlight::Tone`). A region the
+  board names may have its cells in a material of the look's (`[board.regions]`): Fist's keep
+  is in a chessboard's dark squares. A chessboard's
   squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale
   maple. A game's look may inlay a border round the cells (`[board] border`), a flat band of
   its own material between the cells and the coordinates. Which games want legal moves on from

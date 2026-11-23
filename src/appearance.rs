@@ -222,6 +222,10 @@ pub struct BoardLook {
     pub squares: Option<[String; 2]>,
     /// A border inlaid round the cells, as a chessboard's, in this material.
     pub border: Option<String>,
+    /// The cells of a region the board names (Fist's keep), each in a material of its own, by
+    /// the region's name: over the squares' materials, or the board's wood.
+    #[serde(default)]
+    pub regions: BTreeMap<String, String>,
 }
 
 impl BoardLook {
@@ -341,6 +345,7 @@ impl Appearance {
             .iter()
             .flatten()
             .chain(&self.board.border)
+            .chain(self.board.regions.values())
         {
             if !self.materials.contains_key(name) {
                 out.push(format!("board: no material {name}"));
@@ -655,12 +660,14 @@ mod tests {
             [board]
             squares = ["light", "dark"]
             border = "inlay"
+            [board.regions]
+            keep = "stained"
             [sounds]
             put = "sounds/none.ogg"
             "#,
         )
         .unwrap();
-        assert_eq!(a.problems().len(), 9, "{:?}", a.problems());
+        assert_eq!(a.problems().len(), 10, "{:?}", a.problems());
         let a = Appearance::parse("games = [\"g\"]\naimed = \"arrow\"").unwrap();
         assert_eq!(a.problems(), ["aimed: no piece arrow"]);
         assert!(

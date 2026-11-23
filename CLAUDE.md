@@ -277,8 +277,9 @@ A game's own rules and its players' words keep their terms.
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
   (`[sounds]`), a chessboard's two
-  materials (`[board] squares`) and its inlaid
-  border (`[board] border`), and the piece
+  materials (`[board] squares`), its inlaid
+  border (`[board] border`), a material for the cells of a region the board names
+  (`[board.regions]`: Fist's keep), and the piece
   what a move aims is shown as while it is built (`aimed`: the server does not say; without it nothing is shown where a move aims). A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
@@ -374,7 +375,9 @@ A game's own rules and its players' words keep their terms.
   (`Effect::Glow`), a line of light traced round the outline and short streaks rising from it,
   drawn by a shader of our own (`src/highlight/cell_glow.wesl`, compiled in as
   `embedded://shaders/cell_glow.wesl`; Bevy 0.20's shaders are WESL), its light added to the
-  picture; a point gets a ring small enough to read as a dot. Tuned twice, for a camera that
+  picture; a point gets a ring small enough to read as a dot. A lit position's `Tone` (the
+  board's to say) is plain, or red where a click takes the piece standing there (an aim at
+  another's piece that puts nothing down: Fist's pin, `board::takes_there`). Tuned twice, for a camera that
   blooms and one that does not (`scene::BloomOn`: off in a headset, and with `--no-bloom`). **Another effect is
   another `Effect` and its arm in `light`**, nothing else. The outline's geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
 - `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
