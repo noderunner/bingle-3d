@@ -693,6 +693,24 @@ impl Turn {
         }
     }
 
+    /// The gestures of a whole selection at once, when one listed is exactly those after the
+    /// gestures made: a play the player put together in an order of their own (a set of pins
+    /// chosen, then the ball), sent in the server's. Nothing is taken for the player on the way.
+    pub fn enter_all(&mut self, gestures: &[Gesture]) -> Outcome {
+        if self.stage != Stage::Choosing || gestures.is_empty() {
+            return Outcome::Ignored;
+        }
+        let mut after = self.gestures.clone();
+        after.extend_from_slice(gestures);
+        if !self.options.iter().any(|o| o.gestures == after) {
+            return Outcome::Ignored;
+        }
+        self.taken = None;
+        self.lifted = false;
+        self.gestures = after;
+        self.settle()
+    }
+
     /// Back, as Backspace or the panel's button: first the gestures towards a selection, then the
     /// selections made, one at a time, each to just before its last click (a piece moved and
     /// its arrow not yet shot). Nothing is sent, so nothing needs undoing on the server.
@@ -1123,10 +1141,10 @@ pub(crate) fn start_turn(
                         .collect()
                 })
                 .unwrap_or_default();
-            turn.clicks_only = watch
-                .table
-                .as_ref()
-                .is_some_and(|t| crate::patience::plays(&t.info));
+            turn.clicks_only = watch.table.as_ref().is_some_and(|t| {
+                let look = appearances.as_ref().and_then(|a| a.for_game(&t.info.id));
+                crate::card_table::on_table(&t.info, look)
+            });
             watch.turn = Some(turn);
             net::ask(&net, &watch);
         }
@@ -1152,6 +1170,18 @@ pub fn gesture(net: &Net, watch: &mut ResMut<WatchStatus>, gesture: &Gesture) {
         return;
     };
     let outcome = turn.gesture(gesture);
+    if outcome != Outcome::Ignored {
+        watch.set_changed();
+    }
+    follow(net, watch, outcome);
+}
+
+/// A whole selection's gestures at once (`Turn::enter_all`).
+pub fn enter_all(net: &Net, watch: &mut ResMut<WatchStatus>, gestures: &[Gesture]) {
+    let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
+        return;
+    };
+    let outcome = turn.enter_all(gestures);
     if outcome != Outcome::Ignored {
         watch.set_changed();
     }
@@ -1486,6 +1516,41 @@ mod tests {
         t.gesture(&g("action", "to-t5"));
         assert_eq!(t.answered(more), Outcome::Changed);
         assert_eq!((t.stage, t.can_play()), (Stage::Choosing, true));
+
+        // A whole selection at once, whatever path_to would make of its first gesture alone
+        // (pin-f is reached straight away in one play and after pin-b in another).
+        let mut t = Turn::new(1);
+        t.clicks_only = true;
+        t.answered(answer(
+            3,
+            vec![
+                card(&["pin-b", "pin-f", "pin-i", "ball-1"]),
+                card(&["pin-f", "pin-i", "ball-2"]),
+            ],
+        ));
+        assert_eq!(
+            t.gesture(&g("action", "pin-f")),
+            Outcome::Ignored,
+            "alone, ambiguous"
+        );
+        let play = [
+            g("action", "pin-f"),
+            g("action", "pin-i"),
+            g("action", "ball-2"),
+        ];
+        assert_eq!(
+            t.enter_all(&play[..2]),
+            Outcome::Ignored,
+            "not a whole selection"
+        );
+        assert_eq!(t.enter_all(&play), Outcome::Ask);
+        assert_eq!(t.made.len(), 1);
+        assert_eq!(t.answered(complete(3)), Outcome::Submit);
+        assert_eq!(
+            Turn::new(1).enter_all(&play),
+            Outcome::Ignored,
+            "not choosing"
+        );
 
         // Without, the one way is taken, and the whole move waits for the player.
         let mut t = Turn::new(1);

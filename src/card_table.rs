@@ -1,6 +1,12 @@
-//! A patience's cards on the table, in place of its board: each pile where `patience.rs` lays
-//! it, on a cloth, its cards as the position has them (a card whose face this client may not
-//! see lies face down).
+//! A card game's cards on the table, in place of its board: each pile where `patience.rs` lays
+//! it for a patience, or where the game's appearance file says (`[cards]`), on a cloth, its cards
+//! as the position has them (a card whose face this client may not see lies face down).
+//!
+//! A game laid by its look plays by the choices its look gives the piles: a click on a pile whose
+//! choice is made together with others (`together`: a bowling rack's pins) chooses it, or puts
+//! it back, and it hovers while chosen; the piles whose choice would then play exactly those
+//! (the balls that knock them down) glow, and a click on one plays the move, its choices sent in
+//! the order the server lists them. A click on the bare cloth, or Backspace, lets them all go.
 //!
 //! A click on a card a move starts with lifts it, and the cards on it: they hover under the
 //! pointer, bobbing gently, the pointer's own arrow hidden while they take its place
@@ -14,7 +20,7 @@
 //! the table and down, one after another when several go at once (a row dealt, a run off the
 //! table), and a card turned up on its way when it was face down where it came from.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use bevy::light::NotShadowCaster;
 use bevy::picking::Pickable;
@@ -22,14 +28,16 @@ use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 
+use crate::appearance::{Appearance, Appearances, CardsLook};
 use crate::assets;
 use crate::board::BoardBuilt;
+use crate::card_layout::Layout;
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
-use crate::net::api::{CardOnTable, Cards};
+use crate::net::api::{CardOnTable, Cards, GameInfo, Gesture, LegalSelection};
 use crate::net::{Net, WatchStatus};
-use crate::patience::{self, Click, Layout};
+use crate::patience::{self, Click};
 use crate::play::{self, Stage, Turn};
 use crate::props::{self, CARD, CARD_SIZE};
 use crate::sounds::Cue;
@@ -41,6 +49,8 @@ impl Plugin for CardTablePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Aimed>()
             .init_resource::<PutOn>()
+            .init_resource::<Together>()
+            .init_resource::<Appearances>()
             .add_message::<BoardBuilt>()
             .add_message::<Cue>()
             .add_observer(on_click)
@@ -49,9 +59,14 @@ impl Plugin for CardTablePlugin {
             .add_systems(
                 Update,
                 (
-                    sync_cards.run_if(resource_changed::<WatchStatus>),
+                    let_go,
+                    sync_cards.run_if(
+                        resource_changed::<WatchStatus>.or_eager(resource_changed::<Together>),
+                    ),
                     show_aim.run_if(
-                        resource_changed::<WatchStatus>.or_eager(resource_changed::<Aimed>),
+                        resource_changed::<WatchStatus>
+                            .or_eager(resource_changed::<Aimed>)
+                            .or_eager(resource_changed::<Together>),
                     ),
                     follow_hand,
                 )
@@ -83,6 +98,103 @@ const STAGGER_MAX: f32 = 1.6;
 const OVER: f32 = 0.02;
 /// A card's corners, rounded as the model's are, for its glow.
 const CORNER: f32 = 0.0032;
+/// How high a card chosen with others hovers over its pile, and how much it bobs.
+const CHOSEN_LIFT: f32 = 0.012;
+const CHOSEN_BOB: f32 = 0.6;
+
+/// Whether a game's cards are laid on the table in place of its board: it has cards, and is a
+/// patience or has a look that lays them out.
+pub fn on_table(info: &GameInfo, look: Option<&Appearance>) -> bool {
+    info.cards.is_some() && (patience::plays(info) || look.is_some_and(|l| l.cards.is_some()))
+}
+
+/// The choices made together so far (by their values), at the move they were made in: a move
+/// played lets them go.
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+pub struct Together {
+    pub seq: u64,
+    pub chosen: BTreeSet<String>,
+}
+
+impl Together {
+    /// What is chosen at the move `seq`: nothing, if they were chosen at another.
+    fn at(&self, seq: u64) -> BTreeSet<String> {
+        if self.seq == seq {
+            self.chosen.clone()
+        } else {
+            BTreeSet::new()
+        }
+    }
+}
+
+/// The gestures that play the move made of the choices `chosen` (made together, in any order)
+/// and then `last`, in the order the server lists them; none when no move is that.
+pub fn throw(
+    options: &[LegalSelection],
+    chosen: &BTreeSet<String>,
+    last: &str,
+) -> Option<Vec<Gesture>> {
+    options
+        .iter()
+        .find(|o| {
+            let Some((end, rest)) = o.gestures.split_last() else {
+                return false;
+            };
+            let rest: BTreeSet<&str> = rest.iter().map(|g| g.value.as_str()).collect();
+            end.value == last
+                && rest.len() == o.gestures.len() - 1
+                && rest == chosen.iter().map(String::as_str).collect()
+        })
+        .map(|o| o.gestures.clone())
+}
+
+/// Whether a choice made together is in any move: one that is not may not be chosen.
+pub fn reachable(options: &[LegalSelection], value: &str) -> bool {
+    options
+        .iter()
+        .any(|o| o.gestures.iter().any(|g| g.value == value))
+}
+
+/// What a click on a pile of a game laid by its look does: chooses a choice made together, or
+/// lets it go; plays the move it ends; or nothing. The choices chosen after it.
+pub fn look_click(
+    look: &CardsLook,
+    zone: &str,
+    chosen: &BTreeSet<String>,
+    options: &[LegalSelection],
+) -> LookClick {
+    let Some(value) = look.piles.get(zone).and_then(|p| p.click.as_deref()) else {
+        return LookClick::Nothing;
+    };
+    let together = look
+        .together
+        .as_deref()
+        .is_some_and(|t| value.starts_with(t));
+    if together {
+        let mut now = chosen.clone();
+        if !now.remove(value) {
+            if !reachable(options, value) {
+                return LookClick::Nothing;
+            }
+            now.insert(value.to_string());
+        }
+        return LookClick::Choose(now);
+    }
+    match throw(options, chosen, value) {
+        Some(gestures) => LookClick::Play(gestures),
+        None => LookClick::Nothing,
+    }
+}
+
+/// What a click on a pile of a game laid by its look does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LookClick {
+    /// What is chosen together is now this.
+    Choose(BTreeSet<String>),
+    /// Plays the move these gestures make.
+    Play(Vec<Gesture>),
+    Nothing,
+}
 
 /// The pile the pointer is over, if any: its cards, or its place.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
@@ -98,6 +210,8 @@ struct CardRoot {
     room_code: String,
     layout: Layout,
     looks: Looks,
+    /// How the game's look lays it out, when it does (not a patience).
+    by_look: Option<CardsLook>,
 }
 
 /// A card: what the position calls it (its id, or its zone and place for one face down), where
@@ -246,16 +360,10 @@ fn card_corners() -> Vec<Vec2> {
 }
 
 /// Each pile's cards, bottom first, by zone: the position's, for the piles the layout has.
-fn piles<'t>(table: &'t Table, layout: &Layout) -> BTreeMap<&'t str, &'t [CardOnTable]> {
-    table
-        .state
-        .state
-        .cards
-        .zones
-        .iter()
-        .filter(|(zone, _)| layout.piles.contains_key(zone.as_str()))
-        .map(|(zone, z)| (zone.as_str(), z.cards.as_slice()))
-        .collect()
+fn piles(table: &Table, layout: &Layout) -> BTreeMap<String, Vec<CardOnTable>> {
+    let mut all = table.state.state.card_zones();
+    all.retain(|zone, _| layout.piles.contains_key(zone));
+    all
 }
 
 /// Which way up each card of a pile lies.
@@ -289,7 +397,8 @@ fn put_down(turn: Option<&Turn>) -> Option<(String, usize)> {
 /// The foundation what is in hand (a zone, how many) goes home to, when the view says which
 /// suit each is built in: its lowest card's suit's.
 fn home_of(table: &Table, (zone, count): &(String, usize)) -> Option<String> {
-    let pile = &table.state.state.cards.zones.get(zone)?.cards;
+    let zones = table.state.state.card_zones();
+    let pile = zones.get(zone)?;
     let lowest = pile.get(pile.len().checked_sub(*count)?)?;
     let suit = &table.info.cards.as_ref()?.type_of(&lowest.id)?.suit;
     patience::home(suit, &table.state.state.view_words("suits"))
@@ -319,10 +428,11 @@ fn sync_cards(
     mut roots: Query<(Entity, &mut CardRoot)>,
     cards: Query<Existing>,
     anchors: Query<(Entity, Has<Held>), With<Anchor>>,
-    put_on: Res<PutOn>,
+    (put_on, together, appearances): (Res<PutOn>, Res<Together>, Res<Appearances>),
     (mut built, mut cues): (MessageWriter<BoardBuilt>, MessageWriter<Cue>),
 ) {
-    let Some(table) = watch.table.as_ref().filter(|t| patience::plays(&t.info)) else {
+    let look = |t: &Table| appearances.for_game(&t.info.id);
+    let Some(table) = watch.table.as_ref().filter(|t| on_table(&t.info, look(t))) else {
         for (root, _) in &roots {
             commands.entity(root).despawn();
         }
@@ -338,6 +448,7 @@ fn sync_cards(
         let fresh = build(
             &mut commands,
             table,
+            look(table).and_then(|l| l.cards.clone()),
             &server,
             &mut meshes,
             &mut materials,
@@ -352,10 +463,22 @@ fn sync_cards(
     let turn = watch.turn.as_ref();
     let held = in_hand(turn);
     let put = put_down(turn).zip(put_on.0.clone());
+    // The piles whose choice is chosen together with others: their top card hovers.
+    let chosen = together.at(table.state.move_seq);
+    let lifted_piles: HashSet<&str> = root_data
+        .by_look
+        .iter()
+        .flat_map(|l| &l.piles)
+        .filter(|(_, p)| p.click.as_ref().is_some_and(|c| chosen.contains(c)))
+        .map(|(zone, _)| zone.as_str())
+        .collect();
 
     let existing: HashMap<&str, Existing> = cards.iter().map(|c| (c.1.key.as_str(), c)).collect();
     let mut wanted: HashSet<String> = HashSet::new();
-    let mut order: Vec<(&str, &[CardOnTable])> = piles.iter().map(|(z, c)| (*z, *c)).collect();
+    let mut order: Vec<(&str, &[CardOnTable])> = piles
+        .iter()
+        .map(|(z, c)| (z.as_str(), c.as_slice()))
+        .collect();
     // Dealt in the piles' order: the stock first, the columns from the left.
     order.sort_by_key(|(zone, _)| patience::kind(zone));
     for (zone, pile) in &order {
@@ -373,7 +496,7 @@ fn sync_cards(
             continue;
         }
         let index = piles
-            .get(at.zone.as_str())
+            .get(&at.zone)
             .map_or(0, |p| p.len())
             .saturating_add(at.from_top)
             .saturating_sub(1);
@@ -406,7 +529,7 @@ fn sync_cards(
             .as_ref()
             .filter(|((z, _), _)| z == zone)
             .map(|((_, n), onto)| {
-                let onto_up = piles.get(onto.as_str()).map(|p| ups(p)).unwrap_or_default();
+                let onto_up = piles.get(onto).map(|p| ups(p)).unwrap_or_default();
                 (
                     lifted_from(pile.len(), *n),
                     layout.landing(onto, &onto_up, *n, BASE),
@@ -456,7 +579,24 @@ fn sync_cards(
                         e.remove::<InHand>();
                         pickable(&mut commands, parts, true);
                     }
+                    // Chosen with others: it hovers over its pile until the move is played.
+                    let hovering = matches!(carry, Some(Carry::Held { .. }));
+                    if i + 1 == pile.len() && lifted_piles.contains(zone) {
+                        if !hovering {
+                            lifting = true;
+                            commands.entity(*entity).insert(Carry::Held {
+                                lift: CHOSEN_LIFT,
+                                scale: CHOSEN_BOB,
+                            });
+                        }
+                        continue;
+                    }
                     let goal = put_at.unwrap_or(rest);
+                    // Let go where it lies: it settles back by itself.
+                    if hovering && goal == rest && !moved(old_rest.0, rest) {
+                        commands.entity(*entity).remove::<Carry>();
+                        continue;
+                    }
                     let going = matches!(carry, Some(Carry::Put(to)) if *to == goal);
                     if going {
                         continue;
@@ -530,7 +670,7 @@ fn place_fresh(
     materials: &mut Assets<StandardMaterial>,
 ) {
     let layout = data.layout.clone();
-    for (zone, pile) in piles(table, &layout) {
+    for (zone, pile) in &piles(table, &layout) {
         let rests = layout.lie(zone, &ups(pile), BASE);
         for (i, card) in pile.iter().enumerate() {
             let whole = spawn_card(
@@ -546,11 +686,11 @@ fn place_fresh(
             commands.entity(whole).insert((
                 CardAt {
                     key: key(zone, i, card),
-                    zone: zone.to_string(),
+                    zone: zone.clone(),
                     from_top: pile.len() - i,
                     shown: card.shown(),
                 },
-                PileOf(zone.to_string()),
+                PileOf(zone.clone()),
                 Rest(rests[i]),
             ));
         }
@@ -563,19 +703,23 @@ fn place_fresh(
 fn build(
     commands: &mut Commands,
     table: &Table,
+    by_look: Option<CardsLook>,
     server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     built: &mut MessageWriter<BoardBuilt>,
 ) -> (Entity, CardRoot) {
-    let zones = table
-        .state
-        .state
-        .cards
-        .zones
-        .iter()
-        .map(|(zone, z)| (zone.as_str(), z.cards.len()));
-    let layout = Layout::new(zones);
+    let layout = match &by_look {
+        Some(look) => Layout::placed(
+            look.piles
+                .iter()
+                .map(|(zone, p)| (zone.clone(), Vec2::new(p.at[0], p.at[1]), p.spread)),
+        ),
+        None => {
+            let zones = table.state.state.card_zones();
+            patience::layout(zones.iter().map(|(zone, z)| (zone.as_str(), z.len())))
+        }
+    };
     let root = commands
         .spawn((
             Name::new("Cards"),
@@ -652,7 +796,7 @@ fn build(
     ]));
     // Framed as dealt, with room for the columns to grow by half their reach: a long one
     // reaches beyond the picture rather than every deal being seen from afar.
-    let unused = patience::REACH / 2.0;
+    let unused = layout.room / 2.0;
     built.write(BoardBuilt {
         size: cloth_size - Vec2::Y * unused,
         middle: Vec2::Y * -unused / 2.0,
@@ -664,6 +808,7 @@ fn build(
             room_code: table.room_code.clone(),
             layout,
             looks,
+            by_look,
         },
     )
 }
@@ -756,6 +901,7 @@ fn show_aim(
     mut roots: Query<(Entity, &mut CardRoot)>,
     mut glows: Query<(Entity, &PileGlow, &mut Transform, Has<Lit>)>,
     ghosts: Query<Entity, With<CardGhost>>,
+    together: Res<Together>,
 ) {
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
@@ -777,14 +923,36 @@ fn show_aim(
     };
     let piles = piles(table, &shown.layout);
     let home = held.as_ref().and_then(|h| home_of(table, h));
-    let targets: Vec<&str> = patience::targets(
-        shown.layout.piles.keys().map(String::as_str),
-        &next,
-        home.as_deref(),
-    );
+    let targets: Vec<&str> = match (&shown.by_look, turn) {
+        // Laid by its look: the piles whose choice plays what is chosen, once something is.
+        (Some(look), Some(turn)) if turn.stage == Stage::Choosing => {
+            let chosen = together.at(table.state.move_seq);
+            look.piles
+                .iter()
+                .filter(|_| !chosen.is_empty())
+                .filter(|(_, p)| {
+                    p.click
+                        .as_deref()
+                        .is_some_and(|c| throw(&turn.options, &chosen, c).is_some())
+                })
+                .map(|(zone, _)| zone.as_str())
+                .collect()
+        }
+        (Some(_), _) => Vec::new(),
+        (None, _) => patience::targets(
+            shown.layout.piles.keys().map(String::as_str),
+            &next,
+            home.as_deref(),
+        ),
+    };
     let landing = |zone: &str, n: usize| {
         let up = piles.get(zone).map(|p| ups(p)).unwrap_or_default();
-        shown.layout.landing(zone, &up, n, BASE)
+        let at = shown.layout.landing(zone, &up, n, BASE);
+        // A pile laid by its look glows where its top card lies: what it plays is already there.
+        match (&shown.by_look, shown.layout.lie(zone, &up, BASE).last()) {
+            (Some(_), Some(top)) => vec![*top],
+            _ => at,
+        }
     };
     for (entity, glow, mut t, lit) in &mut glows {
         let on = targets.contains(&glow.0.as_str());
@@ -807,7 +975,7 @@ fn show_aim(
     if !targets.contains(&over.as_str()) {
         return;
     }
-    let Some(lifted) = piles.get(from.as_str()) else {
+    let Some(lifted) = piles.get(from) else {
         return;
     };
     let cards = table.info.cards.as_ref();
@@ -872,9 +1040,10 @@ type Clicked<'w, 's> = (
 fn on_click(
     click: On<PointerClick>,
     (cards, places, cloths): Clicked,
+    roots: Query<&CardRoot>,
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
-    mut put_on: ResMut<PutOn>,
+    (mut put_on, mut together): (ResMut<PutOn>, ResMut<Together>),
 ) {
     if click.button != PointerButton::Primary {
         return;
@@ -884,9 +1053,12 @@ fn on_click(
     } else if let Ok(pile) = places.get(click.entity) {
         (pile.0.clone(), None)
     } else if cloths.contains(click.entity) {
-        // The bare cloth: what is in hand goes back.
+        // The bare cloth: what is in hand goes back, and what is chosen is let go.
         if in_hand(watch.turn.as_ref()).is_some() {
             play::back(&mut watch);
+        }
+        if !together.chosen.is_empty() {
+            together.chosen.clear();
         }
         return;
     } else {
@@ -895,6 +1067,23 @@ fn on_click(
     let Some(turn) = watch.turn.as_ref().filter(|t| t.stage == Stage::Choosing) else {
         return;
     };
+    let seq = watch.table.as_ref().map_or(0, |t| t.state.move_seq);
+    let by_look = watch
+        .table
+        .as_ref()
+        .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code))
+        .and_then(|r| r.by_look.as_ref());
+    if let Some(look) = by_look {
+        match look_click(look, &zone, &together.at(seq), &turn.options) {
+            LookClick::Choose(chosen) => *together = Together { seq, chosen },
+            LookClick::Play(gestures) => {
+                together.chosen.clear();
+                play::enter_all(&net, &mut watch, &gestures);
+            }
+            LookClick::Nothing => {}
+        }
+        return;
+    }
     let lifted = patience::lifted(&turn.gestures);
     let next = turn.choices();
     let held = lifted.as_ref().map(|(z, n)| (z.as_str(), *n));
@@ -915,6 +1104,19 @@ fn on_click(
         Click::PutBack => play::back(&mut watch),
         Click::Nothing => {}
     }
+}
+
+/// Backspace lets go of what is chosen together, as it takes back what is in hand.
+fn let_go(keys: Option<Res<ButtonInput<KeyCode>>>, mut together: ResMut<Together>) {
+    let pressed = keys.is_some_and(|k| k.just_pressed(KeyCode::Backspace));
+    if pressed && !together.chosen.is_empty() {
+        together.chosen.clear();
+    }
+}
+
+/// Whether a pile's card rests somewhere else now.
+fn moved(was: Transform, now: Transform) -> bool {
+    was.translation.distance(now.translation) > 1e-5
 }
 
 fn on_over(over: On<PointerOver>, piles: Query<&PileOf>, mut aimed: ResMut<Aimed>) {
@@ -1085,7 +1287,8 @@ mod tests {
         assert_eq!(world.get::<InHand>(ace), None);
         let rest = world.get::<Rest>(ace).unwrap().0;
         assert_eq!(world.get::<Carry>(ace), Some(&Carry::Put(rest)));
-        let layout = Layout::new([("stock", 3), ("waste", 0), ("f1", 0), ("t1", 0), ("t2", 0)]);
+        let layout =
+            patience::layout([("stock", 3), ("waste", 0), ("f1", 0), ("t1", 0), ("t2", 0)]);
         assert_eq!(rest, layout.lie("f1", &[true], BASE)[0]);
         let world = app.world_mut();
         let held = world
@@ -1131,6 +1334,174 @@ mod tests {
             (rest.rotation * Vec3::Y).y > 0.0,
             "and turned up where it goes"
         );
+    }
+
+    /// A game laid by its look: two pins chosen together, a ball that knocks them down, and a
+    /// pile of what is out of play.
+    const LOOK: &str = r#"
+        games = ["rack"]
+        [cards]
+        together = "pin-"
+        sheet = "score"
+        [cards.piles.pina]
+        at = [0.0, 0.0]
+        click = "pin-a"
+        [cards.piles.pinb]
+        at = [0.08, 0.0]
+        click = "pin-b"
+        [cards.piles.ball1]
+        at = [0.2, 0.1]
+        click = "ball-1"
+        [cards.piles.gone]
+        at = [0.2, -0.1]
+        spread = "fanned"
+    "#;
+
+    fn look() -> Appearance {
+        Appearance::parse(LOOK).unwrap()
+    }
+
+    /// A move as the server lists it, its gestures in its own order.
+    fn play_of(values: &[&str]) -> LegalSelection {
+        LegalSelection {
+            notation: values.join(" "),
+            action: "move".into(),
+            gestures: values.iter().map(|v| act(v)).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn set(values: &[&str]) -> BTreeSet<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn choices_made_together_are_chosen_in_any_order_and_played_in_the_servers() {
+        let options = [
+            play_of(&["pin-a", "pin-b", "ball-1"]),
+            play_of(&["pin-b", "ball-1"]),
+            play_of(&["end"]),
+        ];
+        assert_eq!(
+            throw(&options, &set(&["pin-b", "pin-a"]), "ball-1"),
+            Some(options[0].gestures.clone()),
+            "chosen b then a, sent a then b"
+        );
+        assert_eq!(
+            throw(&options, &set(&["pin-b"]), "ball-1"),
+            Some(options[1].gestures.clone())
+        );
+        assert_eq!(
+            throw(&options, &set(&["pin-a"]), "ball-1"),
+            None,
+            "no such play"
+        );
+        assert_eq!(
+            throw(&options, &set(&[]), "end"),
+            Some(options[2].gestures.clone())
+        );
+        assert!(reachable(&options, "pin-a"));
+        assert!(!reachable(&options, "pin-c"));
+
+        let cards = look().cards.unwrap();
+        let none = set(&[]);
+        assert_eq!(
+            look_click(&cards, "pinb", &none, &options),
+            LookClick::Choose(set(&["pin-b"]))
+        );
+        assert_eq!(
+            look_click(&cards, "pinb", &set(&["pin-a", "pin-b"]), &options),
+            LookClick::Choose(set(&["pin-a"])),
+            "chosen again, let go"
+        );
+        assert_eq!(
+            look_click(&cards, "ball1", &set(&["pin-a", "pin-b"]), &options),
+            LookClick::Play(options[0].gestures.clone())
+        );
+        assert_eq!(
+            look_click(&cards, "ball1", &set(&["pin-a"]), &options),
+            LookClick::Nothing,
+            "a ball that knocks down no such set"
+        );
+        assert_eq!(
+            look_click(&cards, "gone", &none, &options),
+            LookClick::Nothing
+        );
+        let only_b = [play_of(&["pin-b", "ball-1"])];
+        assert_eq!(
+            look_click(&cards, "pina", &none, &only_b),
+            LookClick::Nothing,
+            "a pin no play takes may not be chosen"
+        );
+    }
+
+    /// The game laid by `LOOK`, its cards in the view's table only, as a game whose rules are
+    /// written in Go has them.
+    fn rack(seq: u64, pins: &[(&str, &str)], gone: &[&str]) -> Table {
+        let mut table = table(seq, json!({}));
+        table.info.id = "rack".into();
+        table.info.actions[0].kind = "move".into();
+        let mut zones: Vec<serde_json::Value> = pins
+            .iter()
+            .map(|(zone, id)| json!({"id": zone, "count": 1, "cards": [{"id": id, "up": true}]}))
+            .collect();
+        zones.push(json!({"id": "ball1", "count": 2,
+            "cards": [{}, {"id": "spades-K", "up": true}]}));
+        zones.push(json!({"id": "gone", "count": gone.len(),
+            "cards": gone.iter().map(|id| json!({"id": id, "up": true})).collect::<Vec<_>>()}));
+        table.state.state.ext = json!({"view": {"table": zones, "score": {"frame": 1}}});
+        table
+    }
+
+    #[test]
+    fn a_game_laid_by_its_look_lifts_what_is_chosen_and_lights_the_ball_that_plays_it() {
+        let mut app = app();
+        app.insert_resource(Appearances(vec![look()]));
+        let pins = [("pina", "hearts-A"), ("pinb", "spades-2")];
+        watch(&mut app, rack(1, &pins, &[]), None);
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&CardAt>().iter(world).count(), 4);
+        assert_eq!(world.query::<&Place>().iter(world).count(), 4);
+
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.options = vec![play_of(&["pin-a", "pin-b", "ball-1"])];
+        turn.stage = Stage::Choosing;
+        watch(&mut app, rack(1, &pins, &[]), Some(turn));
+        app.world_mut().insert_resource(Together {
+            seq: 1,
+            chosen: set(&["pin-b"]),
+        });
+        app.update();
+        let b = card(&mut app, "spades-2");
+        let a = card(&mut app, "hearts-A");
+        assert!(matches!(
+            app.world().get::<Carry>(b),
+            Some(Carry::Held { .. })
+        ));
+        assert_eq!(app.world().get::<Carry>(a), None);
+        let lit = |app: &mut App| -> Vec<String> {
+            let world = app.world_mut();
+            world
+                .query_filtered::<&PileGlow, With<Lit>>()
+                .iter(world)
+                .map(|g| g.0.clone())
+                .collect()
+        };
+        assert!(lit(&mut app).is_empty(), "no ball knocks down b alone");
+
+        app.world_mut().resource_mut::<Together>().chosen = set(&["pin-a", "pin-b"]);
+        app.update();
+        assert_eq!(lit(&mut app), ["ball1"]);
+
+        // Thrown: the pins are out of play, and what was chosen is let go.
+        watch(&mut app, rack(2, &[], &["hearts-A", "spades-2"]), None);
+        app.update();
+        let rest = app.world().get::<Rest>(b).unwrap().0;
+        assert_eq!(app.world().get::<Carry>(b), Some(&Carry::Put(rest)));
+        assert!(lit(&mut app).is_empty());
     }
 
     #[test]

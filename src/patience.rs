@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 
+use crate::card_layout::{Layout, Pile, REACH, Spread};
 use crate::net::api::{GameInfo, Gesture, LegalSelection};
 use crate::props::CARD_SIZE;
 
@@ -173,185 +174,99 @@ pub fn targets<'z>(
 /// Metres between the cards of a row, and between the two rows.
 const GAP: f32 = 0.012;
 const ROW_GAP: f32 = 0.02;
-/// How far each card of a column lies beyond the one under it: one face down shows its edge,
-/// one face up its corner's rank and suit.
-const DOWN_STEP: f32 = 0.011;
-const UP_STEP: f32 = 0.021;
-/// The longest a column reaches beyond its first card; a longer one is fanned closer.
-pub const REACH: f32 = 0.3;
-/// How far the waste's top cards are fanned to the right, one beyond another.
-const FAN_STEP: f32 = 0.017;
-/// How many of the waste's top cards are fanned.
-const FANNED: usize = 3;
-
-/// How the cards of a pile lie.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Spread {
-    /// Squarely on one another.
-    Squared,
-    /// The top few fanned to the right (the waste).
-    Fanned,
-    /// Each beyond the one under it, towards the player (a column).
-    Down,
-}
-
-/// Where a pile lies: the middle of its first card on the table, and how its cards lie.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Pile {
-    pub at: Vec2,
-    pub spread: Spread,
-}
 
 /// Where every pile of a patience lies on the table, the whole centred on the origin: a row of
 /// the stock, the waste and the free cells to the left and the foundations and the finished
-/// runs to the right, beyond the columns.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Layout {
-    pub piles: BTreeMap<String, Pile>,
-    /// The width (X) and depth (Z) it takes, its columns at their longest.
-    pub size: Vec2,
-}
-
-impl Layout {
-    /// The piles of these zones, the vocabulary's; any other is left out. The stock is laid
-    /// only if it has cards or there is a waste: a game dealt whole has none to show.
-    pub fn new<'z>(zones: impl IntoIterator<Item = (&'z str, usize)>) -> Self {
-        let mut by_kind: BTreeMap<Kind, Vec<(usize, &str)>> = BTreeMap::new();
-        let mut stock_cards = 0;
-        for (zone, count) in zones {
-            if let Some((k, n)) = kind(zone) {
-                by_kind.entry(k).or_default().push((n, zone));
-                if k == Kind::Stock {
-                    stock_cards = count;
-                }
+/// runs to the right, beyond the columns, which may reach `REACH` towards the player.
+/// The piles of these zones, the vocabulary's; any other is left out. The stock is laid
+/// only if it has cards or there is a waste: a game dealt whole has none to show.
+pub fn layout<'z>(zones: impl IntoIterator<Item = (&'z str, usize)>) -> Layout {
+    let mut by_kind: BTreeMap<Kind, Vec<(usize, &str)>> = BTreeMap::new();
+    let mut stock_cards = 0;
+    for (zone, count) in zones {
+        if let Some((k, n)) = kind(zone) {
+            by_kind.entry(k).or_default().push((n, zone));
+            if k == Kind::Stock {
+                stock_cards = count;
             }
-        }
-        for piles in by_kind.values_mut() {
-            piles.sort();
-        }
-        let of = |k: Kind| -> Vec<&str> {
-            by_kind
-                .get(&k)
-                .map(|p| p.iter().map(|(_, z)| *z).collect())
-                .unwrap_or_default()
-        };
-        let waste = of(Kind::Waste);
-        let mut left: Vec<&str> = Vec::new();
-        if stock_cards > 0 || !waste.is_empty() {
-            left.extend(of(Kind::Stock));
-        }
-        left.extend(&waste);
-        left.extend(of(Kind::Cell));
-        let mut right = of(Kind::Foundation);
-        right.extend(of(Kind::Done));
-        let columns = of(Kind::Column);
-        // The waste's fan takes a place of its own.
-        let fan = usize::from(!waste.is_empty());
-        let places = columns.len().max(left.len() + fan + right.len()).max(1);
-
-        let pitch = CARD_SIZE.x + GAP;
-        let width = places as f32 * pitch - GAP;
-        let depth = 2.0 * CARD_SIZE.y + ROW_GAP + REACH;
-        let x = |i: usize| (i as f32 - (places as f32 - 1.0) / 2.0) * pitch;
-        let top = -depth / 2.0 + CARD_SIZE.y / 2.0;
-        let below = top + CARD_SIZE.y + ROW_GAP;
-
-        let mut piles = BTreeMap::new();
-        for (i, zone) in left.iter().enumerate() {
-            let spread = if waste.contains(zone) {
-                Spread::Fanned
-            } else {
-                Spread::Squared
-            };
-            piles.insert(
-                zone.to_string(),
-                Pile {
-                    at: Vec2::new(x(i), top),
-                    spread,
-                },
-            );
-        }
-        for (i, zone) in right.iter().enumerate() {
-            let at = Vec2::new(x(places - right.len() + i), top);
-            piles.insert(
-                zone.to_string(),
-                Pile {
-                    at,
-                    spread: Spread::Squared,
-                },
-            );
-        }
-        for (i, zone) in columns.iter().enumerate() {
-            let at = Vec2::new(x(i), below);
-            piles.insert(
-                zone.to_string(),
-                Pile {
-                    at,
-                    spread: Spread::Down,
-                },
-            );
-        }
-        Layout {
-            piles,
-            size: Vec2::new(width, depth),
         }
     }
-
-    /// Where each card of `zone` lies, bottom first, on a table whose top is at `base`: `up`
-    /// says which lie face up (shown or not). Empty for a pile the layout does not have.
-    pub fn lie(&self, zone: &str, up: &[bool], base: f32) -> Vec<Transform> {
-        let Some(pile) = self.piles.get(zone) else {
-            return Vec::new();
-        };
-        let n = up.len();
-        let mut offsets = vec![Vec2::ZERO; n];
-        match pile.spread {
-            Spread::Squared => {}
-            Spread::Fanned => {
-                let first = n.saturating_sub(FANNED);
-                for (i, o) in offsets.iter_mut().enumerate().skip(first) {
-                    o.x = (i - first) as f32 * FAN_STEP;
-                }
-            }
-            Spread::Down => {
-                let steps: Vec<f32> = up
-                    .iter()
-                    .take(n.saturating_sub(1))
-                    .map(|u| if *u { UP_STEP } else { DOWN_STEP })
-                    .collect();
-                let whole: f32 = steps.iter().sum();
-                let k = if whole > REACH { REACH / whole } else { 1.0 };
-                let mut z = 0.0;
-                for (i, o) in offsets.iter_mut().enumerate() {
-                    o.y = z;
-                    z += steps.get(i).copied().unwrap_or(0.0) * k;
-                }
-            }
-        }
-        up.iter()
-            .zip(offsets)
-            .enumerate()
-            .map(|(i, (u, o))| {
-                let at = pile.at + o;
-                let y = base + CARD_SIZE.z * (i as f32 + 0.5);
-                Transform::from_xyz(at.x, y, at.y).with_rotation(crate::props::card_lies(*u))
-            })
-            .collect()
+    for piles in by_kind.values_mut() {
+        piles.sort();
     }
+    let of = |k: Kind| -> Vec<&str> {
+        by_kind
+            .get(&k)
+            .map(|p| p.iter().map(|(_, z)| *z).collect())
+            .unwrap_or_default()
+    };
+    let waste = of(Kind::Waste);
+    let mut left: Vec<&str> = Vec::new();
+    if stock_cards > 0 || !waste.is_empty() {
+        left.extend(of(Kind::Stock));
+    }
+    left.extend(&waste);
+    left.extend(of(Kind::Cell));
+    let mut right = of(Kind::Foundation);
+    right.extend(of(Kind::Done));
+    let columns = of(Kind::Column);
+    // The waste's fan takes a place of its own.
+    let fan = usize::from(!waste.is_empty());
+    let places = columns.len().max(left.len() + fan + right.len()).max(1);
 
-    /// Where `adding` more cards, face up, would lie on `zone` as it is (`up`, as for
-    /// [`Layout::lie`]).
-    pub fn landing(&self, zone: &str, up: &[bool], adding: usize, base: f32) -> Vec<Transform> {
-        let mut after = up.to_vec();
-        after.extend(std::iter::repeat_n(true, adding));
-        let mut all = self.lie(zone, &after, base);
-        all.split_off(all.len().saturating_sub(adding))
+    let pitch = CARD_SIZE.x + GAP;
+    let width = places as f32 * pitch - GAP;
+    let depth = 2.0 * CARD_SIZE.y + ROW_GAP + REACH;
+    let x = |i: usize| (i as f32 - (places as f32 - 1.0) / 2.0) * pitch;
+    let top = -depth / 2.0 + CARD_SIZE.y / 2.0;
+    let below = top + CARD_SIZE.y + ROW_GAP;
+
+    let mut piles = BTreeMap::new();
+    for (i, zone) in left.iter().enumerate() {
+        let spread = if waste.contains(zone) {
+            Spread::Fanned
+        } else {
+            Spread::Squared
+        };
+        piles.insert(
+            zone.to_string(),
+            Pile {
+                at: Vec2::new(x(i), top),
+                spread,
+            },
+        );
+    }
+    for (i, zone) in right.iter().enumerate() {
+        let at = Vec2::new(x(places - right.len() + i), top);
+        piles.insert(
+            zone.to_string(),
+            Pile {
+                at,
+                spread: Spread::Squared,
+            },
+        );
+    }
+    for (i, zone) in columns.iter().enumerate() {
+        let at = Vec2::new(x(i), below);
+        piles.insert(
+            zone.to_string(),
+            Pile {
+                at,
+                spread: Spread::Down,
+            },
+        );
+    }
+    Layout {
+        piles,
+        size: Vec2::new(width, depth),
+        room: REACH,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card_layout::{DOWN_STEP, FAN_STEP, UP_STEP};
     use crate::net::api::ActionDef;
 
     fn act(value: &str) -> Gesture {
@@ -532,7 +447,7 @@ mod tests {
             .chain((1..=4).map(|i| format!("f{i}")))
             .collect();
         all.extend(names.iter().map(|n| (n.as_str(), 0)));
-        let layout = Layout::new(all);
+        let layout = layout(all);
         let at = |z: &str| layout.piles[z].at;
         assert_eq!(layout.piles.len(), 13);
         // One row: the stock above the first column, the last foundation above the last.
@@ -563,7 +478,7 @@ mod tests {
         names.extend((1..=4).map(|i| format!("f{i}")));
         let mut all: Vec<(&str, usize)> = names.iter().map(|n| (n.as_str(), 0)).collect();
         all.push(("stock", 0));
-        let layout = Layout::new(all);
+        let layout = layout(all);
         assert!(!layout.piles.contains_key("stock"));
         let at = |z: &str| layout.piles[z].at;
         assert_eq!(at("c1").x, at("t1").x);
@@ -577,7 +492,7 @@ mod tests {
         let names: Vec<String> = (1..=10).map(|i| format!("t{i}")).collect();
         let mut all: Vec<(&str, usize)> = names.iter().map(|n| (n.as_str(), 5)).collect();
         all.extend([("stock", 50), ("done", 0), ("hand:1", 3)]);
-        let layout = Layout::new(all);
+        let layout = layout(all);
         let at = |z: &str| layout.piles[z].at;
         assert_eq!(at("stock").x, at("t1").x);
         assert_eq!(at("done").x, at("t10").x);
@@ -587,7 +502,7 @@ mod tests {
     #[test]
     fn a_column_fans_towards_the_player_and_closes_up_rather_than_reach_too_far() {
         let names: Vec<String> = (1..=7).map(|i| format!("t{i}")).collect();
-        let layout = Layout::new(names.iter().map(|n| (n.as_str(), 0)));
+        let layout = layout(names.iter().map(|n| (n.as_str(), 0)));
         let base = 0.002;
         let cards = layout.lie("t1", &[false, false, true, true], base);
         let z: Vec<f32> = cards.iter().map(|t| t.translation.z).collect();
@@ -615,7 +530,7 @@ mod tests {
 
     #[test]
     fn the_waste_fans_its_top_three_and_a_squared_pile_rises_card_by_card() {
-        let layout = Layout::new([("waste", 0), ("stock", 10), ("f1", 0)]);
+        let layout = layout([("waste", 0), ("stock", 10), ("f1", 0)]);
         let cards = layout.lie("waste", &[true; 5], 0.0);
         let x: Vec<f32> = cards.iter().map(|t| t.translation.x).collect();
         let first = layout.piles["waste"].at.x;
@@ -636,7 +551,7 @@ mod tests {
     #[test]
     fn what_lands_on_a_pile_lies_where_its_next_cards_would() {
         let names: Vec<String> = (1..=7).map(|i| format!("t{i}")).collect();
-        let layout = Layout::new(names.iter().map(|n| (n.as_str(), 0)));
+        let layout = layout(names.iter().map(|n| (n.as_str(), 0)));
         let up = [false, true];
         let landing = layout.landing("t2", &up, 2, 0.0);
         let whole = layout.lie("t2", &[false, true, true, true], 0.0);

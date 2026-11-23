@@ -140,6 +140,7 @@ fn rebuild(
             match &watching.table {
                 Some(table) => {
                     game(p, f, table, &appearances);
+                    score_sheet(p, f, table, &appearances);
                     if let Some(turn) = &watching.turn {
                         your_turn(p, f, table, turn);
                     }
@@ -263,6 +264,109 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
     // player's own is the hint under their move (`your_turn`).
     if let Some(words) = asked(table) {
         p.spawn(line(f.regular(14.0), colours::TEXT, words));
+    }
+}
+
+/// One frame of a score sheet: its number, the marks of its balls, its total once scored, and
+/// whether it is the one being played.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Frame {
+    number: usize,
+    marks: Vec<String>,
+    total: Option<i64>,
+    current: bool,
+}
+
+/// How many frames a score sheet has, the last with room for three marks.
+const FRAMES: usize = 10;
+
+/// The frames of the view's score sheet `sheet` (`frames`, each with its `marks` and its
+/// `total` once scored, and the `frame` being played, from 1), all ten, those not yet played
+/// blank.
+fn frames(sheet: &serde_json::Value) -> Vec<Frame> {
+    let played = sheet["frames"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let now = sheet["frame"].as_u64().unwrap_or(0) as usize;
+    (0..FRAMES.max(played.len()))
+        .map(|i| {
+            let frame = played.get(i);
+            Frame {
+                number: i + 1,
+                marks: frame
+                    .and_then(|f| f["marks"].as_array())
+                    .map(|m| {
+                        m.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                total: frame.and_then(|f| f["total"].as_i64()),
+                current: i + 1 == now && i < played.len(),
+            }
+        })
+        .collect()
+}
+
+/// The game's score sheet, when its look names one in the view (`[cards] sheet`): a box for
+/// each frame, with its number, its marks and its total.
+fn score_sheet(
+    p: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    table: &Table,
+    appearances: &Appearances,
+) {
+    let Some(name) = appearances
+        .for_game(&table.info.id)
+        .and_then(|l| l.cards.as_ref())
+        .and_then(|c| c.sheet.as_deref())
+    else {
+        return;
+    };
+    let sheet = &table.state.state.ext["view"][name];
+    if sheet.is_null() {
+        return;
+    }
+    p.spawn(Node {
+        column_gap: px(2),
+        flex_wrap: FlexWrap::NoWrap,
+        ..default()
+    })
+    .with_children(|row| {
+        for frame in frames(sheet) {
+            let edge = if frame.current {
+                colours::FIELD_FOCUS
+            } else {
+                colours::BORDER
+            };
+            row.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    min_width: px(27),
+                    padding: UiRect::axes(px(1), px(2)),
+                    border: UiRect::all(px(1)),
+                    ..default()
+                },
+                BackgroundColor(colours::CARD),
+                BorderColor::all(edge),
+            ))
+            .with_children(|cell| {
+                cell.spawn(line(
+                    f.regular(10.0),
+                    colours::MUTED,
+                    &frame.number.to_string(),
+                ));
+                cell.spawn(line(f.regular(12.0), colours::TEXT, &frame.marks.join(" ")));
+                let total = frame.total.map(|t| t.to_string()).unwrap_or_default();
+                cell.spawn(line(f.semibold(12.0), colours::TEXT, &total));
+            });
+        }
+    });
+    if let Some(total) = sheet["total"].as_i64() {
+        p.spawn(line(
+            f.semibold(14.0),
+            colours::TEXT,
+            &format!("Score: {total}"),
+        ));
     }
 }
 
@@ -493,6 +597,22 @@ mod tests {
         // for the position, not for the half-made move.
         turn.gesture(&Gesture::pos("b3"));
         assert_eq!(hint(&turn, said, &[]), "Choose below.");
+    }
+
+    #[test]
+    fn a_score_sheet_has_ten_frames_with_the_marks_and_totals_the_view_gives() {
+        let sheet = serde_json::json!({
+            "frame": 2, "ball": 1, "total": 9,
+            "frames": [{"marks": ["7", "2"], "total": 9}, {"marks": []}]
+        });
+        let all = frames(&sheet);
+        assert_eq!(all.len(), 10);
+        assert_eq!(all[0].marks, ["7", "2"]);
+        assert_eq!(all[0].total, Some(9));
+        assert!(!all[0].current && all[1].current, "the frame being played");
+        assert_eq!((all[1].total, all[9].number), (None, 10));
+        assert!(all[2..].iter().all(|f| f.marks.is_empty() && !f.current));
+        assert_eq!(frames(&serde_json::Value::Null).len(), 10, "nothing played");
     }
 
     #[test]

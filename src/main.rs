@@ -10,6 +10,7 @@ mod bowls;
 mod browser;
 mod call;
 mod camera;
+mod card_layout;
 mod card_table;
 mod cli;
 mod clock;
