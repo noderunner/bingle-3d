@@ -4,10 +4,17 @@
 //! for nothing. So each frame ends by waiting until the next is due.
 //!
 //! The limit is `max_fps` in `config.toml`, or `--max-fps` for a run; 60 when neither says, and
-//! 0 for none (the monitor's pace). In a headset there is none: the headset sets the pace.
+//! 0 for none (the monitor's pace).
 //!
 //! The wait is the main world's, at the end of its frame; rendering, a frame behind on its own
 //! thread, waits for it, so both keep the pace.
+//!
+//! A headset is paced by its runtime, which holds each frame until the display is ready for it:
+//! a wait of our own there would only make frames miss their turn. What can be chosen is the
+//! display's own rate (72, 90, 120 Hz…), which the runtime then keeps: `vr_refresh_rate` in
+//! `config.toml`, or `--vr-refresh` for a run, asked of a runtime that offers it (OpenXR's
+//! `XR_FB_display_refresh_rate`) by `vr.rs` as its session starts. Without either, or with a
+//! runtime that does not offer it (SteamVR has a setting of its own), the runtime's rate.
 
 use std::time::{Duration, Instant};
 
@@ -16,9 +23,30 @@ use bevy::prelude::*;
 /// The limit when nothing says otherwise.
 pub const DEFAULT_MAX_FPS: u32 = 60;
 
-/// What `config.toml` keeps (`max_fps`), put here by the network's plugin, which reads it.
+/// What `config.toml` keeps (`max_fps`, `vr_refresh_rate`), put here by the network's plugin,
+/// which reads it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct Kept(pub Option<u32>);
+pub struct Kept {
+    pub max_fps: Option<u32>,
+    pub vr_refresh_rate: Option<u32>,
+}
+
+/// The display rate to ask a headset for, in Hz: none leaves it as the runtime has it.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+pub struct HeadsetRate(pub Option<u32>);
+
+/// Which of the rates a headset offers to ask for, for `wanted` Hz: the one nearest it, the
+/// lower of two as near (it is the quieter), or none when it offers none.
+#[cfg_attr(not(feature = "vr"), allow(dead_code))]
+pub fn headset_rate(wanted: u32, offered: &[f32]) -> Option<f32> {
+    let distance = |rate: f32| (rate - wanted as f32).abs();
+    offered
+        .iter()
+        .copied()
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+        .min_by(|a, b| distance(*a).total_cmp(&distance(*b)).then(a.total_cmp(b)))
+}
 
 /// The longest a frame may be shortened to, or none to draw at the monitor's pace.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,10 +77,14 @@ pub fn next(due: Option<Instant>, now: Instant, frame: Duration) -> (Instant, Du
     (due, due.saturating_duration_since(now))
 }
 
-/// The pace, when there is one: not in a headset.
+/// The pace: a limit in the window, a display rate asked for in a headset.
 pub struct FramePacePlugin {
     /// `--max-fps`, which comes before the config's.
-    pub cli: Option<u32>,
+    pub max_fps: Option<u32>,
+    /// `--vr-refresh`, which comes before the config's.
+    pub vr_refresh_rate: Option<u32>,
+    /// Drawing in a headset, which sets the pace.
+    pub in_headset: bool,
 }
 
 impl Plugin for FramePacePlugin {
@@ -62,7 +94,12 @@ impl Plugin for FramePacePlugin {
             .get_resource::<Kept>()
             .copied()
             .unwrap_or_default();
-        let fps = chosen(self.cli, kept.0);
+        if self.in_headset {
+            let rate = self.vr_refresh_rate.or(kept.vr_refresh_rate);
+            app.insert_resource(HeadsetRate(rate.filter(|hz| *hz > 0)));
+            return;
+        }
+        let fps = chosen(self.max_fps, kept.max_fps);
         info!(
             "drawing at most {}",
             if fps == 0 {
@@ -100,6 +137,49 @@ mod tests {
         assert_eq!(chosen(None, Some(30)), 30);
         assert_eq!(chosen(Some(0), Some(30)), 0);
         assert_eq!(chosen(Some(144), None), 144);
+    }
+
+    #[test]
+    fn a_headset_is_asked_for_the_rate_nearest_the_one_wanted() {
+        let offered = [72.0, 80.0, 90.0, 120.0];
+        assert_eq!(headset_rate(90, &offered), Some(90.0));
+        assert_eq!(headset_rate(100, &offered), Some(90.0));
+        assert_eq!(headset_rate(60, &offered), Some(72.0));
+        assert_eq!(headset_rate(144, &offered), Some(120.0));
+        // As near either way: the lower.
+        assert_eq!(headset_rate(76, &offered), Some(72.0));
+        // A rate as the runtime reports it, not quite a whole number.
+        assert_eq!(headset_rate(90, &[72.0, 89.998, 120.0]), Some(89.998));
+        assert_eq!(headset_rate(90, &[]), None);
+    }
+
+    #[test]
+    fn in_a_headset_there_is_no_wait_only_a_rate_to_ask_for() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(Kept {
+                max_fps: Some(30),
+                vr_refresh_rate: Some(90),
+            })
+            .add_plugins(FramePacePlugin {
+                max_fps: None,
+                vr_refresh_rate: None,
+                in_headset: true,
+            });
+        assert!(app.world().get_resource::<FrameTime>().is_none());
+        assert_eq!(
+            *app.world().resource::<HeadsetRate>(),
+            HeadsetRate(Some(90))
+        );
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(FramePacePlugin {
+                max_fps: None,
+                vr_refresh_rate: Some(0),
+                in_headset: true,
+            });
+        assert_eq!(*app.world().resource::<HeadsetRate>(), HeadsetRate(None));
     }
 
     #[test]
@@ -148,8 +228,16 @@ mod tests {
     fn a_headless_app_keeps_the_pace() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .insert_resource(Kept(Some(50)))
-            .add_plugins(FramePacePlugin { cli: None });
+            .insert_resource(Kept {
+                max_fps: Some(50),
+                vr_refresh_rate: Some(90),
+            })
+            .add_plugins(FramePacePlugin {
+                max_fps: None,
+                vr_refresh_rate: None,
+                in_headset: false,
+            });
+        assert!(app.world().get_resource::<HeadsetRate>().is_none());
         assert_eq!(
             *app.world().resource::<FrameTime>(),
             FrameTime::from_fps(50)

@@ -1061,6 +1061,12 @@ Proposed 2026-11-23, for the maintainer to settle (the frame limit's pull reques
     ~250 fps, 2.6 cores, 160 W at the GPU; at 60, 0.65 of a core and 71 W, against 59 W idle.
     The effects themselves are cheap (about 1.1 ms of GPU a frame, SSAO the largest at 0.22),
     so they stay. `max_fps` in `config.toml` sets it (0 is the monitor's pace), `--max-fps`
-    for a run; a settings screen will show it. In a headset there is no limit: it sets the
-    pace. On a 144 Hz monitor 60 does not divide the refresh and a camera turning may judder:
+    for a run; a settings screen will show it. In a headset there is no limit of ours: the
+    runtime holds each frame for the headset's display, and a wait of our own would only make
+    frames miss their turn. What is chosen there is the headset's own display rate
+    (`vr_refresh_rate`, `--vr-refresh`: 72, 90, 120…, the nearest of those the session
+    offers), asked of the runtime through `XR_FB_display_refresh_rate`, so it is the rate of
+    the headset streamed to, never the PC monitor's. A runtime without the extension (SteamVR,
+    as far as is known; the Frame's runtime is untried) keeps its own setting, and the log says
+    so. On a 144 Hz monitor 60 does not divide the refresh and a camera turning may judder:
     72 or 0 there.

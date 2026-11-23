@@ -220,13 +220,15 @@ fn main() -> AppExit {
     #[cfg(not(feature = "vr"))]
     let in_headset = false;
     // The pointer's hand, in place of the system's cursor: a headset's pointers are its
-    // controllers' rays. And the window's own pace: a headset sets its own.
+    // controllers' rays.
     if !in_headset {
-        app.add_plugins((
-            cursor::CursorPlugin,
-            frame_pace::FramePacePlugin { cli: opts.max_fps },
-        ));
+        app.add_plugins(cursor::CursorPlugin);
     }
+    app.add_plugins(frame_pace::FramePacePlugin {
+        max_fps: opts.max_fps,
+        vr_refresh_rate: opts.vr_refresh_rate,
+        in_headset,
+    });
     app.insert_resource(scene::BloomOn(!opts.no_bloom && !in_headset))
         .insert_resource(board::ShowLegalMoves(opts.legal_moves));
     if opts.showcase {

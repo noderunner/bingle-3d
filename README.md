@@ -206,6 +206,12 @@ The window draws at most 60 frames a second, which a board game does not need mo
 GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
 and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.
 
+In a headset that limit is off: the VR runtime paces the frames to the headset's display, not the
+PC's monitor, even when the picture is streamed to it. `vr_refresh_rate` in `config.toml` (or
+`--vr-refresh 90` for a run) asks the headset for one of its own rates (72, 90, 120…, the nearest
+it offers), where the runtime lets an application choose (OpenXR's `XR_FB_display_refresh_rate`);
+otherwise the log says so, and the rate is set in the runtime's own settings (SteamVR's).
+
 `--showcase` lays every piece's model on the table, with the dice and a few playing cards of the
 usual deck, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
 a PNG, 5 to 7) on the cards' sides.

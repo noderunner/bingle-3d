@@ -48,6 +48,9 @@ Options:
   --no-bloom         draw without the camera's bloom, as a headset sees the table
   --max-fps N        draw at most N frames a second, for this run (60 unless
                      config.toml's max_fps says; 0 is the monitor's pace)
+  --vr-refresh HZ    in a headset, ask for this display rate (72, 90, 120...), where
+                     its runtime lets an application choose (config.toml's
+                     vr_refresh_rate keeps it)
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -104,6 +107,8 @@ pub struct Options {
     pub no_bloom: bool,
     /// `--max-fps`: the most frames a second, in place of the config's.
     pub max_fps: Option<u32>,
+    /// `--vr-refresh`: the headset's display rate to ask for, in place of the config's.
+    pub vr_refresh_rate: Option<u32>,
     pub help: bool,
 }
 
@@ -196,6 +201,13 @@ impl Options {
                     opts.max_fps = Some(v.parse().map_err(|_| {
                         format!("--max-fps: {v:?} is not a number of frames a second")
                     })?);
+                }
+                "--vr-refresh" => {
+                    let v = value("a rate in Hz")?;
+                    opts.vr_refresh_rate = Some(
+                        v.parse()
+                            .map_err(|_| format!("--vr-refresh: {v:?} is not a rate in Hz"))?,
+                    );
                 }
                 "--screenshot" => opts.screenshot = Some(PathBuf::from(value("a file path")?)),
                 "--server" => opts.server = Some(value("an address")?),

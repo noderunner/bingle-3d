@@ -43,6 +43,10 @@ pub struct Config {
     /// (`frame_pace::DEFAULT_MAX_FPS` when there is none).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_fps: Option<u32>,
+    /// The display rate to ask a headset for, in Hz (72, 90, 120…), where its runtime lets the
+    /// client choose; the runtime's own when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vr_refresh_rate: Option<u32>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
