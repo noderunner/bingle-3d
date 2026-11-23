@@ -12,7 +12,6 @@ games = [
     "havannah-10",
     "mycelium",
     "mycelium-1.0.0",
-    "reversi",
     "yavalath",
 ]
 

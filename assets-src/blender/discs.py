@@ -2,8 +2,10 @@
 
 `models/disc.glb`: a disc 15 mm across and 3.6 mm thick, its edges rounded, a shallow dish in each
 face inside a rim. It is two parts, each named for the material the client gives it: `light`, the
-upper face and the upper half of the edge, and `dark`, the lower. As it lies here the light side is
-up; turned over about any axis across it, the dark side is.
+upper face and the upper half of the edge, and `dark`, the lower, the one the other's mirror image.
+As it lies here the light side is up; turned over about any axis across it, the dark side is.
+`models/disc_large.glb` is the same disc 24 mm across and 4.4 mm thick, to fill a square of a
+28 mm board.
 
 `models/ring.glb`: a ring 25 mm across and 7 mm tall, with a hole 17 mm across, so a disc lies
 inside it with a millimetre to spare, and neighbours on a 28 mm lattice do not touch. One part, with
@@ -20,14 +22,16 @@ import meshkit
 
 MM = 0.001
 
-DISC_RADIUS = 7.5 * MM
-DISC_THICKNESS = 3.6 * MM
-DISC_EASE = 0.9 * MM
-# The dish in each face: how deep, and how far out it goes before the rim.
+# Each disc made: its file's name, its radius and thickness, how far its edges are rounded, and
+# how many sides its round has. Its dish is the same part of its face whatever its size.
+DISCS = [
+    ("disc", 7.5 * MM, 3.6 * MM, 0.9 * MM, 56),
+    ("disc_large", 12.0 * MM, 4.4 * MM, 1.1 * MM, 72),
+]
+# The dish in each face: how deep, and how far out it goes before the rim, of the radius.
 DISH_DEPTH = 0.22 * MM
-DISH_RADIUS = 5.0 * MM
-RIM_INNER = 5.8 * MM
-DISC_SEGMENTS = 56
+DISH_OUT = 2 / 3
+RIM_OUT = 0.773
 PARTS = ["light", "dark"]
 
 RING_INNER = 8.5 * MM
@@ -48,9 +52,11 @@ def corner(cr, cz, radius, start, end, count):
     return out
 
 
-def disc_half(z_face, up):
+def disc_half(z_face, up, radius, thickness, ease):
     """One face of the disc, from its middle out to the middle of its edge: (radius, z). `up` is
     the upper face, whose z grows towards the face."""
+    DISC_RADIUS, DISC_THICKNESS, DISC_EASE = radius, thickness, ease
+    DISH_RADIUS, RIM_INNER = radius * DISH_OUT, radius * RIM_OUT
     s = 1.0 if up else -1.0
     dish = z_face - s * DISH_DEPTH
     out = [(0.0, dish), (DISH_RADIUS * 0.5, dish + s * DISH_DEPTH * 0.08), (DISH_RADIUS, dish + s * DISH_DEPTH * 0.35)]
@@ -70,15 +76,17 @@ def disc_half(z_face, up):
     return out
 
 
-def disc():
-    bottom = disc_half(0.0, up=False)
-    top = disc_half(DISC_THICKNESS, up=True)
+def disc(name="disc"):
+    """A disc of `DISCS`, by its name. Returns it and its thickness."""
+    _, radius, thickness, ease, segments = next(d for d in DISCS if d[0] == name)
+    bottom = disc_half(0.0, False, radius, thickness, ease)
+    top = disc_half(thickness, True, radius, thickness, ease)
     # From the axis at the bottom, out and up the side, and back in to the axis at the top; the
     # side's middle once.
     outline = bottom + top[::-1][1:]
-    obj = meshkit.turned("Disc", PARTS[0], outline, DISC_SEGMENTS)
+    obj = meshkit.turned("Disc", PARTS[0], outline, segments)
     obj.data.materials.append(meshkit.slot(PARTS[1]))
-    middle = DISC_THICKNESS / 2
+    middle = thickness / 2
     for poly in obj.data.polygons:
         poly.material_index = 0 if poly.center.z > middle else 1
     meshkit.triangulate(obj)
@@ -109,12 +117,13 @@ def ring():
 
 
 def run():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    obj, tall = disc()
-    path = common.output("models", "disc.glb")
-    meshkit.export_glb(obj, path, materials=True)
-    meshkit.check_parts(path, PARTS)
-    print(f"   disc: {tall * 1000:.1f} mm thick")
+    for name, *_ in DISCS:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        obj, tall = disc(name)
+        path = common.output("models", f"{name}.glb")
+        meshkit.export_glb(obj, path, materials=True)
+        meshkit.check_parts(path, PARTS)
+        print(f"   {name}: {tall * 1000:.1f} mm thick")
     bpy.ops.wm.read_factory_settings(use_empty=True)
     obj, tall = ring()
     meshkit.export_glb(obj, common.output("models", "ring.glb"))

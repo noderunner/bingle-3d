@@ -64,6 +64,12 @@ impl Plugin for BoardPlugin {
                     .after(show_tints),
             )
             .add_message::<BoardBuilt>()
+            // After everything that makes or changes a piece, and before where its parts are
+            // drawn is worked out, so a piece is never seen undressed.
+            .add_systems(
+                PostUpdate,
+                dress_sides.before(bevy::transform::TransformSystems::Propagate),
+            )
             .add_systems(
                 Update,
                 (
@@ -82,6 +88,7 @@ impl Plugin for BoardPlugin {
                     ),
                     fence_aim,
                     drop_pieces,
+                    flip_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
                     .chain(),
@@ -384,6 +391,36 @@ struct PieceKit {
     /// What it is made of, when that is not its seat's material, and the same see-through.
     material: Option<Handle<StandardMaterial>>,
     ghost: Option<Handle<StandardMaterial>>,
+    /// Its two sides, for a piece of two sides (`sides.rs`): `mesh` is then its upper half.
+    sides: Option<SidesKit>,
+}
+
+/// A piece of two sides as the board draws it: its model's lower half (the upper is
+/// `PieceKit::mesh`), each part's material, solid and see-through, and whether each colour
+/// word's pieces have the second part's side up.
+#[derive(Debug, Clone)]
+struct SidesKit {
+    under: Handle<Mesh>,
+    solid: [Handle<StandardMaterial>; 2],
+    ghost: [Handle<StandardMaterial>; 2],
+    turned: HashMap<String, bool>,
+}
+
+/// A piece of two sides, dressed (`dress_sides`): the child drawing its lower half.
+#[derive(Component)]
+struct Sides {
+    under: Entity,
+}
+
+/// A piece of two sides turning over where it lies, its new side coming up (`sides::flip_pose`),
+/// in place of its `Rest` until it is done.
+#[derive(Component)]
+struct Flipping {
+    rest: Transform,
+    axis: Vec3,
+    lift: f32,
+    delay: f32,
+    secs: f32,
 }
 
 /// The meshes and materials of the board being shown.
@@ -422,6 +459,10 @@ struct Kit {
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
     ghosts: HashMap<String, Handle<StandardMaterial>>,
+    /// Which colour word each of the materials a piece is given is, and whether it is the
+    /// see-through one: how a piece of two sides is dressed (`dress_sides`), wherever it was
+    /// made.
+    dress: HashMap<AssetId<StandardMaterial>, (String, bool)>,
     /// Each seat's tray, in seat order, for a game that counts what each captures (none
     /// otherwise); the pool the count is kept in; how big the pieces in them are.
     trays: Vec<Tray>,
@@ -750,14 +791,11 @@ impl Tools<'_> {
             .and_then(|l| l.material.as_ref())
             .and_then(|name| self.look?.materials.get(name))
             .cloned();
-        let ghost = own.as_ref().map(|spec| {
-            let mut m = spec.on_board(self.wood).build(self.server);
-            m.base_color = m.base_color.with_alpha(0.5);
-            m.alpha_mode = AlphaMode::Blend;
-            self.materials.add(m)
-        });
+        let ghost = own.as_ref().map(|spec| self.see_through(spec));
+        let sides = look.and_then(|l| self.sides_kit(l));
         PieceKit {
             ghost,
+            sides,
             mesh: self.server.load(
                 GltfAssetLabel::Primitive {
                     mesh: 0,
@@ -770,6 +808,48 @@ impl Tools<'_> {
             stands: look.map(|l| l.stands).unwrap_or_default(),
             material: own.map(|spec| self.material(&spec)),
         }
+    }
+
+    /// A material, see-through: for a piece of the move being built.
+    fn see_through(&mut self, spec: &MaterialSpec) -> Handle<StandardMaterial> {
+        let mut m = spec.on_board(self.wood).build(self.server);
+        m.base_color = m.base_color.with_alpha(0.5);
+        m.alpha_mode = AlphaMode::Blend;
+        self.materials.add(m)
+    }
+
+    /// A piece's two sides, if its look gives them: its model's second part, and each part's
+    /// material by the look's `sides` (`Appearance::problems` says what is wrong with them).
+    fn sides_kit(&mut self, look: &PieceLook) -> Option<SidesKit> {
+        if look.sides.is_empty() {
+            return None;
+        }
+        let parts = assets::model_parts(&look.model);
+        let [first, second] = parts.as_slice() else {
+            return None;
+        };
+        let spec = |part: &String| {
+            self.look
+                .and_then(|l| l.materials.get(look.sides.get(part)?))
+                .cloned()
+        };
+        let specs = [spec(first)?, spec(second)?];
+        Some(SidesKit {
+            under: self.server.load(
+                GltfAssetLabel::Primitive {
+                    mesh: 0,
+                    primitive: 1,
+                }
+                .from_asset(assets::path(&look.model)),
+            ),
+            solid: specs.clone().map(|s| self.material(&s)),
+            ghost: specs.map(|s| self.see_through(&s)),
+            turned: look
+                .up
+                .iter()
+                .map(|(word, side)| (word.clone(), side == second))
+                .collect(),
+        })
     }
 
     /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
@@ -927,13 +1007,59 @@ fn place_pieces(
     kept: &[Entity],
 ) {
     let wanted = wanted_pieces(table, kit);
+    // A piece of two sides that changed hands is turned over where it lies, rather than taken
+    // away and another put down; at once on a board just built.
+    let from = table
+        .last_move
+        .as_ref()
+        .and_then(|cell| layout.centres.get(cell))
+        .copied();
+    let mut turned: Vec<&PieceAt> = Vec::new();
     for (entity, at) in shown {
-        if !wanted.contains(at) && !kept.contains(entity) {
-            commands.entity(*entity).despawn();
+        if wanted.contains(at) || kept.contains(entity) {
+            continue;
+        }
+        let over = animate.and(
+            wanted
+                .iter()
+                .find(|w| turns_over(kit, at, w) && !shown.iter().any(|(_, s)| *s == *w)),
+        );
+        match (over, layout.centres.get(&at.cell)) {
+            (Some(now), Some(centre)) => {
+                let rest = kit.set_down(
+                    &now.piece.piece,
+                    &now.piece.color,
+                    *centre,
+                    (&now.cell, now.layer),
+                    now.under as f32 * 1e-6,
+                );
+                let flip = Flipping {
+                    rest,
+                    axis: crate::sides::flip_axis(from, *centre),
+                    lift: crate::sides::FLIP_LIFT * kit.scale,
+                    delay: crate::sides::flip_delay(from, *centre, layout.pitch),
+                    secs: 0.0,
+                };
+                // Its new side down, as its old side was up, until it goes over.
+                let (start, _) = crate::sides::flip_pose(rest, flip.axis, flip.lift, 1.0, 0.0);
+                let material = kit.materials.get(&now.piece.color).cloned();
+                commands
+                    .entity(*entity)
+                    .remove::<(Rest, Dropping)>()
+                    .insert((
+                        Name::new(format!("{} at {}", now.piece.piece, now.cell)),
+                        MeshMaterial3d(material.unwrap_or_default()),
+                        start,
+                        flip,
+                        now.clone(),
+                    ));
+                turned.push(now);
+            }
+            _ => commands.entity(*entity).despawn(),
         }
     }
-    for at in wanted {
-        if shown.iter().any(|(_, s)| **s == at) {
+    for at in wanted.iter().cloned() {
+        if shown.iter().any(|(_, s)| **s == at) || turned.contains(&&at) {
             continue;
         }
         let Some(centre) = layout.centres.get(&at.cell) else {
@@ -980,6 +1106,17 @@ fn place_pieces(
             piece.insert(settled);
         }
     }
+}
+
+/// Whether the piece shown as `was` is the piece `now` turned over: the same kind of piece, of
+/// two sides, in the same place, another seat's.
+fn turns_over(kit: &Kit, was: &PieceAt, now: &PieceAt) -> bool {
+    was.cell == now.cell
+        && was.layer == now.layer
+        && was.under == now.under
+        && was.piece.piece == now.piece.piece
+        && was.piece.color != now.piece.color
+        && kit.piece(&now.piece.piece).sides.is_some()
 }
 
 /// Each seat's tray brought up to its count: pieces that left the board (`gone`) and that a
@@ -1472,6 +1609,17 @@ fn build_board(
             Some((word.clone(), tools.materials.add(m)))
         })
         .collect();
+    let mut dress: HashMap<AssetId<StandardMaterial>, (String, bool)> = HashMap::new();
+    dress.insert(
+        ghost.id(),
+        (yours.map(|s| s.color.clone()).unwrap_or_default(), true),
+    );
+    for (word, handle) in &materials {
+        dress.insert(handle.id(), (word.clone(), false));
+    }
+    for (word, handle) in &ghosts {
+        dress.insert(handle.id(), (word.clone(), true));
+    }
     let piece_colour: HashMap<String, String> = table
         .info
         .pieces
@@ -1820,6 +1968,7 @@ fn build_board(
         aimed: tools.look.and_then(|l| l.aimed.clone()),
         bowls: bowls_at,
         piece_colour,
+        dress,
         ghosts,
         trays: seat_trays,
         counter: counter.map(|c| c.id.clone()).unwrap_or_default(),
@@ -3444,6 +3593,101 @@ fn change_wood(
             if let Some(mut m) = materials.get_mut(handle) {
                 *m = spec.on_board(wood.0).build(&server);
             }
+        }
+    }
+}
+
+/// Dresses each piece of two sides, wherever it was made and whatever it was given: a piece is
+/// made, like any other, as its upper half in its colour word's material (or the see-through
+/// one), and here that half is given the material of the side its colour has up, and a child the
+/// lower half in the other's. Again whenever its material is changed (a piece the move takes
+/// made see-through, a piece turned over given its new colour's).
+#[allow(clippy::type_complexity)]
+fn dress_sides(
+    mut commands: Commands,
+    kits: Query<&Kit, With<BoardRoot>>,
+    pieces: Query<
+        (
+            Entity,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            Has<Pickable>,
+            Option<&Sides>,
+        ),
+        Changed<MeshMaterial3d<StandardMaterial>>,
+    >,
+) {
+    let Ok(kit) = kits.single() else {
+        return;
+    };
+    let sided: Vec<&PieceKit> = kit.pieces.values().filter(|k| k.sides.is_some()).collect();
+    if sided.is_empty() {
+        return;
+    }
+    for (entity, mesh, material, pickable, dressed) in &pieces {
+        let Some(sides) = sided
+            .iter()
+            .find(|k| k.mesh == mesh.0)
+            .and_then(|k| k.sides.as_ref())
+        else {
+            continue;
+        };
+        // Given one of its sides' own: dressed already.
+        let Some((colour, see_through)) = kit.dress.get(&material.0.id()) else {
+            continue;
+        };
+        let turned = sides.turned.get(colour).copied().unwrap_or(false);
+        let parts = if *see_through {
+            &sides.ghost
+        } else {
+            &sides.solid
+        };
+        let (upper, lower) = crate::sides::halves(parts, turned);
+        commands.entity(entity).insert(MeshMaterial3d(upper));
+        match dressed {
+            Some(dressed) => {
+                commands
+                    .entity(dressed.under)
+                    .try_insert(MeshMaterial3d(lower));
+            }
+            None => {
+                let mut under = commands.spawn((
+                    Name::new("lower half"),
+                    Mesh3d(sides.under.clone()),
+                    MeshMaterial3d(lower),
+                    Transform::default(),
+                    ChildOf(entity),
+                ));
+                // Picked as the piece is: a click on it bubbles up to the piece.
+                if pickable {
+                    under.insert(Pickable::default());
+                }
+                let under = under.id();
+                commands.entity(entity).insert(Sides { under });
+            }
+        }
+    }
+}
+
+/// Turns each piece turning over (`Flipping`), and lays it where it lies once it is done, with
+/// the soft sound of a piece set down.
+fn flip_pieces(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut pieces: Query<(Entity, &mut Flipping, &mut Transform)>,
+    mut cues: MessageWriter<Cue>,
+) {
+    for (entity, mut flip, mut t) in &mut pieces {
+        flip.secs += time.delta_secs();
+        let (at, done) =
+            crate::sides::flip_pose(flip.rest, flip.axis, flip.lift, flip.delay, flip.secs);
+        *t = at;
+        if done {
+            cues.write(Cue::Capture);
+            commands
+                .entity(entity)
+                .remove::<Flipping>()
+                .insert(Rest(flip.rest));
         }
     }
 }
@@ -5513,6 +5757,104 @@ mod tests {
                 .collect();
             out.sort();
             out
+        }
+
+        /// Each piece of two sides shown, by its cell: its upper half's material and its lower
+        /// half's, and the piece.
+        fn sides(
+            app: &mut App,
+        ) -> HashMap<String, (AssetId<StandardMaterial>, AssetId<StandardMaterial>, Entity)>
+        {
+            let mut materials = app.world_mut().query::<&MeshMaterial3d<StandardMaterial>>();
+            let halves: Vec<(String, Entity, Entity)> = app
+                .world_mut()
+                .query::<(Entity, &PieceAt, &Sides)>()
+                .iter(app.world())
+                .map(|(e, at, sides)| (at.cell.clone(), e, sides.under))
+                .collect();
+            halves
+                .into_iter()
+                .map(|(cell, piece, under)| {
+                    let upper = materials.get(app.world(), piece).unwrap().0.id();
+                    let lower = materials.get(app.world(), under).unwrap().0.id();
+                    (cell, (upper, lower, piece))
+                })
+                .collect()
+        }
+
+        #[test]
+        fn a_disc_lies_its_seats_side_up_and_one_that_changes_hands_is_turned_over() {
+            let mut app = with_looks();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(50),
+            ));
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("disc", "black")]),
+                ("b1", &[("disc", "white")]),
+                ("c3", &[("disc", "white")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("reversi", cells));
+            app.update();
+            app.update();
+            let shown = sides(&mut app);
+            assert_eq!(shown.len(), 3, "each disc dressed: {shown:?}");
+            let (black, white) = (shown["a1"], shown["b1"]);
+            // The same two materials, the other way up: the dark side up on a black disc.
+            assert_ne!(black.0, black.1);
+            assert_eq!((black.0, black.1), (white.1, white.0));
+            assert_eq!(shown["c3"].0, white.0);
+            // The lower half is picked as the piece is.
+            let under = app.world().get::<Sides>(black.2).unwrap().under;
+            assert!(app.world().get::<Pickable>(under).is_some());
+
+            // Black plays c1, which turns b1 over.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(
+                    2,
+                    &[
+                        ("a1", &[("disc", "black")]),
+                        ("b1", &[("disc", "black")]),
+                        ("c1", &[("disc", "black")]),
+                        ("c3", &[("disc", "white")]),
+                    ],
+                ),
+            });
+            app.update();
+            app.update();
+            let shown = sides(&mut app);
+            let turned = shown["b1"];
+            assert_eq!(turned.2, white.2, "the same disc, not another put down");
+            assert_eq!(
+                (turned.0, turned.1),
+                (black.0, black.1),
+                "its colour's side up"
+            );
+            let rest = app.world().get::<Flipping>(turned.2).unwrap().rest;
+            assert!(app.world().get::<Rest>(turned.2).is_none());
+            // Until it goes over, it lies upside down: its old side up.
+            let at = *app.world().get::<Transform>(turned.2).unwrap();
+            assert!((at.rotation * Vec3::Y).y < -0.99);
+            // Over by now, and where it lies, with its new side up.
+            let mut highest = at.translation.y;
+            for _ in 0..30 {
+                app.update();
+                let t = app.world().get::<Transform>(turned.2).unwrap();
+                highest = highest.max(t.translation.y);
+            }
+            assert!(
+                highest > rest.translation.y + 0.01,
+                "raised as it went over"
+            );
+            assert!(app.world().get::<Flipping>(turned.2).is_none());
+            assert_eq!(app.world().get::<Rest>(turned.2).unwrap().0, rest);
+            let at = app.world().get::<Transform>(turned.2).unwrap();
+            assert!((at.rotation * Vec3::Y).distance(Vec3::Y) < 1e-5);
+            // The others were left as they were.
+            assert_eq!(sides(&mut app)["c3"], shown["c3"]);
+            assert_eq!(sides(&mut app)["a1"].2, black.2);
         }
 
         #[test]

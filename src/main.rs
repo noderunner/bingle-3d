@@ -42,6 +42,7 @@ mod ray_pointer;
 mod run_limit;
 mod scene;
 mod showcase;
+mod sides;
 mod sign_in;
 mod slab;
 mod sounds;

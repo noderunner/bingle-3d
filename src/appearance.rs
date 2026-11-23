@@ -6,7 +6,8 @@
 //! game id, and may give:
 //! - `pieces.<piece id>`: the glTF `model` a piece is drawn as (one the game does not name is
 //!   the generic stone), how it `stands` (`Stands`), and a `material` of its own, when it is not
-//!   its seat's;
+//!   its seat's; or, for a piece of two sides (`sides.rs`), the material of each of its
+//!   model's two parts (`sides`) and which side each seat's are up (`up`);
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
 //!   its goal's edges are stained; `.colour`, the seat's colour in the panels. A colour word no
 //!   seat plays may have one too, for the pieces that are nobody's;
@@ -254,6 +255,14 @@ pub struct PieceLook {
     pub stands: Stands,
     /// What it is made of, whoever it belongs to; its seat's material without.
     pub material: Option<String>,
+    /// For a piece of two sides (a disc light on one side and dark on the other, `sides.rs`):
+    /// the material of each of its model's two parts, by the part's name. Not with `material`.
+    #[serde(default)]
+    pub sides: BTreeMap<String, String>,
+    /// Which part's side is up on each seat's pieces, by the seat's colour word; the model's
+    /// first part's for a seat not named.
+    #[serde(default)]
+    pub up: BTreeMap<String, String>,
 }
 
 /// How a piece is set down on its position.
@@ -285,6 +294,40 @@ pub struct SeatLook {
     /// The seat's colour wherever the interface shows it (the dot by its name), in sRGB: what its
     /// pieces look like, rather than its colour word.
     pub colour: Option<[f32; 3]>,
+}
+
+/// What is wrong with a piece's two sides, if it has them: they must be its model's two parts,
+/// each of a material the file defines, and each side a seat has up one of them.
+fn sides_problems(piece: &PieceLook, materials: &BTreeMap<String, MaterialSpec>) -> Vec<String> {
+    let mut out = Vec::new();
+    if piece.sides.is_empty() {
+        if !piece.up.is_empty() {
+            out.push("a side up, and no sides".into());
+        }
+        return out;
+    }
+    if piece.material.is_some() {
+        out.push("a material and sides".into());
+    }
+    let mut parts = assets::model_parts(&piece.model);
+    parts.sort();
+    let named: Vec<&String> = piece.sides.keys().collect();
+    if parts.len() != 2 || parts.iter().collect::<Vec<_>>() != named {
+        out.push(format!(
+            "sides {named:?}, but the model's parts are {parts:?}"
+        ));
+    }
+    for name in piece.sides.values() {
+        if !materials.contains_key(name) {
+            out.push(format!("no material {name}"));
+        }
+    }
+    for (word, side) in &piece.up {
+        if !piece.sides.contains_key(side) {
+            out.push(format!("seat {word}'s side up is no side: {side}"));
+        }
+    }
+    out
 }
 
 impl Appearance {
@@ -320,6 +363,11 @@ impl Appearance {
             {
                 out.push(format!("piece {id}: no material {name}"));
             }
+            out.extend(
+                sides_problems(piece, &self.materials)
+                    .into_iter()
+                    .map(|p| format!("piece {id}: {p}")),
+            );
         }
         for (id, picture) in &self.card.pictures {
             if !assets::exists(picture) {
@@ -567,6 +615,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.problems().len(), 2, "{:?}", a.problems());
+    }
+
+    #[test]
+    fn a_piece_of_two_sides_names_its_models_parts_and_each_seats_side_up() {
+        let all = Appearances::built_in();
+        let reversi = all.for_game("reversi").expect("Reversi has one");
+        assert!(reversi.problems().is_empty(), "{:?}", reversi.problems());
+        let disc = &reversi.pieces["disc"];
+        assert_eq!(disc.up["black"], "dark");
+        assert_eq!(disc.up["white"], "light");
+        assert!(reversi.bowls.is_none(), "no bowls of stones for discs");
+
+        let wrong = |piece: &str| {
+            let text =
+                format!("games = [\"g\"]\n[materials.m]\ntint = [1, 1, 1]\n[pieces.disc]\n{piece}");
+            Appearance::parse(&text).unwrap().problems()
+        };
+        let disc = "model = \"models/disc_large.glb\"\n";
+        assert!(wrong(&format!("{disc}sides = {{ light = \"m\", dark = \"m\" }}")).is_empty());
+        // Parts the model does not have; a material the file does not; a side up that is none;
+        // a material as well as sides; a side up with no sides.
+        for (piece, says) in [
+            ("sides = { top = \"m\", dark = \"m\" }", "the model's parts"),
+            ("sides = { light = \"m\", dark = \"x\" }", "no material x"),
+            (
+                "sides = { light = \"m\", dark = \"m\" }\nup = { black = \"top\" }",
+                "is no side",
+            ),
+            (
+                "sides = { light = \"m\", dark = \"m\" }\nmaterial = \"m\"",
+                "a material and sides",
+            ),
+            ("up = { black = \"dark\" }", "no sides"),
+        ] {
+            let problems = wrong(&format!("{disc}{piece}"));
+            assert!(
+                problems.len() == 1 && problems[0].contains(says),
+                "{piece}: {problems:?}"
+            );
+        }
+        // A model of one part has no two sides.
+        let stone = wrong("model = \"models/stone.glb\"\nsides = { light = \"m\", dark = \"m\" }");
+        assert!(
+            stone.iter().any(|p| p.contains("the model's parts")),
+            "{stone:?}"
+        );
     }
 
     #[test]
