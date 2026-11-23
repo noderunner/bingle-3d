@@ -670,11 +670,20 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     rank's label as the server gives them (`props::standard_face`), so no game is named. 1 MB
     together. No jokers: no game deals one yet.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
-- A patience's cards are drawn (below); no game's dice yet. `props.rs` holds how the two
-  models are read. `--showcase` lays every piece model, the dice and some cards on the table,
+  - **A two-sided disc and a ring** (2026-11-23): a disc 15 mm across, light on one side and
+    dark on the other (its parts `light` and `dark`, each a face and half the edge), shown
+    either side up by turning it over (`props::disc_shows`); and a ring 25 mm across and 7 mm
+    tall that a disc lies inside, in a seat's material. Made for the games played with rings
+    and markers that turn over; their looks (and the game itself, a private one) come later,
+    from outside this repository (decision 2). Generic ivory and near-black for now
+    (`look::disc_light`, `disc_dark`).
+- A patience's cards are drawn (below); no game's dice, discs or rings yet. `props.rs` holds how
+  these models are read. `--showcase` lays every piece model, the discs and rings, the dice and
+  some cards on the table,
   to look at an asset in the client's own light; `--card-face` and `--card-back` try a picture
   on a card, and `--view` takes a place on the table to look at.
-- Cost: 3 MB of models. A chessman is 3,700 to 6,500 triangles, a checker 5,000, a die 2,900;
+- Cost: 3 MB of models. A chessman is 3,700 to 6,500 triangles, a checker 5,000, a die 2,900,
+  a disc 3,000 and a ring 4,600;
   a board full of them (Fist's thirty) is over 100,000, and held the display's 60 frames a
   second on the maintainer's GPU. Not measured on the Steam Frame.
 - Open:

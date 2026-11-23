@@ -1,5 +1,6 @@
 //! `--showcase`: every model the client has for a piece, in each material its games give it,
-//! with a few playing cards of the usual deck and the dice, laid out on the table with nothing
+//! with two-sided discs and their rings, the dice and a few playing cards of the usual deck,
+//! laid out on the table with nothing
 //! else: to look at an asset in the client's own light, as the asset pipeline asks before one
 //! is called done (`assets-src/README.md`). A face is seen from one side here, as nowhere in
 //! Blender, so this is where a card mapped or wound the wrong way shows.
@@ -113,8 +114,10 @@ fn lay_out(
 ) {
     let pieces = pieces(&all);
     let depth = (pieces.len().saturating_sub(1) / ROW) as f32 * BACK;
-    // In front of the pieces: the dice, then the cards. The whole is centred on the table.
-    let dice_at = GAP + props::DIE_SIDE / 2.0;
+    // In front of the pieces: the discs and rings, the dice, then the cards. The whole is
+    // centred on the table.
+    let rings_at = GAP + props::RING_SIZE.x / 2.0;
+    let dice_at = rings_at + props::RING_SIZE.x / 2.0 + GAP + props::DIE_SIDE / 2.0;
     let cards_at = dice_at + props::DIE_SIDE / 2.0 + GAP + props::CARD_SIZE.y / 2.0;
     let front = cards_at + props::CARD_SIZE.y / 2.0;
     let shift = (depth - front) / 2.0;
@@ -151,6 +154,32 @@ fn lay_out(
             Transform::from_xyz(spot.x, -low, spot.y).with_rotation(Quat::from_rotation_y(turn)),
             ChildOf(root),
         ));
+    }
+
+    // The discs and rings, in their generic looks: a ring of each with a disc lying in it
+    // showing its own side, discs showing either side, and the rings alone.
+    let light = materials.add(look::disc_light().build(&server));
+    let dark = materials.add(look::disc_dark().build(&server));
+    let disc = [("light", light.clone()), ("dark", dark.clone())];
+    let row = discs_and_rings();
+    for (i, (ring, shows)) in row.iter().enumerate() {
+        let x = (i as f32 - (row.len() as f32 - 1.0) / 2.0) * (props::RING_SIZE.x + 0.01);
+        if let Some(light_ring) = ring {
+            commands.spawn((
+                Name::new(props::RING),
+                Mesh3d(props::part(&server, props::RING, 0)),
+                MeshMaterial3d(if *light_ring { &light } else { &dark }.clone()),
+                Transform::from_xyz(x, props::RING_SIZE.z / 2.0, rings_at),
+                ChildOf(root),
+            ));
+        }
+        if let Some(light_up) = shows {
+            let at = Transform::from_xyz(x, props::DISC_SIZE.y / 2.0, rings_at).with_rotation(
+                props::disc_shows(*light_up) * Quat::from_rotation_y(0.4 * i as f32),
+            );
+            let whole = props::spawn(&mut commands, &server, props::DISC, &disc, at);
+            commands.entity(whole).insert(ChildOf(root));
+        }
     }
 
     // The dice, each showing its number, one to six.
@@ -221,6 +250,19 @@ fn lay_out(
         size: Vec2::new(widest.max(count as f32 * step), depth + front),
         middle: Vec2::ZERO,
     });
+}
+
+/// The row of discs and rings: for each place, a ring (light or dark) or none, and a disc
+/// lying there showing its light side or its dark, or none.
+fn discs_and_rings() -> [(Option<bool>, Option<bool>); 6] {
+    [
+        (Some(true), Some(true)),
+        (Some(false), Some(false)),
+        (None, Some(true)),
+        (None, Some(false)),
+        (Some(true), None),
+        (Some(false), None),
+    ]
 }
 
 /// A picture from a file outside the client, to try on a card: any the client can read.

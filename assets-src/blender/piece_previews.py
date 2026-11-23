@@ -1,8 +1,8 @@
 """Pictures of the pieces, rendered in Cycles, to look at before the client's own screenshots:
-the chessmen, the checkers and Tak's pieces, Blooms' stones, and the cards and dice, on a board on the table, in
-the room's light. Each is made as its step makes it, and wears the materials its appearance file
-gives it (the card and the die their generic look, repeated here from `src/look.rs`), so a
-picture shows what the client will.
+the chessmen, the checkers and Tak's pieces, Blooms' stones, the cards and dice, and the two-sided
+discs and their rings, on a board on the table, in the room's light. Each is made as its step
+makes it, and wears the materials its appearance file gives it (the card, the die and the disc
+their generic look, repeated here from `src/look.rs`), so a picture shows what the client will.
 
 They go to `target/asset-previews/`; nothing here is shipped. `PIECE_VIEWS=chess,chess-knight`
 renders only those."""
@@ -264,6 +264,46 @@ def fendo():
     shot("fendo-close", (-0.01, -0.12, 0.08), (-0.01, 0.01, 0.03), lens=85)
 
 
+# The generic looks of a two-sided disc's sides, as in `src/look.rs`; the rings here wear them too.
+DISC_LIGHT = {"tint": [0.90, 0.88, 0.82], "roughness": 0.3, "clearcoat": 0.4, "clearcoat_roughness": 0.12}
+DISC_DARK = {"tint": [0.045, 0.045, 0.05], "roughness": 0.3, "clearcoat": 0.4, "clearcoat_roughness": 0.12}
+
+
+def discs_and_rings():
+    """Rings on a few points of a lattice of 28 mm, a disc lying in some of them, and discs
+    showing either side: whether a disc fits a ring, and whether its sides read apart."""
+    import discs
+
+    stage(board=(0.24, 0.18))
+    for name, spec in (("light", DISC_LIGHT), ("dark", DISC_DARK)):
+        matlib.build(name, spec)
+    rng = random.Random(5)
+
+    def disc(x, y, light_up):
+        obj, tall = discs.disc()
+        obj.location = (x, y, BOARD_TOP + tall / 2)
+        # Turned over about the axis across the table, as a disc is flipped.
+        obj.rotation_euler = (0 if light_up else math.pi, 0, rng.uniform(0, 6.28))
+
+    def ring(x, y, material):
+        obj, tall = discs.ring()
+        stand(obj, tall, material, x, y, yaw=rng.uniform(0, 6.28))
+
+    # Points of a lattice of equilateral triangles: a row's points half a step aside of the next.
+    def at(col, row):
+        return ((col + 0.5 * (row % 2)) * PITCH, row * PITCH * math.sqrt(3) / 2)
+
+    for col, row, material, inside in ((-2, 0, "light", True), (0, 0, "dark", False), (1, 1, "dark", True), (-1, -1, "light", False), (1, -1, "dark", True)):
+        x, y = at(col, row)
+        ring(x, y, material)
+        if inside:
+            disc(x, y, material == "light")
+    for col, row, light_up in ((-1, 0, True), (1, 0, False), (2, 0, True), (0, 1, False), (-1, 1, True), (0, -1, True)):
+        disc(*at(col, row), light_up)
+    shot("discs", (0.04, -0.28, 0.17), (0.0, 0.0, 0.01))
+    shot("discs-close", (0.03, -0.10, 0.055), (0.0, -0.005, 0.02), lens=85)
+
+
 SCENES = {
     chess: ("chess", "chess-knight", "chess-heads"),
     draughts: ("checkers", "checkers-close"),
@@ -271,6 +311,7 @@ SCENES = {
     cards_and_dice: ("cards-dice", "dice-close", "card-close"),
     blooms: ("blooms", "blooms-close"),
     fendo: ("fendo", "fendo-close"),
+    discs_and_rings: ("discs", "discs-close"),
 }
 
 

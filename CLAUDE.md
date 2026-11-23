@@ -346,12 +346,13 @@ A game's own rules and its players' words keep their terms.
   read them from the turn's and the table's changes, with no Bevy in them; a carried piece sounds as it lands (`hand.rs`). The files are synthesised
   by `assets-src/sounds/sounds.py` (Python's standard library and ffmpeg, on the host), never
   recorded. `--no-audio-devices` leaves Bevy's audio out, so no speaker is opened.
-- `src/props.rs`: a playing card and a die, as the pipeline makes them: a model's parts by
-  name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
+- `src/props.rs`: a playing card, a die, and a two-sided disc and its ring, as the pipeline
+  makes them: a model's parts by name (a card's `face`, `back` and `edge`; a disc's `light` and
+  `dark`), a card turned over, a die turned to show a number, a disc showing either side,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
   rank's label (`standard_face`; the 52 are the pipeline's, `card_faces.py`).
-  A patience's cards are drawn with them (`card_table.rs`); no game's dice yet. `src/showcase.rs`: `--showcase`, every
-  piece model the appearance files name, with cards and dice, laid out to look at; it names no
+  A patience's cards are drawn with them (`card_table.rs`); no game's dice, discs or rings yet. `src/showcase.rs`: `--showcase`, every
+  piece model the appearance files name, with discs and rings, cards and dice, laid out to look at; it names no
   game either.
 - `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
   escape menu's).
