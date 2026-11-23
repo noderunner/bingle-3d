@@ -468,7 +468,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   click at a time. What a move
   then aims (Amazons' arrow) is held under the pointer in place of its arrow, with a see-through
   one on the space a click would shoot at. The server does not say what an aim puts down, so a
-  game's appearance names it (`aimed`); asking the API for it belongs in Bingle. A chessboard's
+  game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
+  nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
+  aimed at where it stands), and it was drawn as the generic stone. A chessboard's
   squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale
   maple. A game's look may inlay a border round the cells (`[board] border`), a flat band of
   its own material between the cells and the coordinates. Which games want legal moves on from

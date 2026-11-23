@@ -68,8 +68,9 @@ pub struct Appearance {
     /// How the walls the view says stand between positions are drawn, and placed (`fences.rs`).
     pub fences: Option<FenceLook>,
     /// The kind of piece what follows a move of two parts is shown as while the move is built
-    /// (an arrow shot from where a piece landed), by its id in `pieces`. The server does not
-    /// say what it puts down; without this it is the generic stone.
+    /// (an arrow shot from where a piece landed), by its id in `pieces`. The server says only
+    /// where a move aims, not that it puts anything there; without this nothing is shown there
+    /// (a capture aimed at a piece where it stands).
     pub aimed: Option<String>,
     #[serde(default)]
     pub sounds: SoundLook,

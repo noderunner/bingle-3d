@@ -279,7 +279,7 @@ A game's own rules and its players' words keep their terms.
   (`[sounds]`), a chessboard's two
   materials (`[board] squares`) and its inlaid
   border (`[board] border`), and the piece
-  what a move aims is shown as while it is built (`aimed`: the server does not say). A file is for the games that mean the same by a piece's id.
+  what a move aims is shown as while it is built (`aimed`: the server does not say; without it nothing is shown where a move aims). A file is for the games that mean the same by a piece's id.
   A game's name appears only there, never in shared code.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. Each kind of piece is its

@@ -2371,11 +2371,13 @@ fn show_turn(
     }
 
     let colour = table.yours().map_or("", |s| s.color.as_str());
-    // What the move aims, held under the pointer while it is next.
+    // What the move aims, held under the pointer while it is next: what the game's look says
+    // it puts down. The server says only where it aims; without the look, nothing is put
+    // there (Fist's pin captures the piece aimed at where it stands), and nothing is held.
+    let aimed = kit.aimed.as_deref();
     let aiming = turn.is_some_and(Turn::aiming);
-    match (aiming, held.iter().next()) {
-        (true, None) => {
-            let id = kit.aimed.as_deref().unwrap_or_default();
+    match (aimed.filter(|_| aiming), held.iter().next()) {
+        (Some(id), None) => {
             let kind = kit.piece(id);
             let material = kind
                 .material
@@ -2396,7 +2398,7 @@ fn show_turn(
                 ChildOf(root),
             ));
         }
-        (false, Some(entity)) => commands.entity(entity).despawn(),
+        (None, Some(entity)) => commands.entity(entity).despawn(),
         _ => {}
     }
 
@@ -2476,8 +2478,12 @@ fn show_turn(
         // The kind of piece that would stand there: the one the selections name, the one that
         // would come from where they say, or what the move aims.
         let coming = turn.arriving(cell).unwrap_or_default();
+        // Where the move aims, what the look says it puts there, or nothing.
+        if coming.aimed && aimed.is_none() {
+            continue;
+        }
         let id = if coming.aimed {
-            kit.aimed.as_deref()
+            aimed
         } else {
             coming
                 .piece
@@ -3873,6 +3879,80 @@ mod tests {
             app.update();
             let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
             assert_eq!(ghosts.iter(app.world()).count(), 0);
+        }
+
+        #[test]
+        fn a_target_aimed_at_with_no_piece_in_the_look_has_nothing_put_on_it() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use crate::play::Turn;
+
+            // Fist's pin: a guard steps, then captures an enemy beside it where it stands. The
+            // selection aims at the enemy, and nothing is put there: no stone, held or seen.
+            let mut app = with_looks();
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("yellow", "white")]),
+                ("b3", &[("yellow", "black")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("fist", cells));
+            app.update();
+            let step = |aim: Option<&str>| {
+                let mut gestures = vec![Gesture::pos("a1"), Gesture::pos("a2")];
+                gestures.extend(aim.map(Gesture::pos));
+                LegalSelection {
+                    notation: format!("a1-a2{}", aim.map(|a| format!("x{a}")).unwrap_or_default()),
+                    action: "move".into(),
+                    to: Some("a2".into()),
+                    from: Some("a1".into()),
+                    piece: Some("yellow".into()),
+                    aim: aim.map(Into::into),
+                    gestures,
+                }
+            };
+            let answer = |options: Vec<LegalSelection>| Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options,
+                complete: false,
+                may_end: false,
+            };
+            let counts = |app: &mut App| {
+                let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
+                let mut held = app.world_mut().query_filtered::<(), With<Held>>();
+                (
+                    ghosts.iter(app.world()).count(),
+                    held.iter(app.world()).count(),
+                )
+            };
+            let click = |app: &mut App, at: &str| {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                watch.turn.as_mut().unwrap().gesture(&Gesture::pos(at));
+                app.update();
+            };
+
+            // Stepped, it may stop there or pin: over the enemy, nothing is shown on it.
+            let mut turn = Turn::new(1);
+            turn.answered(answer(vec![step(None), step(Some("b3"))]));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            click(&mut app, "a1");
+            click(&mut app, "a2");
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b3".into());
+            app.update();
+            assert_eq!(counts(&mut app), (0, 0), "nothing over the piece pinned");
+            // Pinned: the move made shows nothing on it either.
+            click(&mut app, "b3");
+            assert_eq!(counts(&mut app), (0, 0), "nothing on it once chosen");
+
+            // Where every move goes on to pin, nothing is held under the pointer for it.
+            let mut turn = Turn::new(1);
+            turn.answered(answer(vec![step(Some("b3"))]));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.world_mut().resource_mut::<Hovering>().0 = None;
+            app.update();
+            click(&mut app, "a1");
+            click(&mut app, "a2");
+            assert_eq!(counts(&mut app), (0, 0), "nothing held to aim");
         }
 
         #[test]
