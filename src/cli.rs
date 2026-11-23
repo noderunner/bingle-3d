@@ -44,6 +44,8 @@ Options:
                      with the vr feature, which does so by itself when SteamVR is
                      already running). Home sits you at the table again
   --desktop          stay in the window, even with SteamVR running
+  --legal-moves      start with every position a click would be taken on lit (L)
+  --no-bloom         draw without the camera's bloom, as a headset sees the table
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -94,6 +96,10 @@ pub struct Options {
     pub vr: bool,
     /// Stay in the window, even with a headset waiting.
     pub desktop: bool,
+    /// `--legal-moves`: the positions a click would be taken on start lit.
+    pub legal_moves: bool,
+    /// `--no-bloom`: the camera starts without bloom.
+    pub no_bloom: bool,
     pub help: bool,
 }
 
@@ -159,6 +165,8 @@ impl Options {
                 "--voice" => opts.voice = true,
                 "--vr" => opts.vr = true,
                 "--desktop" => opts.desktop = true,
+                "--no-bloom" => opts.no_bloom = true,
+                "--legal-moves" => opts.legal_moves = true,
                 "--showcase" => opts.showcase = true,
                 "--card-face" => opts.card_face = Some(PathBuf::from(value("a picture's file")?)),
                 "--card-back" => opts.card_back = Some(PathBuf::from(value("a picture's file")?)),
@@ -356,6 +364,9 @@ mod tests {
         assert!(parse(&["--vr"]).unwrap().vr);
         assert!(!parse(&[]).unwrap().vr);
         assert!(parse(&["--desktop"]).unwrap().desktop);
+        assert!(parse(&["--no-bloom"]).unwrap().no_bloom);
+        assert!(!parse(&[]).unwrap().no_bloom);
+        assert!(parse(&["--legal-moves"]).unwrap().legal_moves);
         assert!(parse(&["--vr", "--desktop"]).is_err());
         // A headset is looked for unless told, or in a script's run.
         assert!(parse(&[]).unwrap().looks_for_headset());

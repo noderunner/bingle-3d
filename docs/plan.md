@@ -443,8 +443,17 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   `[board] on = "points"`, as the web page's `style: points` does for its own look): a plain slab
   with lines cut between neighbouring positions (a square grid, or three ways on a hexagonal
   board), thicker along the edge, and the stones on the crossings; a click lands on an unseen
-  disc at each point, which glows softly when it would be taken. An appearance file may mark
+  disc at each point, which glows as a soft dot when it would be taken. An appearance file may mark
   positions with a dot, per game id (`[board.marks]`): Go's star points, for each size.
+- A position a click would be taken on glows (`highlight.rs`): a line of light traced round
+  its edge and short streaks of light rising from it, slowly moving, drawn by a shader of the
+  client's own and added to the picture; a point's is a ring small enough to read as a dot.
+  It replaced an amber stain of the cell's own material; laid under the glow, the stain was
+  judged not needed, and is gone. The board only marks what is lit and its outline, so another
+  effect can take the glow's place. The glow is tuned twice: for the window's camera, which
+  blooms (the chosen look), and for where there is no bloom, a headset's eyes; `--no-bloom`
+  shows the window as they see it. Fence sides are no longer lit: the see-through fence on the side aimed
+  at shows where one goes.
 - Lighting the legal moves is off by default (at the start of most games every position is one,
   and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
   stone under the pointer still shows where a click would play. Once a piece is picked up, the

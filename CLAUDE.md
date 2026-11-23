@@ -211,7 +211,8 @@ A game's own rules and its players' words keep their terms.
   nothing of. No Bevy systems in it.
 - `src/scene.rs`: builds the environment chosen and takes the last one down: a sun for shadows
   and the sky's light (`EnvironmentMapLight`), and on every 3D camera SSAO, TAA (both need
-  `Msaa::Off`), bloom on highlights only, depth of field focused by the orbit camera, and fog.
+  `Msaa::Off`), bloom on highlights only (`BloomOn`), depth of field focused by the orbit
+  camera, and fog.
   A model is drawn node by node from a glTF file with no materials: **a part's material is a
   name the environment's file gives a look**, so textures go through `textures.rs`. A cushion is
   laid for each seat of the game. In the room the key light (and the room's window, turned to
@@ -293,7 +294,8 @@ A game's own rules and its players' words keep their terms.
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour; a goal every
   seat shares (Tak's roads) is nobody's to colour, and is not marked. The board also
-  lights the cells a click would be taken on (always while a piece is in hand) and shows the
+  marks the positions a click would be taken on `highlight::Lit` (always while a piece is in
+  hand), each with its `Outline`, and shows the
   move being built: what it places as see-through pieces (solid once the move is sent), a piece
   it moves held over its space or carried to where it goes, and what it aims held under the
   pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
@@ -331,8 +333,16 @@ A game's own rules and its players' words keep their terms.
   names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.
   Engraved in the board's margin, from the glyph atlas the pipeline renders (`engraving.py`;
   its order and grid are in both places).
+- `src/highlight.rs`: how a lit position looks, which the board does not know: today a glow
+  (`Effect::Glow`), a line of light traced round the outline and short streaks rising from it,
+  drawn by a shader of our own (`src/highlight/cell_glow.wesl`, compiled in as
+  `embedded://shaders/cell_glow.wesl`; Bevy 0.20's shaders are WESL), its light added to the
+  picture; a point gets a ring small enough to read as a dot. Tuned twice, for a camera that
+  blooms and one that does not (`scene::BloomOn`: off in a headset, and with `--no-bloom`). **Another effect is
+  another `Effect` and its arm in `light`**, nothing else. The outline's geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
 - `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
-  lighting the legal moves (L, `board::ShowLegalMoves`, off by default).
+  lighting the legal moves (L, `board::ShowLegalMoves`, off by default; `--legal-moves` starts
+  with it on).
 - `src/camera.rs`: the orbit camera, which also pans (middle-drag, Shift with right-drag, W A S D). The left mouse button is kept for picking; nothing else reads
   the mouse directly, and nothing assumes there is exactly one camera. How far back it goes is
   the environment's (`Reach`); `--view` puts it somewhere for a picture (`StartView`), looking at

@@ -23,6 +23,7 @@ mod fonts;
 mod friends;
 mod game_panel;
 mod hand;
+mod highlight;
 mod hud;
 mod lobby;
 mod login;
@@ -189,7 +190,7 @@ fn main() -> AppExit {
             },
             // Tab moves between the fields of a form.
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
-            board::BoardPlugin,
+            (board::BoardPlugin, highlight::HighlightPlugin),
             sounds::SoundsPlugin {
                 on: !opts.no_audio_devices,
             },
@@ -205,6 +206,11 @@ fn main() -> AppExit {
                 }),
             },
         ));
+    // A headset's eyes never bloom, so what glows is tuned for them there.
+    #[cfg(not(feature = "vr"))]
+    let in_headset = false;
+    app.insert_resource(scene::BloomOn(!opts.no_bloom && !in_headset))
+        .insert_resource(board::ShowLegalMoves(opts.legal_moves));
     if opts.showcase {
         app.add_plugins(showcase::ShowcasePlugin {
             card_face: opts.card_face.clone(),
