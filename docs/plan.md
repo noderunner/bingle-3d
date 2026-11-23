@@ -809,6 +809,8 @@ that declares a patience plays the same way.
   home (`to-f`) is shown going to its suit's foundation when the view lists the suits
   (`patience::home`), since the server, not the click, chooses which. The stock draws, turns
   the waste back or deals, whichever is legal; *Finish* is the panel's button.
+- A game of one seat has *Play* on its setup (`browser::setup_actions`), which makes the game
+  with this client in its seat, and it starts at once; *New game* at its end makes another.
 - The gestures the view says are drawn on the table (`panel_actions`) are no buttons, and the
   panel says to click where the cards go.
 - Cards go where the position puts them by the hand's own carrying, one after another (a row
