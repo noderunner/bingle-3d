@@ -824,6 +824,14 @@ fn sync_board(
         commands.insert_resource(BoardEdge::default());
         return;
     };
+    // A patience's cards are laid in place of its board, which is nothing to look at
+    // (`card_table.rs`).
+    if crate::patience::plays(&table.info) {
+        for (root, ..) in &roots {
+            commands.entity(root).despawn();
+        }
+        return;
+    }
     let current = roots
         .iter()
         .find(|(_, shown, _)| shown.room_code == table.room_code);
@@ -3591,6 +3599,7 @@ mod tests {
                     counters: vec![],
                     opening: None,
                     reserves: Default::default(),
+                    cards: None,
                 },
                 game: Game {
                     game_def_id: "g".into(),
@@ -5321,6 +5330,7 @@ mod tests {
             counters: vec![],
             opening: None,
             reserves: Default::default(),
+            cards: None,
         }
     }
 

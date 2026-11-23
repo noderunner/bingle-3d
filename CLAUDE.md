@@ -174,7 +174,8 @@ A game's own rules and its players' words keep their terms.
   members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
   beside a watched game: what the seat on impulse is asked, in the server's words when its
   view says (`Position::impulse_words`), else generic hints, as also once the player has
-  chosen something (`hint`).
+  chosen something (`hint`). A choice the view says is drawn on the table
+  (`Position::panel_actions`: a patience's cards) is no button.
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, logout to the login screen, quit; settings, game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`).
@@ -303,7 +304,23 @@ A game's own rules and its players' words keep their terms.
   off the board (over a panel), what is held under the pointer waits over the board's edge where
   the pointer is beyond it (`hand::within`, `BoardEdge`), and the arrow is back. Where every
   click places one stone (Go, Hex, Reversi: `Turn::auto_hand`), the stone is held under the
-  pointer by itself and carried from there to where it is placed.
+  pointer by itself and carried from there to where it is placed. The pointer's place is read
+  from a board's `Spot`s and from anything marked `hand::Surface` (a card, the cloth).
+- `src/patience.rs`: a patience (Bingle's ADR 0122), which any game may declare
+  (`patience::plays`: it has cards and actions of the kind `patience`): the vocabulary's piles
+  by their zones (`t1`…, `f1`…, `c1`…, `stock`, `waste`, `done`), its gestures (`from-t3-2`,
+  `to-t5`, `to-f`; the waste is `w`), where each pile lies on the table (`Layout`: a row of
+  the stock, waste and free cells left and the foundations right, beyond the columns, which
+  fan towards the player), which gesture a click makes (`click`), and the foundation a card
+  goes home to when the view lists the suits (`home`). No Bevy systems in it.
+  `src/card_table.rs`: a patience's cards on a cloth in place of its board (the board stands
+  aside: `sync_board`), from the position's card zones (`Position::cards`) and the faces of
+  the usual deck (`props::standard_face`). A click on a card a move starts with lifts it and
+  those on it: they hover under the pointer, held near their edge, the arrow hidden
+  (`hand::Held` on an anchor they follow); the piles they may go on glow, the one under the
+  pointer shows them see-through where they would land, and a click there plays the move at
+  once (`Turn::clicks_only`). Cards go where the position puts them by `hand::Carry::Put`,
+  one after another, turned over on the way when they were face down where they came from.
 - `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down or
   captured, the move sent, the game won or lost), the same for every game (`Cue::default_file`) unless its
   appearance gives others (`[sounds]`). `cues` and `ended`
@@ -314,7 +331,7 @@ A game's own rules and its players' words keep their terms.
   name (a card's `face`, `back` and `edge`), a card turned over, a die turned to show a number,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
   rank's label (`standard_face`; the 52 are the pipeline's, `card_faces.py`).
-  No game's cards or dice are drawn with them yet. `src/showcase.rs`: `--showcase`, every
+  A patience's cards are drawn with them (`card_table.rs`); no game's dice yet. `src/showcase.rs`: `--showcase`, every
   piece model the appearance files name, with cards and dice, laid out to look at; it names no
   game either.
 - `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
@@ -324,7 +341,8 @@ A game's own rules and its players' words keep their terms.
   `stack_moves` a stack picked up, by its gestures: a position, a count, a position for each
   piece dropped; a stack clicked is taken whole; `lifted` the piece every click moves, where
   its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
-  it and held under the pointer); its systems turn clicks on a `Spot` (a board cell or a
+  it and held under the pointer; `clicks_only` a turn where nothing is chosen for the player
+  and a whole move plays itself, a patience's); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh

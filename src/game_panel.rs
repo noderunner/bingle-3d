@@ -323,11 +323,12 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     if let Some(problem) = &turn.problem {
         p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
     }
-    let hint = hint(turn, table.state.state.impulse_words());
+    let drawn = table.state.state.panel_actions();
+    let hint = hint(turn, table.state.state.impulse_words(), &drawn);
     if !hint.is_empty() {
         p.spawn(line(f.regular(14.0), colours::TEXT, &hint));
     }
-    let choices = turn.choices();
+    let (choices, _) = on_panel(turn.choices(), &drawn);
     let can_go_back = turn.can_go_back();
     if choices.is_empty() && !can_go_back && !turn.can_play() && turn.stage != Stage::Failed {
         return;
@@ -352,19 +353,35 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     });
 }
 
+/// The choices the panel offers as buttons: those the view does not say are drawn on the table
+/// (`drawn`, the start of their values: a patience's cards). And whether any are drawn there.
+fn on_panel(choices: Vec<Gesture>, drawn: &[&str]) -> (Vec<Gesture>, bool) {
+    let (on_table, buttons): (Vec<Gesture>, Vec<Gesture>) = choices
+        .into_iter()
+        .partition(|c| drawn.iter().any(|d| c.value.starts_with(d)));
+    (buttons, !on_table.is_empty())
+}
+
 /// What the player is told of their move: before they have chosen anything, what the server
 /// says they are asked (`said`), if it says; after that, or without it, how to go on from here.
-fn hint(turn: &Turn, said: Option<&str>) -> String {
+/// `drawn` is what the view says is chosen on the table rather than on the panel.
+fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
+    let (buttons, on_table) = on_panel(turn.choices(), drawn);
     match turn.stage {
         Stage::Asking => String::new(),
         Stage::Choosing if !turn.can_go_back() && said.is_some() => {
             said.unwrap_or_default().to_string()
         }
+        // Something in hand, to be put where it goes on the table.
+        Stage::Choosing if on_table && turn.can_go_back() => {
+            "Click where it goes; a right-click puts it back.".into()
+        }
+        Stage::Choosing if on_table && buttons.is_empty() => "Click what to move.".into(),
         Stage::Choosing if turn.can_play() => {
             format!("Play {} as it is (Enter), or go on.", turn.notation())
         }
         Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
-        Stage::Choosing if !turn.choices().is_empty() => "Choose below.".into(),
+        Stage::Choosing if !buttons.is_empty() => "Choose below.".into(),
         Stage::Choosing => "There is nothing to play.".into(),
         Stage::Ready => format!(
             "Play {}? Enter plays it; a right-click or Backspace takes it back.",
@@ -397,7 +414,7 @@ pub fn choice_label(info: &GameInfo, choice: &Gesture) -> String {
 mod tests {
     use super::*;
     use crate::net::Request;
-    use crate::net::api::{ActionDef, Board};
+    use crate::net::api::{ActionDef, Board, LegalSelection, Selections};
     use crate::net::session::Snapshot;
 
     #[test]
@@ -414,12 +431,14 @@ mod tests {
             actions: vec![ActionDef {
                 id: "swap".into(),
                 label: "Swap sides".into(),
+                kind: "swap".into(),
             }],
             goals: vec![],
             pieces: vec![],
             counters: vec![],
             opening: None,
             reserves: Default::default(),
+            cards: None,
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),
@@ -433,7 +452,6 @@ mod tests {
 
     #[test]
     fn the_player_is_told_what_the_server_asks_until_they_choose_something() {
-        use crate::net::api::{LegalSelection, Selections};
         let option = |hex: &str, tile: &str| LegalSelection {
             notation: format!("tile:{tile}@{hex}"),
             action: "tile".into(),
@@ -450,7 +468,7 @@ mod tests {
             ],
         };
         let mut turn = Turn::new(1);
-        let asking = hint(&turn, Some("Choose a Court."));
+        let asking = hint(&turn, Some("Choose a Court."), &[]);
         assert_eq!(
             asking, "",
             "nothing while the server is asked what may be played"
@@ -468,13 +486,51 @@ mod tests {
             may_end: false,
         });
         let said = Some("Choose where to lay a tile.");
-        assert_eq!(hint(&turn, said), "Choose where to lay a tile.");
+        assert_eq!(hint(&turn, said, &[]), "Choose where to lay a tile.");
         // A game that says nothing gets the generic words.
-        assert_eq!(hint(&turn, None), "Click where to play.");
+        assert_eq!(hint(&turn, None, &[]), "Click where to play.");
         // Once the player has chosen something, how to go on from there: the server's words were
         // for the position, not for the half-made move.
         turn.gesture(&Gesture::pos("b3"));
-        assert_eq!(hint(&turn, said), "Choose below.");
+        assert_eq!(hint(&turn, said, &[]), "Choose below.");
+    }
+
+    #[test]
+    fn what_the_view_draws_on_the_table_is_no_button_and_the_hint_says_where_to_click() {
+        let act = |v: &str| Gesture {
+            kind: "action".into(),
+            value: v.into(),
+        };
+        let option = |gestures: &[&str]| LegalSelection {
+            notation: gestures.join(" "),
+            action: "patience".into(),
+            gestures: gestures.iter().map(|g| act(g)).collect(),
+            ..LegalSelection::default()
+        };
+        let drawn = ["from-", "to-", "draw", "recycle", "deal"];
+        let (buttons, on_table) =
+            on_panel(vec![act("from-t1-1"), act("draw"), act("finish")], &drawn);
+        assert_eq!(buttons, [act("finish")], "only what is not drawn");
+        assert!(on_table);
+        assert_eq!(on_panel(vec![act("swap")], &[]), (vec![act("swap")], false));
+
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.answered(Selections {
+            seat: 1,
+            ply: 0,
+            made: vec![],
+            options: vec![option(&["from-t1-1", "to-t2"]), option(&["draw"])],
+            complete: false,
+            may_end: false,
+        });
+        assert_eq!(hint(&turn, None, &drawn), "Click what to move.");
+        assert_eq!(hint(&turn, Some("Click a card."), &drawn), "Click a card.");
+        turn.gesture(&act("from-t1-1"));
+        assert_eq!(
+            hint(&turn, Some("Click a card."), &drawn),
+            "Click where it goes; a right-click puts it back."
+        );
     }
 
     #[test]

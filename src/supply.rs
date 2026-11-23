@@ -186,6 +186,7 @@ mod tests {
             reserves: [("stone", 21), ("cap", 1), ("captured", 0)]
                 .map(|(k, v)| (k.to_string(), v))
                 .into(),
+            cards: None,
         }
     }
 

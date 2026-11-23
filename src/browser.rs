@@ -711,43 +711,49 @@ fn setup(
     });
 }
 
-/// What can be done with a game: play it against bots, set up a new game, watch two bots, or
-/// find the games of it being played.
+/// What can be done with a game: play it (alone, or against bots), set up a new game, watch
+/// two bots, or find the games of it being played.
 fn setup_buttons(side: &mut ChildSpawnerCommands, f: &UiFonts, family: &Family, def: &GameDef) {
     side.spawn(buttons()).with_children(|row| {
-        if def.seats_required >= 2 {
-            let play = if def.seats_required == 2 {
-                "Play a bot"
-            } else {
-                "Play bots"
-            };
-            row.spawn(button(f, play, Action::PlayBots(def.id.clone())));
-            row.spawn(button(
-                f,
-                "New game…",
-                Action::NewGame {
-                    def_id: def.id.clone(),
-                    name: def.name.clone(),
-                },
-            ));
-            // A bot match is for two seats.
-            if def.seats_required == 2 {
-                row.spawn(button(
-                    f,
-                    "Watch two bots",
-                    Action::WatchBots(def.id.clone()),
-                ));
-            }
+        for (label, action) in setup_actions(family, def) {
+            row.spawn(button(f, label, action));
         }
-        row.spawn(button(
-            f,
-            "Find games",
-            Action::FindGames {
-                family: Some(family.id.clone()),
-                name: family.title.clone(),
+    });
+}
+
+/// The setup's buttons for a game, in order. A game of one seat (a patience) is played at
+/// once: made with this client in its seat, it starts, with nobody else to wait for.
+fn setup_actions(family: &Family, def: &GameDef) -> Vec<(&'static str, Action)> {
+    let mut out = Vec::new();
+    if def.seats_required <= 1 {
+        out.push(("Play", Action::Host(def.id.clone())));
+    } else {
+        let play = if def.seats_required == 2 {
+            "Play a bot"
+        } else {
+            "Play bots"
+        };
+        out.push((play, Action::PlayBots(def.id.clone())));
+        out.push((
+            "New game…",
+            Action::NewGame {
+                def_id: def.id.clone(),
+                name: def.name.clone(),
             },
         ));
-    });
+        // A bot match is for two seats.
+        if def.seats_required == 2 {
+            out.push(("Watch two bots", Action::WatchBots(def.id.clone())));
+        }
+    }
+    out.push((
+        "Find games",
+        Action::FindGames {
+            family: Some(family.id.clone()),
+            name: family.title.clone(),
+        },
+    ));
+    out
 }
 
 fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem) {
@@ -1233,6 +1239,44 @@ mod tests {
                 retry_in: None,
             });
         (app, requests)
+    }
+
+    #[test]
+    fn a_game_of_one_seat_is_played_at_once_and_one_of_more_against_bots_or_set_up() {
+        let def = |id: &str, seats: u32| GameDef {
+            id: id.into(),
+            name: id.into(),
+            seats_required: seats,
+            family: None,
+            description: String::new(),
+            prototype: false,
+            version: "1.0.0".into(),
+            tutorials: 0,
+            private: false,
+        };
+        let labels = |def: &GameDef| -> Vec<&str> {
+            let family = &crate::families::families(std::slice::from_ref(def))[0];
+            setup_actions(family, def)
+                .into_iter()
+                .map(|(l, _)| l)
+                .collect()
+        };
+        let alone = def("patience", 1);
+        assert_eq!(labels(&alone), ["Play", "Find games"]);
+        let family = &crate::families::families(std::slice::from_ref(&alone))[0];
+        assert_eq!(
+            setup_actions(family, &alone)[0].1,
+            Action::Host("patience".into()),
+            "made with this client in its seat, which starts it"
+        );
+        assert_eq!(
+            labels(&def("duel", 2)),
+            ["Play a bot", "New game…", "Watch two bots", "Find games"]
+        );
+        assert_eq!(
+            labels(&def("party", 4)),
+            ["Play bots", "New game…", "Find games"]
+        );
     }
 
     #[test]
