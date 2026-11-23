@@ -2,7 +2,9 @@
 //! window: a small glove of capsules, open over nothing, its fingers relaxed to pick up over
 //! what a click picks up (a piece on the board, a bowl's stone, a seat's supply, a card), and
 //! pointing over what a click chooses but does not pick up (a position, a button). It is hidden
-//! while what the move aims is held in its place (`hand::Held`), as the system's arrow was.
+//! while anything is held under the pointer (`hand::Held`), which is the pointer then, wherever
+//! the pointer is but over the interface, where a button still wants it. Not by whether the
+//! pointer is on the board: that changes from one cell to the next, and the hand flickered.
 //!
 //! What a click on the table would do is the table's to say: the board's (`play.rs`) and the
 //! cards' (`card_table.rs`) systems in [`Sense`] read what the pointer is over ([`Under`]) and
@@ -129,11 +131,11 @@ fn find_under(
 }
 
 /// How the hand feels and where it is. The system's cursor is hidden over the window, always;
-/// the hand is hidden off it, and while what the move aims is held under the pointer.
+/// the hand is hidden off it, and while anything is held under the pointer, but over the
+/// interface.
 fn decide(
     under: Res<Under>,
     table: Res<TableFeel>,
-    on: Res<PointerOnBoard>,
     held: Query<(), With<Held>>,
     buttons: Query<Has<InteractionDisabled>, With<Button>>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
@@ -145,7 +147,7 @@ fn decide(
     if cursor.visible {
         cursor.visible = false;
     }
-    let aimed = on.0.is_some() && !held.is_empty();
+    let holding = !held.is_empty() && !under.ui;
     let feel = if under.ui {
         let button = under.chain.iter().find_map(|e| buttons.get(*e).ok());
         if button == Some(false) {
@@ -158,7 +160,7 @@ fn decide(
     };
     shown.set_if_neq(HandShown {
         feel,
-        at: window.cursor_position().filter(|_| !aimed),
+        at: window.cursor_position().filter(|_| !holding),
     });
 }
 
@@ -716,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn over_the_table_the_hand_feels_as_the_table_says_and_is_hidden_by_what_it_holds() {
+    fn over_the_table_the_hand_feels_as_the_table_says_and_gives_way_to_what_it_holds() {
         fn say_grab(under: Res<Under>, mut feel: ResMut<TableFeel>) {
             if !under.chain.is_empty() {
                 feel.0 = Feel::Grab;
@@ -732,17 +734,40 @@ mod tests {
         assert!(shown.at.is_some());
         assert!(!app.world().resource::<Under>().ui);
 
-        // What the move aims, held in the pointer's place: the hand gives way to it.
-        app.world_mut().spawn(Held {
-            board: 0.0,
-            lift: 0.02,
-            scale: 1.0,
-        });
-        app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((Vec3::ZERO, Vec3::Y));
+        // Something held in the pointer's place: the hand gives way to it, and stays away
+        // whether the pointer is on a cell, between two, or off the board, as it is from one
+        // frame to the next in a quick move.
+        let held = app
+            .world_mut()
+            .spawn(Held {
+                board: 0.0,
+                lift: 0.02,
+                scale: 1.0,
+            })
+            .id();
+        for on in [
+            Some((Vec3::ZERO, Vec3::Y)),
+            None,
+            Some((Vec3::X, Vec3::Y)),
+            None,
+        ] {
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = on;
+            app.update();
+            assert_eq!(app.world().resource::<HandShown>().at, None, "{on:?}");
+        }
+        hover(&mut app, None);
+        app.update();
+        assert_eq!(app.world().resource::<HandShown>().at, None, "over nothing");
+        // Over a panel it is back, for its buttons.
+        let panel = app.world_mut().spawn(Node::default()).id();
+        hover(&mut app, Some(panel));
+        app.update();
+        assert!(app.world().resource::<HandShown>().at.is_some());
+        // Back over the table, and once nothing is held, it is back there too.
+        hover(&mut app, Some(piece));
         app.update();
         assert_eq!(app.world().resource::<HandShown>().at, None);
-        // Off the board (over a panel) it is back.
-        app.world_mut().resource_mut::<PointerOnBoard>().0 = None;
+        app.world_mut().despawn(held);
         app.update();
         assert!(app.world().resource::<HandShown>().at.is_some());
 
