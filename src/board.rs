@@ -73,6 +73,7 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<Hovering>)
                             .or_eager(resource_changed::<ShowLegalMoves>),
                     ),
+                    show_taken.run_if(resource_changed::<WatchStatus>),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
@@ -2577,10 +2578,78 @@ fn show_turn(
 /// there and puts nothing down (`aimed`: the game's look names a piece it puts there), and the
 /// piece is not the player's own (`yours`, a colour word). Fist's pin.
 fn takes_there(turn: &Turn, cell: &str, table: &Table, yours: &str, aimed: bool) -> bool {
+    !aimed && others_there(table, cell, yours) && turn.arriving(cell).is_some_and(|a| a.aimed)
+}
+
+/// Whether the piece on top at `cell` is another's than `yours`.
+fn others_there(table: &Table, cell: &str, yours: &str) -> bool {
     let there = table.state.state.cells.get(cell).and_then(|s| s.last());
-    !aimed
-        && there.is_some_and(|p| p.color != yours)
-        && turn.arriving(cell).is_some_and(|a| a.aimed)
+    there.is_some_and(|p| p.color != yours)
+}
+
+/// The positions whose piece the selections made take, as `takes_there` lights them: each one
+/// aims at another's piece and puts nothing down. Shown see-through until the move is played.
+fn taken_by<'t>(turn: &'t Turn, table: &Table, yours: &str, aimed: bool) -> Vec<&'t str> {
+    if aimed {
+        return Vec::new();
+    }
+    turn.made
+        .iter()
+        .filter_map(|s| s.aim.as_deref())
+        .filter(|cell| others_there(table, cell, yours))
+        .collect()
+}
+
+/// A piece the move being built takes, shown see-through.
+#[derive(Component)]
+struct Taken;
+
+/// The pieces the move being built takes are see-through, so the player sees what the move
+/// they confirm captures; the others as they are.
+fn show_taken(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    kits: Query<&Kit, With<BoardRoot>>,
+    mut pieces: Query<(
+        Entity,
+        &PieceAt,
+        &mut MeshMaterial3d<StandardMaterial>,
+        Has<Taken>,
+    )>,
+) {
+    let (Some(table), Ok(kit)) = (&watch.table, kits.single()) else {
+        return;
+    };
+    let yours = table.yours().map_or("", |s| s.color.as_str());
+    let taken = watch
+        .turn
+        .as_ref()
+        .map(|t| taken_by(t, table, yours, kit.aimed.is_some()))
+        .unwrap_or_default();
+    let cells = &table.state.state.cells;
+    for (entity, at, mut material, was) in &mut pieces {
+        let top = cells.get(&at.cell).map_or(0, |s| s.len().saturating_sub(1));
+        let now = at.layer == top && taken.contains(&at.cell.as_str());
+        if now == was {
+            continue;
+        }
+        let kind = kit.piece(&at.piece.piece);
+        let colour = &at.piece.color;
+        let wanted = if now {
+            commands.entity(entity).insert(Taken);
+            kind.ghost
+                .clone()
+                .or_else(|| kit.ghosts.get(colour).cloned())
+                .unwrap_or_else(|| kit.ghost.clone())
+        } else {
+            commands.entity(entity).remove::<Taken>();
+            kind.material
+                .clone()
+                .or_else(|| kit.materials.get(colour).cloned())
+                .unwrap_or_default()
+        };
+        material.0 = wanted;
+    }
 }
 
 /// A piece taken from a bowl or a seat's supply (its source, `Kit::source_of`): waiting over
@@ -4037,8 +4106,37 @@ mod tests {
             app.update();
             assert_eq!(counts(&mut app), (0, 0), "nothing over the piece pinned");
             // Pinned: the move made shows nothing on it either.
+            let enemy = |app: &mut App| {
+                let mut q =
+                    app.world_mut()
+                        .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>, Has<Taken>)>();
+                q.iter(app.world())
+                    .find(|(at, ..)| at.cell == "b3")
+                    .map(|(_, m, taken)| (m.0.clone(), taken))
+                    .unwrap()
+            };
+            let (solid, taken) = enemy(&mut app);
+            assert!(!taken, "not taken before the pin is chosen");
             click(&mut app, "b3");
             assert_eq!(counts(&mut app), (0, 0), "nothing on it once chosen");
+            // The piece pinned is see-through until the move is played: what it takes.
+            let ghost = {
+                let mut kits = app.world_mut().query::<&Kit>();
+                let kit = kits.single(app.world()).unwrap();
+                let kind = kit.piece("yellow");
+                kind.ghost
+                    .clone()
+                    .or_else(|| kit.ghosts.get("black").cloned())
+                    .unwrap_or_else(|| kit.ghost.clone())
+            };
+            assert_eq!(enemy(&mut app), (ghost, true));
+            // Taken back: solid again.
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                assert!(watch.turn.as_mut().unwrap().back());
+            }
+            app.update();
+            assert_eq!(enemy(&mut app), (solid, false));
 
             // Where every move goes on to pin, nothing is held under the pointer for it.
             let mut turn = Turn::new(1);

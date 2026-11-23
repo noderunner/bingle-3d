@@ -471,7 +471,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
   nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
   aimed at where it stands), and it was drawn as the generic stone. Such a target, a piece of
-  another's a click takes, glows red instead of in candlelight (`highlight::Tone`). A region the
+  another's a click takes, glows red instead of in candlelight (`highlight::Tone`), and once
+  chosen the piece is see-through until the move is played (`board::show_taken`), so what the
+  confirming click captures is plain. A jump's captures are not shown: Fist's gestures name
+  them in its own words (`capture`, `spare`), and which piece a jump passes over is its rules';
+  the server saying which positions a selection takes from belongs in Bingle. A region the
   board names may have its cells in a material of the look's (`[board.regions]`): Fist's keep
   is in a chessboard's dark squares. A chessboard's
   squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale
