@@ -333,6 +333,7 @@ mod tests {
                     value: v.to_string(),
                 })
                 .collect(),
+            captures: Vec::new(),
         };
         let mut turn = Turn::new(1);
         turn.answered(Selections {

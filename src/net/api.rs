@@ -13,11 +13,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// The version of Bingle's API this client is written against: 1.1 added `POST /api/bot-matches`,
 /// 1.2 the regions each seat must connect (`goals`), 1.4 the lobby's calls (`start`, `seat`,
 /// `leave`, `remove`, `bots`) to the schema, 1.5 the sign-in that answers with a session
-/// token, for a client that is not a browser, 1.6 voice chat's calls and events, and 1.8 the
-/// games built from the server's private overlay marked `private`.
+/// token, for a client that is not a browser, 1.6 voice chat's calls and events, 1.8 the
+/// games built from the server's private overlay marked `private`, and 1.10 the positions a
+/// legal selection takes pieces from (`captures`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 8,
+    minor: 10,
     patch: 0,
 };
 
@@ -952,6 +953,10 @@ pub struct LegalSelection {
     pub aim: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub gestures: Vec<Gesture>,
+    /// The positions whose pieces it takes off the board (API 1.10): absent for none, and in a
+    /// game with secrets or for a selection that rolls or draws.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub captures: Vec<String>,
 }
 
 /// One thing a player does to enter a selection: a click on a position (`pos`), a choice of
@@ -1451,8 +1456,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.8.0")), Compatible);
-        assert_eq!(compatibility(Some("1.9.2")), Compatible);
+        assert_eq!(compatibility(Some("1.10.0")), Compatible);
+        assert_eq!(compatibility(Some("1.11.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.9.2")),
+            ServerTooOld(Some("1.9.2".into())),
+            "1.9 does not say what a selection captures"
+        );
         assert_eq!(
             compatibility(Some("1.7.3")),
             ServerTooOld(Some("1.7.3".into())),
@@ -1552,7 +1562,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.8.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.10.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -2070,12 +2080,16 @@ mod tests {
             r#"{"seat":2,"ply":1,"made":[],"options":[
             {"notation":"a1","action":"place","piece":"stone","to":"a1",
              "gestures":[{"kind":"piece","value":"stone"},{"kind":"pos","value":"a1"}]},
-            {"notation":"swap","action":"swap","gestures":[{"kind":"action","value":"swap"}]}],
+            {"notation":"swap","action":"swap","gestures":[{"kind":"action","value":"swap"}]},
+            {"notation":"c3^e5x","action":"jump","from":"c3","to":"e5","captures":["d4"],
+             "gestures":[{"kind":"pos","value":"c3"},{"kind":"pos","value":"e5"}]}],
             "complete":false}"#,
         )
         .unwrap();
         assert_eq!(s.ply, 1);
         assert_eq!(s.options[0].to.as_deref(), Some("a1"));
+        assert!(s.options[0].captures.is_empty(), "absent: it takes nothing");
+        assert_eq!(s.options[2].captures, ["d4"]);
         assert!(s.options[0].gestures[1].is_pos());
         assert_eq!(s.options[1].to, None);
         let done: Selections = serde_json::from_str(

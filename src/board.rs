@@ -39,7 +39,7 @@ use bevy::prelude::*;
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
 use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
-use crate::highlight::{Lit, Outline};
+use crate::highlight::{Lit, Outline, Tone};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
 use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
@@ -73,6 +73,7 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<Hovering>)
                             .or_eager(resource_changed::<ShowLegalMoves>),
                     ),
+                    show_taken.run_if(resource_changed::<WatchStatus>),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
@@ -1283,11 +1284,36 @@ fn build_board(
                 .as_ref()
                 .map(|_| by_turns(&table.info.board.positions))
                 .unwrap_or_default();
+            // A region's cells in their own material, if the game's look gives the region one.
+            let regions: HashMap<&str, Handle<StandardMaterial>> = tools
+                .look
+                .map(|look| {
+                    let named = &table.info.board.regions;
+                    look.board
+                        .regions
+                        .iter()
+                        .filter_map(|(region, name)| {
+                            Some((named.get(region)?, look.materials.get(name)?.clone()))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .flat_map(|(cells, spec)| {
+                    let material = tools.material(&spec);
+                    cells.iter().map(move |c| (c.as_str(), material.clone()))
+                })
+                .collect();
             for (id, centre) in &layout.centres {
                 let at = *centre + Vec3::Y * BOARD_HEIGHT;
-                let material = squares
-                    .as_ref()
-                    .and_then(|s| s[turns.get(id).copied().unwrap_or(0)].clone())
+                let material = regions
+                    .get(id.as_str())
+                    .cloned()
+                    .or_else(|| {
+                        squares
+                            .as_ref()
+                            .and_then(|s| s[turns.get(id).copied().unwrap_or(0)].clone())
+                    })
                     .unwrap_or_else(|| wood.clone());
                 commands.spawn((
                     Name::new(format!("Cell {id}")),
@@ -2151,12 +2177,22 @@ type TurnPiece = (
     Has<Held>,
 );
 
+/// A cell as `show_turn` lights it: whether it is lit, whether a tile lies on it, and the tone
+/// of its light.
+type LitCell = (
+    Entity,
+    &'static Cell,
+    Has<Lit>,
+    Has<TintAt>,
+    Option<&'static Tone>,
+);
+
 fn show_turn(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
-    cells: Query<(Entity, &Cell, Has<Lit>, Has<TintAt>)>,
+    cells: Query<LitCell>,
     mut pieces: Query<TurnPiece>,
     (ghosts, held, in_flight): (Query<Entity, With<Ghost>>, AimedHeld, Query<&FromBowl>),
 ) {
@@ -2177,19 +2213,26 @@ fn show_turn(
     // A cell a tile lies on is lit on the tile.
     let tiled: Vec<&str> = cells
         .iter()
-        .filter(|(.., on_tile)| *on_tile)
+        .filter(|(_, _, _, on_tile, _)| *on_tile)
         .map(|(_, c, ..)| c.id.as_str())
         .collect();
-    for (entity, cell, was, on_tile) in &cells {
+    for (entity, cell, was, on_tile, tone) in &cells {
         let id = cell.id.as_str();
         let wanted = lit
             && targets.contains(&cell.id)
             && previewed != Some(id)
             && (on_tile || !tiled.contains(&id));
+        let toned = if wanted && turn.is_some_and(|t| t.takes_at(id)) {
+            Tone::Take
+        } else {
+            Tone::Plain
+        };
         if wanted && !was {
-            commands.entity(entity).insert(Lit);
+            commands.entity(entity).insert((Lit, toned));
         } else if !wanted && was {
-            commands.entity(entity).remove::<Lit>();
+            commands.entity(entity).remove::<(Lit, Tone)>();
+        } else if wanted && tone != Some(&toned) {
+            commands.entity(entity).insert(toned);
         }
     }
 
@@ -2526,6 +2569,65 @@ fn show_turn(
         if sent {
             ghost.insert(Sent(cell.to_string()));
         }
+    }
+}
+
+/// A piece the move being built takes, shown see-through.
+#[derive(Component)]
+struct Taken;
+
+/// The pieces the move being built takes are see-through, so the player sees what the move
+/// they confirm captures; the others as they are.
+fn show_taken(
+    mut commands: Commands,
+    watch: Res<WatchStatus>,
+    kits: Query<&Kit, With<BoardRoot>>,
+    mut pieces: Query<(
+        Entity,
+        &PieceAt,
+        &mut MeshMaterial3d<StandardMaterial>,
+        Has<Taken>,
+    )>,
+) {
+    let (Some(table), Ok(kit)) = (&watch.table, kits.single()) else {
+        return;
+    };
+    // What the server says the move takes (`Turn::taking`), but where a piece the move carries
+    // lands on it: the piece arriving stands in its place.
+    let taken: Vec<&str> = watch
+        .turn
+        .as_ref()
+        .map(|t| {
+            let landing: Vec<&str> = t.made.iter().filter_map(|s| s.to.as_deref()).collect();
+            t.taking()
+                .into_iter()
+                .filter(|c| !landing.contains(c))
+                .collect()
+        })
+        .unwrap_or_default();
+    let cells = &table.state.state.cells;
+    for (entity, at, mut material, was) in &mut pieces {
+        let top = cells.get(&at.cell).map_or(0, |s| s.len().saturating_sub(1));
+        let now = at.layer == top && taken.contains(&at.cell.as_str());
+        if now == was {
+            continue;
+        }
+        let kind = kit.piece(&at.piece.piece);
+        let colour = &at.piece.color;
+        let wanted = if now {
+            commands.entity(entity).insert(Taken);
+            kind.ghost
+                .clone()
+                .or_else(|| kit.ghosts.get(colour).cloned())
+                .unwrap_or_else(|| kit.ghost.clone())
+        } else {
+            commands.entity(entity).remove::<Taken>();
+            kind.material
+                .clone()
+                .or_else(|| kit.materials.get(colour).cloned())
+                .unwrap_or_default()
+        };
+        material.0 = wanted;
     }
 }
 
@@ -3838,6 +3940,7 @@ mod tests {
                     },
                     Gesture::pos("c3"),
                 ],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -3882,6 +3985,39 @@ mod tests {
         }
 
         #[test]
+        fn a_region_the_look_gives_a_material_has_its_cells_in_it() {
+            // Fist's keep, in the middle of the board, in a chessboard's dark squares.
+            let mut app = with_looks();
+            let mut table = grid_table("fist", &[]);
+            table
+                .info
+                .board
+                .regions
+                .insert("keep".into(), vec!["b2".into()]);
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
+            let materials: HashMap<String, Handle<StandardMaterial>> = q
+                .iter(app.world())
+                .map(|(c, m)| (c.id.clone(), m.0.clone()))
+                .collect();
+            assert_eq!(materials.len(), 9);
+            assert_ne!(materials["b2"], materials["a1"], "the keep stands out");
+            assert_eq!(materials["a1"], materials["c3"], "the rest are the board's");
+            let look = app
+                .world()
+                .resource::<Appearances>()
+                .for_game("fist")
+                .cloned();
+            assert_eq!(
+                look.unwrap().board.regions.get("keep").map(String::as_str),
+                Some("dark_square")
+            );
+        }
+
+        #[test]
         fn a_target_aimed_at_with_no_piece_in_the_look_has_nothing_put_on_it() {
             use crate::net::api::{Gesture, LegalSelection, Selections};
             use crate::play::Turn;
@@ -3906,6 +4042,8 @@ mod tests {
                     piece: Some("yellow".into()),
                     aim: aim.map(Into::into),
                     gestures,
+                    // As the server says it (API 1.10): a pin takes the piece it aims at.
+                    captures: aim.map(|a| vec![a.into()]).unwrap_or_default(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -3937,12 +4075,50 @@ mod tests {
             app.update();
             click(&mut app, "a1");
             click(&mut app, "a2");
+            // The piece it may pin is lit red: a click there takes it.
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(&Cell, Option<&Tone>), With<Lit>>();
+            let lit: Vec<(String, Option<Tone>)> = q
+                .iter(app.world())
+                .map(|(c, t)| (c.id.clone(), t.copied()))
+                .collect();
+            assert_eq!(lit, [("b3".to_string(), Some(Tone::Take))]);
             app.world_mut().resource_mut::<Hovering>().0 = Some("b3".into());
             app.update();
             assert_eq!(counts(&mut app), (0, 0), "nothing over the piece pinned");
             // Pinned: the move made shows nothing on it either.
+            let enemy = |app: &mut App| {
+                let mut q =
+                    app.world_mut()
+                        .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>, Has<Taken>)>();
+                q.iter(app.world())
+                    .find(|(at, ..)| at.cell == "b3")
+                    .map(|(_, m, taken)| (m.0.clone(), taken))
+                    .unwrap()
+            };
+            let (solid, taken) = enemy(&mut app);
+            assert!(!taken, "not taken before the pin is chosen");
             click(&mut app, "b3");
             assert_eq!(counts(&mut app), (0, 0), "nothing on it once chosen");
+            // The piece pinned is see-through until the move is played: what it takes.
+            let ghost = {
+                let mut kits = app.world_mut().query::<&Kit>();
+                let kit = kits.single(app.world()).unwrap();
+                let kind = kit.piece("yellow");
+                kind.ghost
+                    .clone()
+                    .or_else(|| kit.ghosts.get("black").cloned())
+                    .unwrap_or_else(|| kit.ghost.clone())
+            };
+            assert_eq!(enemy(&mut app), (ghost, true));
+            // Taken back: solid again.
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                assert!(watch.turn.as_mut().unwrap().back());
+            }
+            app.update();
+            assert_eq!(enemy(&mut app), (solid, false));
 
             // Where every move goes on to pin, nothing is held under the pointer for it.
             let mut turn = Turn::new(1);
@@ -3976,6 +4152,7 @@ mod tests {
                 piece: None,
                 aim: Some(aim.into()),
                 gestures: vec![Gesture::pos("a1"), Gesture::pos(to), Gesture::pos(aim)],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -4046,6 +4223,9 @@ mod tests {
             app.world_mut().resource_mut::<Hovering>().0 = None;
             app.update();
             assert_eq!(lit(&mut app), ["a1", "a3"]);
+            // Where an arrow lands is lit plainly: it takes nothing.
+            let mut tones = app.world_mut().query_filtered::<&Tone, With<Lit>>();
+            assert!(tones.iter(app.world()).all(|t| *t == Tone::Plain));
 
             // The arrow is held for the pointer, in its own red; over a space it may land on,
             // a see-through one lies there, on the board the queen left.
@@ -4387,6 +4567,7 @@ mod tests {
                         value: v.to_string(),
                     })
                     .collect(),
+                captures: Vec::new(),
             }
         }
 
@@ -5217,6 +5398,7 @@ mod tests {
                     },
                     Gesture::pos(cell),
                 ],
+                captures: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {

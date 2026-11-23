@@ -7,6 +7,10 @@
 
 games = ["fist"]
 
+# The Keep, the four squares in the middle the board names, in a chessboard's dark squares.
+[board.regions]
+keep = "dark_square"
+
 [pieces.yellow]
 model = "models/chess/pawn.glb"
 stands = "upright"
@@ -62,3 +66,9 @@ clearcoat_roughness = 0.15
 tint = [0.25, 0.58, 0.49]
 roughness = 0.6
 reflectance = 0.4
+
+# A chessboard's dark squares, as in `amazons.toml`.
+[materials.dark_square]
+wood = "walnut"
+clearcoat = 0.3
+clearcoat_roughness = 0.25

@@ -160,6 +160,7 @@ mod tests {
                     value: format!("tile-{kind}"),
                 },
             ],
+            captures: Vec::new(),
         };
         let options = [lay("b3", "green"), lay("c3", "green"), lay("b3", "red")];
         let action = |v: &str| Gesture {

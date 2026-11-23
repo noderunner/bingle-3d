@@ -820,6 +820,45 @@ impl Turn {
             .collect()
     }
 
+    /// The positions whose pieces the move being built takes, as far as is known (API 1.10's
+    /// `captures`): those the selections made take, and once the player has chosen something
+    /// towards the next, those every selection it could still become takes (a jump's piece
+    /// captured, not spared; a pin's target once clicked is a selection made).
+    pub fn taking(&self) -> BTreeSet<&str> {
+        let mut out: BTreeSet<&str> = self
+            .made
+            .iter()
+            .flat_map(|s| s.captures.iter().map(String::as_str))
+            .collect();
+        if self.stage == Stage::Choosing && self.gestures.len() > self.forced {
+            let mut each = self.matching().map(|o| {
+                o.captures
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>()
+            });
+            if let Some(first) = each.next() {
+                out.extend(each.fold(first, |all, o| &all & &o));
+            }
+        }
+        out
+    }
+
+    /// Whether a click on `cell` takes the piece standing there: every selection a click there
+    /// would go on to takes it (a pin's target; a capture where the piece lands).
+    pub fn takes_at(&self, cell: &str) -> bool {
+        if self.stage != Stage::Choosing {
+            return false;
+        }
+        let n = self.gestures.len();
+        let click = Gesture::pos(cell);
+        let mut there = self
+            .matching()
+            .filter(|o| o.gestures[n..].iter().find(|g| g.is_pos()) == Some(&click))
+            .peekable();
+        there.peek().is_some() && there.all(|o| o.captures.iter().any(|c| c == cell))
+    }
+
     /// Whether a click on `at` would pick up what stands there, to move it: before anything is
     /// clicked towards the selection, a selection still possible moves a piece from there and
     /// begins with a click on it; or it is the piece every click moves, not yet lifted.
@@ -1512,6 +1551,7 @@ mod tests {
                 .find(|(k, _)| *k == "piece")
                 .map(|(_, v)| v.to_string()),
             gestures: gestures.iter().map(|(k, v)| g(k, v)).collect(),
+            captures: Vec::new(),
         }
     }
 
@@ -1529,6 +1569,87 @@ mod tests {
                 &[("pos", from), ("pos", to)],
             )
         }
+    }
+
+    /// One of Fist's jumps from a1: its legs, each a landing and what happens to the piece
+    /// jumped (`capture` or `spare`), then `end`; what it captures as the server says it.
+    fn jump(legs: &[(&str, &str, &str)]) -> LegalSelection {
+        let mut gestures = vec![g("pos", "a1")];
+        for (land, choice, _) in legs {
+            gestures.push(g("pos", land));
+            gestures.push(g("action", choice));
+        }
+        gestures.push(g("action", "end"));
+        LegalSelection {
+            notation: "jump".into(),
+            action: "jump".into(),
+            from: Some("a1".into()),
+            to: legs.last().map(|(land, ..)| land.to_string()),
+            captures: legs
+                .iter()
+                .filter(|(_, choice, _)| *choice == "capture")
+                .map(|(.., over)| over.to_string())
+                .collect(),
+            gestures,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn what_a_move_takes_is_known_once_every_selection_it_could_be_takes_it() {
+        // A jump over b2 to c3, the piece jumped captured or spared, and a second leg over c4
+        // to c5, likewise.
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![
+                jump(&[("c3", "capture", "b2")]),
+                jump(&[("c3", "spare", "b2")]),
+                jump(&[("c3", "capture", "b2"), ("c5", "capture", "c4")]),
+                jump(&[("c3", "capture", "b2"), ("c5", "spare", "c4")]),
+                jump(&[("c3", "spare", "b2"), ("c5", "capture", "c4")]),
+            ],
+        ));
+        assert!(t.taking().is_empty(), "nothing chosen yet");
+        t.gesture(&g("pos", "a1"));
+        t.gesture(&g("pos", "c3"));
+        assert!(t.taking().is_empty(), "captured or spared: not known yet");
+        assert!(!t.takes_at("c3"), "it lands there: it takes nothing there");
+        t.gesture(&g("action", "capture"));
+        assert_eq!(t.taking(), BTreeSet::from(["b2"]), "captured");
+        let mut both = t.clone();
+        // The second leg's piece spared: the move is whole, and takes the first alone.
+        t.gesture(&g("pos", "c5"));
+        t.gesture(&g("action", "spare"));
+        assert_eq!(t.taking(), BTreeSet::from(["b2"]), "the second spared");
+        // Captured too, and the chain ended: both.
+        both.gesture(&g("pos", "c5"));
+        both.gesture(&g("action", "capture"));
+        both.gesture(&g("action", "end"));
+        assert_eq!(both.made.len(), 1);
+        assert_eq!(
+            both.taking(),
+            BTreeSet::from(["b2", "c4"]),
+            "made: what it takes"
+        );
+
+        // A pin: the piece aimed at is taken by a click on it.
+        let pin = LegalSelection {
+            from: Some("a1".into()),
+            aim: Some("b3".into()),
+            captures: vec!["b3".into()],
+            ..sel(
+                "a1-a2xb3",
+                Some("a2"),
+                &[("pos", "a1"), ("pos", "a2"), ("pos", "b3")],
+            )
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(1, vec![pin, step("a1", "a3")]));
+        t.gesture(&g("pos", "a1"));
+        t.gesture(&g("pos", "a2"));
+        assert!(t.takes_at("b3"));
+        assert!(!t.takes_at("a2"));
     }
 
     #[test]
