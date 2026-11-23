@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "bingle-3d"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "bevy",
  "bevy_mod_openxr",
