@@ -205,8 +205,12 @@ fn sync_labels(
     if labels.is_empty() {
         return;
     }
-    let layout = Layout::new(&table.info.board.positions);
     let surface = Surface::of(&table.info.board, appearances.for_game(&table.info.id));
+    // A game with no board has no margin to engrave them in.
+    if matches!(surface, Surface::Table(_)) {
+        return;
+    }
+    let layout = Layout::new(&table.info.board.positions);
     let material = materials.add(engraving(&server));
     let size = layout.pitch * GLYPH_SIZE;
     let mut shapes: Vec<Option<Handle<Mesh>>> = vec![None; GLYPHS.len()];

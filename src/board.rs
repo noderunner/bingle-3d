@@ -68,12 +68,13 @@ impl Plugin for BoardPlugin {
             // drawn is worked out, so a piece is never seen undressed.
             .add_systems(
                 PostUpdate,
-                dress_sides.before(bevy::transform::TransformSystems::Propagate),
+                (dress_sides, dress_parts).before(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(
                 Update,
                 (
                     sync_board.run_if(resource_changed::<WatchStatus>),
+                    raise_cells.run_if(resource_changed::<WatchStatus>),
                     show_turn.run_if(
                         resource_changed::<WatchStatus>
                             .or_eager(resource_changed::<Hovering>)
@@ -147,12 +148,15 @@ const MARK_SIZE: f32 = 0.2;
 pub enum Surface {
     Cells(CellShape),
     Points,
+    /// The table itself, with no board on it: the cells are there to click and light, unseen.
+    Table(CellShape),
 }
 
 impl Surface {
     pub fn of(board: &Board, look: Option<&Appearance>) -> Self {
         match look.map(|l| l.board.on) {
             Some(PlayOn::Points) => Surface::Points,
+            Some(PlayOn::Table) => Surface::Table(CellShape::of(board)),
             _ => Surface::Cells(CellShape::of(board)),
         }
     }
@@ -162,6 +166,7 @@ impl Surface {
         match self {
             Surface::Cells(_) => SURFACE,
             Surface::Points => BOARD_HEIGHT,
+            Surface::Table(_) => 0.0,
         }
     }
 
@@ -169,9 +174,11 @@ impl Surface {
     /// sides (`along`) or to either side. A point's is a stone's on it.
     pub fn reach(self, along: bool) -> f32 {
         match self {
-            Surface::Cells(CellShape::Hexagon) if along => 1.0 / 3f32.sqrt(),
-            Surface::Cells(CellShape::Spot) => 0.3,
-            Surface::Cells(_) => 0.5,
+            Surface::Cells(CellShape::Hexagon) | Surface::Table(CellShape::Hexagon) if along => {
+                1.0 / 3f32.sqrt()
+            }
+            Surface::Cells(CellShape::Spot) | Surface::Table(CellShape::Spot) => 0.3,
+            Surface::Cells(_) | Surface::Table(_) => 0.5,
             Surface::Points => 0.4,
         }
     }
@@ -180,7 +187,7 @@ impl Surface {
     /// margin of wood, short of the rounded rim.
     pub fn flat_to(self, along: bool, pitch: f32) -> f32 {
         let margin = match self {
-            Surface::Cells(_) => self.reach(along) + MARGIN,
+            Surface::Cells(_) | Surface::Table(_) => self.reach(along) + MARGIN,
             Surface::Points => POINTS_MARGIN,
         };
         margin - RIM_RADIUS / pitch
@@ -302,6 +309,16 @@ impl CellShape {
         }
     }
 
+    /// A cell's shape `size` across, flat on y = 0 and facing up.
+    fn flat(self, size: f32) -> Mesh {
+        match self {
+            CellShape::Hexagon => RegularPolygon::new(size / 3f32.sqrt(), 6).mesh().build(),
+            CellShape::Square => Rectangle::new(size, size).mesh().build(),
+            CellShape::Spot => Circle::new(size * 0.3).mesh().build(),
+        }
+        .rotated_by(Quat::from_rotation_x(-FRAC_PI_2))
+    }
+
     /// A cell's mesh, standing on y = 0, `scale` of the full size that would touch its neighbours.
     fn mesh(self, pitch: f32, scale: f32, height: f32) -> Mesh {
         let size = pitch * scale;
@@ -393,7 +410,22 @@ struct PieceKit {
     ghost: Option<Handle<StandardMaterial>>,
     /// Its two sides, for a piece of two sides (`sides.rs`): `mesh` is then its upper half.
     sides: Option<SidesKit>,
+    /// Its model's parts in materials of their own (an inlay), each its mesh and its material,
+    /// solid and see-through: `mesh` is then its first part.
+    parts: Vec<PartKit>,
 }
+
+/// A part of a piece's model in a material of its own, whoever's piece it is.
+#[derive(Debug, Clone)]
+struct PartKit {
+    mesh: Handle<Mesh>,
+    solid: Handle<StandardMaterial>,
+    ghost: Handle<StandardMaterial>,
+}
+
+/// A piece with parts of their own, dressed (`dress_parts`): the children drawing them.
+#[derive(Component)]
+struct Parts(Vec<Entity>);
 
 /// A piece of two sides as the board draws it: its model's lower half (the upper is
 /// `PieceKit::mesh`), each part's material, solid and see-through, and whether each colour
@@ -455,6 +487,12 @@ struct Kit {
     /// The board's playing area's outline (its cells', or its points'), for what is held to
     /// stay over while the pointer is off the board.
     edge: Vec<Vec2>,
+    /// The width (X) and depth (Z) the camera frames: the board's, or the middle of the table
+    /// for a game with no board.
+    size: Vec2,
+    /// A game with no board: its cells, unseen, are raised to the top of what stands on them,
+    /// so a cell lit there is lit on top (`raise_cells`).
+    on_table: bool,
     /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
     piece_colour: HashMap<String, String>,
     /// Each colour word's see-through material.
@@ -793,9 +831,11 @@ impl Tools<'_> {
             .cloned();
         let ghost = own.as_ref().map(|spec| self.see_through(spec));
         let sides = look.and_then(|l| self.sides_kit(l));
+        let parts = look.map(|l| self.parts_kit(l)).unwrap_or_default();
         PieceKit {
             ghost,
             sides,
+            parts,
             mesh: self.server.load(
                 GltfAssetLabel::Primitive {
                     mesh: 0,
@@ -850,6 +890,35 @@ impl Tools<'_> {
                 .map(|(word, side)| (word.clone(), side == second))
                 .collect(),
         })
+    }
+
+    /// A piece's parts in materials of their own, if its look gives them: each its model's part
+    /// of that name (`Appearance::problems` says what is wrong with them).
+    fn parts_kit(&mut self, look: &PieceLook) -> Vec<PartKit> {
+        let parts = assets::model_parts(&look.model);
+        let mut out = Vec::new();
+        for (index, part) in parts.iter().enumerate().skip(1) {
+            let Some(spec) = look
+                .parts
+                .get(part)
+                .and_then(|name| self.look?.materials.get(name))
+                .cloned()
+            else {
+                continue;
+            };
+            out.push(PartKit {
+                mesh: self.server.load(
+                    GltfAssetLabel::Primitive {
+                        mesh: 0,
+                        primitive: index,
+                    }
+                    .from_asset(assets::path(&look.model)),
+                ),
+                solid: self.material(&spec),
+                ghost: self.see_through(&spec),
+            });
+        }
+        out
     }
 
     /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
@@ -945,9 +1014,10 @@ fn sync_board(
             let (f, b) = crate::move_tiles::reaches(&kit.1.edge);
             (front, beside) = (front.max(f), beside.max(b));
         }
-        let extra = (front - layout.size.y / 2.0).max(0.0);
+        let size = kit.1.size;
+        let extra = (front - size.y / 2.0).max(0.0);
         built.write(BoardBuilt {
-            size: Vec2::new(layout.size.x.max(2.0 * beside), layout.size.y + extra),
+            size: Vec2::new(size.x.max(2.0 * beside), size.y + extra),
             middle: Vec2::Y * extra / 2.0,
         });
         // A board just built shows the position as it is, without dropping every piece.
@@ -994,6 +1064,41 @@ fn sync_board(
                 *vis = Visibility::Inherited;
             }
             None => *vis = Visibility::Hidden,
+        }
+    }
+}
+
+/// Where an unseen cell of a game with no board is: on the table, or on the top of what stands
+/// there (`under`, at the full pitch, scaled by `scale`), so its light is seen.
+fn cell_height(under: f32, scale: f32) -> f32 {
+    CELL_LIFT + under * scale
+}
+
+/// How far over the table, or what stands there, an unseen cell lies.
+const CELL_LIFT: f32 = 0.0003;
+
+/// Raises each cell of a game with no board to the top of the stack on it, as the position has
+/// it, so where a click would put a piece on others (one climbing) is lit where it is seen.
+fn raise_cells(
+    watch: Res<WatchStatus>,
+    kits: Query<&Kit, With<BoardRoot>>,
+    mut cells: Query<(&Cell, &mut Transform)>,
+) {
+    let (Some(table), Ok(kit)) = (&watch.table, kits.single()) else {
+        return;
+    };
+    if !kit.on_table {
+        return;
+    }
+    let stacks = &table.state.state.cells;
+    let tints = table.state.state.tints();
+    for (cell, mut t) in &mut cells {
+        let under = stacks.get(&cell.id).map_or(0.0, |stack| {
+            kit.floor(&tints, &cell.id) + kit.stack_height(stack)
+        });
+        let y = cell_height(under, kit.scale);
+        if (t.translation.y - y).abs() > 1e-6 {
+            t.translation.y = y;
         }
     }
 }
@@ -1307,6 +1412,20 @@ fn wanted_pieces(table: &Table, kit: &Kit) -> Vec<PieceAt> {
     out
 }
 
+/// How far from the middle of the table the frame of a game with no board reaches, in pitches:
+/// as wide as the web page's smallest picture of such a game, nine cells, and a little more.
+const TABLE_FRAME: f32 = 5.0;
+
+/// The corners of the cells a game with no board is framed by: those within `TABLE_FRAME` of the
+/// middle of its positions (`centres`, each with the cell's `corners`).
+fn table_frame(centres: &[Vec2], corners: &[Vec2], pitch: f32) -> Vec<Vec2> {
+    centres
+        .iter()
+        .filter(|c| c.length() <= TABLE_FRAME * pitch + 1e-4)
+        .flat_map(|c| corners.iter().map(move |k| *c + *k))
+        .collect()
+}
+
 fn build_board(
     commands: &mut Commands,
     tools: &mut Tools,
@@ -1339,7 +1458,7 @@ fn build_board(
         .collect();
     let corners = slab::cell_corners(shape, pitch);
     let playing = match surface {
-        Surface::Cells(_) => slab::hull(
+        Surface::Cells(_) | Surface::Table(_) => slab::hull(
             &centres
                 .iter()
                 .flat_map(|c| corners.iter().map(move |k| *c + *k))
@@ -1350,6 +1469,13 @@ fn build_board(
     let outline = match surface {
         Surface::Cells(_) => slab::grown(&playing, pitch * MARGIN, 6),
         Surface::Points => slab::grown(&playing, pitch * POINTS_MARGIN, 6),
+        // No board: what stands round it (the supply) and the camera keep to the middle of the
+        // table, where play is, however far its positions reach.
+        Surface::Table(_) => slab::grown(
+            &slab::hull(&table_frame(&centres, &corners, pitch)),
+            pitch * MARGIN,
+            6,
+        ),
     };
     let rim = Rim {
         height: BOARD_HEIGHT,
@@ -1357,7 +1483,8 @@ fn build_board(
         steps: 5,
     };
     let strips = goal_strips(&table.info, layout, shape);
-    if outline.len() >= 3 {
+    let on_table = matches!(surface, Surface::Table(_));
+    if outline.len() >= 3 && !on_table {
         commands.spawn((
             Name::new("Board"),
             Mesh3d(
@@ -1491,6 +1618,31 @@ fn build_board(
                     Name::new("Border"),
                     Mesh3d(tools.meshes.add(look::world_uvs(band, Vec3::ZERO))),
                     MeshMaterial3d(material),
+                    ChildOf(root),
+                ));
+            }
+        }
+        Surface::Table(_) => {
+            // Each position a cell a click lands on, unseen on the table; it glows while a click
+            // there would be taken (`highlight.rs`).
+            let unseen = tools.materials.add(StandardMaterial {
+                base_color: Color::NONE,
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            });
+            let cell = tools.meshes.add(shape.flat(pitch * CELL_SCALE));
+            let lit = Outline::space(slab::cell_corners(shape, pitch * CELL_SCALE), 0.0);
+            for (id, centre) in &layout.centres {
+                commands.spawn((
+                    Name::new(format!("Cell {id}")),
+                    Mesh3d(cell.clone()),
+                    MeshMaterial3d(unseen.clone()),
+                    Transform::from_translation(*centre + Vec3::Y * CELL_LIFT),
+                    Cell { id: id.clone() },
+                    lit.clone(),
+                    Spot(id.clone()),
+                    Pickable::default(),
                     ChildOf(root),
                 ));
             }
@@ -1957,8 +2109,19 @@ fn build_board(
         .filter(|p| !p.pool.is_empty())
         .map(|p| (p.id.clone(), p.pool.clone()))
         .collect();
+    let size = if on_table {
+        let (lo, hi) = outline.iter().fold(
+            (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+            |(lo, hi), (p, _)| (lo.min(*p), hi.max(*p)),
+        );
+        hi - lo
+    } else {
+        layout.size
+    };
     let kit = Kit {
         edge: playing,
+        size,
+        on_table,
         fences,
         supply,
         pools,
@@ -3675,6 +3838,82 @@ fn dress_sides(
     }
 }
 
+/// Dresses each piece with parts of their own, wherever it was made: a piece is made, like any
+/// other, as its model's first part, and here it is given a child for each of its other parts in
+/// its own material, see-through when the piece is. Again whenever the piece's material is
+/// changed (made see-through, or solid again).
+#[allow(clippy::type_complexity)]
+fn dress_parts(
+    mut commands: Commands,
+    kits: Query<&Kit, With<BoardRoot>>,
+    pieces: Query<
+        (
+            Entity,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            Has<Pickable>,
+            Option<&Parts>,
+        ),
+        Changed<MeshMaterial3d<StandardMaterial>>,
+    >,
+) {
+    let Ok(kit) = kits.single() else {
+        return;
+    };
+    let with_parts: Vec<&PieceKit> = kit
+        .pieces
+        .values()
+        .filter(|k| !k.parts.is_empty())
+        .collect();
+    if with_parts.is_empty() {
+        return;
+    }
+    for (entity, mesh, material, pickable, dressed) in &pieces {
+        let Some(kind) = with_parts.iter().find(|k| k.mesh == mesh.0) else {
+            continue;
+        };
+        let see_through = kit
+            .dress
+            .get(&material.0.id())
+            .is_some_and(|(_, see_through)| *see_through);
+        let pick = |part: &PartKit| {
+            MeshMaterial3d(if see_through {
+                part.ghost.clone()
+            } else {
+                part.solid.clone()
+            })
+        };
+        match dressed {
+            Some(Parts(children)) => {
+                for (child, part) in children.iter().zip(&kind.parts) {
+                    commands.entity(*child).try_insert(pick(part));
+                }
+            }
+            None => {
+                let children = kind
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        let mut child = commands.spawn((
+                            Name::new("part"),
+                            Mesh3d(part.mesh.clone()),
+                            pick(part),
+                            Transform::default(),
+                            ChildOf(entity),
+                        ));
+                        // Picked as the piece is: a click on it bubbles up to the piece.
+                        if pickable {
+                            child.insert(Pickable::default());
+                        }
+                        child.id()
+                    })
+                    .collect();
+                commands.entity(entity).insert(Parts(children));
+            }
+        }
+    }
+}
+
 /// Turns each piece turning over (`Flipping`), and lays it where it lies once it is done, with
 /// the soft sound of a piece set down.
 fn flip_pieces(
@@ -3733,6 +3972,30 @@ mod tests {
 
     /// A 3×3 hex board's positions as Bingle lays them out: each row half a cell to the right of
     /// the one above, rows √3/2 apart.
+    #[test]
+    fn a_game_with_no_board_is_framed_by_the_cells_round_its_middle() {
+        let pitch = 0.02;
+        let centres: Vec<Vec2> = (-8..=8).map(|i| Vec2::new(i as f32 * pitch, 0.0)).collect();
+        let corners = slab::cell_corners(CellShape::Square, pitch);
+        let frame = table_frame(&centres, &corners, pitch);
+        let reach = frame.iter().fold(0.0f32, |r, p| r.max(p.x.abs()));
+        assert!(
+            (reach - (TABLE_FRAME + 0.5) * pitch).abs() < 1e-5,
+            "{reach}"
+        );
+        assert!(matches!(
+            Surface::of(
+                &Board {
+                    kind: "hex".into(),
+                    ..Default::default()
+                },
+                Some(&Appearance::parse("games = [\"t\"]\n[board]\non = \"table\"").unwrap())
+            ),
+            Surface::Table(CellShape::Hexagon)
+        ));
+        assert_eq!(Surface::Table(CellShape::Hexagon).height(), 0.0);
+    }
+
     fn hex3() -> Vec<BoardPosition> {
         let mut out = Vec::new();
         for r in 0..3 {
@@ -5861,6 +6124,119 @@ mod tests {
             // The others were left as they were.
             assert_eq!(sides(&mut app)["c3"], shown["c3"]);
             assert_eq!(sides(&mut app)["a1"].2, black.2);
+        }
+
+        /// A game with no board (`board.on = "table"`) whose pieces have a part of their own:
+        /// the die's pips, inked.
+        fn with_table_look() -> App {
+            let mut app = app();
+            let look = Appearance::parse(
+                r#"
+games = ["t-table"]
+
+[board]
+on = "table"
+
+[pieces.die]
+model = "models/die.glb"
+stands = "fitted"
+parts = { pips = "ink" }
+
+[materials.ink]
+tint = [0.1, 0.2, 0.6]
+"#,
+            )
+            .unwrap();
+            assert!(look.problems().is_empty(), "{:?}", look.problems());
+            app.insert_resource(Appearances(vec![look]));
+            app
+        }
+
+        #[test]
+        fn a_game_with_no_board_has_its_cells_unseen_on_the_table_and_raised_by_a_stack() {
+            let mut app = with_table_look();
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("die", "white")]),
+                ("b1", &[("die", "white"), ("die", "black")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("t-table", cells));
+            app.update();
+            app.update();
+            let mut names = app.world_mut().query::<&Name>();
+            assert!(
+                !names
+                    .iter(app.world())
+                    .any(|n| n.as_str() == "Board" || n.as_str() == "Lines"),
+                "no slab and no lines"
+            );
+            let mut q = app.world_mut().query::<(
+                &Cell,
+                &Transform,
+                &MeshMaterial3d<StandardMaterial>,
+                Has<Pickable>,
+            )>();
+            let shown: HashMap<String, (f32, Handle<StandardMaterial>, bool)> = q
+                .iter(app.world())
+                .map(|(c, t, m, p)| (c.id.clone(), (t.translation.y, m.0.clone(), p)))
+                .collect();
+            assert_eq!(shown.len(), 9, "a cell for every position");
+            assert!(shown.values().all(|(_, _, pickable)| *pickable));
+            let materials = app.world().resource::<Assets<StandardMaterial>>();
+            let (_, unseen, _) = &shown["c3"];
+            assert!(materials.get(unseen).unwrap().base_color.alpha() == 0.0);
+            // On the table where nothing stands; on the top of a die, or of two.
+            let (low, high) = assets::model_span("models/die.glb").unwrap();
+            let die = high - low;
+            let (empty, one, two) = (shown["c3"].0, shown["a1"].0, shown["b1"].0);
+            assert!((empty - CELL_LIFT).abs() < 1e-6, "{empty}");
+            assert!(
+                one > die * 0.9 && one < die * 1.1,
+                "{one} for a die {die} tall"
+            );
+            assert!((two - CELL_LIFT - 2.0 * (one - CELL_LIFT)).abs() < 1e-5);
+        }
+
+        #[test]
+        fn a_part_of_a_pieces_own_is_drawn_on_every_seats_piece_in_its_material() {
+            let mut app = with_table_look();
+            let cells: &[(&str, &[(&str, &str)])] =
+                &[("a1", &[("die", "white")]), ("c3", &[("die", "black")])];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("t-table", cells));
+            app.update();
+            app.update();
+            let shown = drawn(&mut app);
+            let (white, black) = (&shown[&("a1".into(), 0)], &shown[&("c3".into(), 0)]);
+            assert_ne!(white.3, black.3, "each in its seat's material");
+            let part = |app: &App, piece: Entity| {
+                let children = &app.world().get::<Parts>(piece).expect("dressed").0;
+                assert_eq!(children.len(), 1);
+                let child = children[0];
+                assert!(
+                    app.world().get::<Pickable>(child).is_some(),
+                    "picked as the piece"
+                );
+                (
+                    app.world().get::<Mesh3d>(child).unwrap().0.clone(),
+                    app.world()
+                        .get::<MeshMaterial3d<StandardMaterial>>(child)
+                        .unwrap()
+                        .0
+                        .clone(),
+                )
+            };
+            let (white_part, black_part) = (part(&app, white.4), part(&app, black.4));
+            assert_eq!(white_part, black_part, "the same ink on both");
+            assert_ne!(white_part.0, white.2, "its own part of the model");
+            let ink = app
+                .world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(&white_part.1)
+                .unwrap()
+                .base_color
+                .to_srgba();
+            assert!(ink.blue > ink.red && ink.alpha == 1.0, "{ink:?}");
         }
 
         #[test]
