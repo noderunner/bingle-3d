@@ -261,6 +261,16 @@ A game's own rules and its players' words keep their terms.
   see-through in place of its light (`board::TileGhost`), and a click on one makes the click and
   the tile's choice that follows it), and it is carried where it goes (`board::FromStock`).
   `Tinted`, `shown`, `stock` and `takes` have no Bevy in them; `board::show_tints` draws them.
+- `src/move_tiles.rs`: a game played with move cards, for a game whose look has `[move_tiles]`:
+  each card the view lists (`view`: those each seat holds and the one at the side, each its
+  id, name, moves as its holder sees them, and its stamp's seat) is a tile of wood beside the
+  board (`models/move_tile.glb`), the grid cut into it, its squares stamped in ink
+  (`textures/stamp/square_albedo.png`), its name engraved (`coordinates::glyph_mesh`) and a
+  seal in its stamp's seat's colour. A seat's tiles in front of it, the side's at the right
+  hand of the seat on impulse; a click on one makes the look's `choice` and its id
+  (`play::Choice`), those that may be chosen glow, the one chosen is lifted, and they travel
+  over the board as the cards change hands. `dealt`, `reach`, `stamps`, `grid`, `places` and
+  `reaches` (what the camera frames, `board.rs`) have no Bevy in them; no card is named.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which

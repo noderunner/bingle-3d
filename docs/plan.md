@@ -923,7 +923,22 @@ this repository may not hold (decision 2). This repository names none of them, h
   move is sent (the server says only what it takes, `captures`: a Bingle issue); a count of
   the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup
   beside the board when nothing counts it; and the piece held under the pointer when a
-  selection does not name it (a disc is shown where a ring is placed).
+  selection does not name it (a disc is shown where a ring is placed); and bingle#293's
+  `converts`, now asked for.
+- **The second** is played with move cards: each card shows where a piece may go, and a seat
+  chooses one of its own, then a piece and where it goes. **Move tiles** (`move_tiles.rs`,
+  the look's `[move_tiles]`): each card of the view's is a tile of pale wood beside the board,
+  the grid cut into it and its squares stamped in ink (the piece's in black, where it may go in
+  vermilion), its name engraved under the grid with the coordinates' glyphs and a seal in its
+  stamp's seat's colour beside it. Everything on a tile is drawn from the view (its moves, as
+  its holder sees them, and its name), so no card is in this repository. A seat's tiles lie in
+  front of it, reading from its side, and the side's at the right hand of the seat on impulse,
+  which takes it next; the camera frames them with the board. A click on a tile the seat may
+  choose (they glow) makes the look's choice and the card's id; the one chosen is lifted until
+  the move is played; when the cards change hands each tile travels to its new place, rising
+  over the board on the way. The tile and the ink stamp are the pipeline's (`move_tiles`).
+- Not built for it: a hint on the tile of where the chosen card would take the piece under the
+  pointer, and the tiles in the showcase. (The squares the view tints are its look's stamps.)
 
 ### After that
 

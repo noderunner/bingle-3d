@@ -25,6 +25,9 @@
 //!   printed on it. A key without one is not drawn;
 //! - `stock.counts`: the view's count of each kind of piece both seats have still to place (a
 //!   draft's tiles), shown beside the board.
+//! - `move_tiles`: the view's move cards, each a tile of wood beside the board with the squares
+//!   a piece may go to stamped on a grid (`move_tiles.rs`): where they are in the view, the
+//!   choice a click on one makes, and their wood and inks;
 //! - `cards`: a card game's table, laid out here rather than by a vocabulary the client knows
 //!   (`card_table.rs`): where each of its zones lies (`piles.<zone>.at`, in metres, the whole
 //!   centred on the table by itself) and how its cards lie (`spread`), the choice a click on it
@@ -83,6 +86,8 @@ pub struct Appearance {
     pub stock: Option<StockLook>,
     /// A card game's table, laid out as this file says (`card_table.rs`).
     pub cards: Option<CardsLook>,
+    /// The view's move cards, drawn as tiles beside the board (`move_tiles.rs`).
+    pub move_tiles: Option<MoveTilesLook>,
     /// Read from the private folder (`assets::read_private`): its games are shown when the
     /// server marks them private.
     #[serde(skip)]
@@ -124,6 +129,26 @@ pub struct TintLook {
     pub piece: Option<String>,
     pub stamp: Option<String>,
     pub size: Option<f32>,
+}
+
+/// Move tiles: tiles that show, as squares stamped on a grid, where a piece may go, one for
+/// each card of the view's (a game played with move cards), in front of the seat that holds it
+/// and one at the side; a click on one makes its choice (`move_tiles.rs`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveTilesLook {
+    /// The view's cards, by their name in it: `{ hands: { <seat>: [card] }, side: card }`, a
+    /// card `{ id, name, moves: [[right, forward]], stamp }`: each move from where the piece
+    /// stands, as its holder sees it, and the colour word of the seat its stamp is.
+    pub view: String,
+    /// The choice a click on a tile makes: this, then the card's id.
+    pub choice: String,
+    /// What the tiles are made of, by a material of this file's; a pale wood without one.
+    pub material: Option<String>,
+    /// The ink the squares a piece may go to are stamped in, and the ink of the square it
+    /// stands on; a red and a black ink without them.
+    pub ink: Option<String>,
+    pub piece_ink: Option<String>,
 }
 
 /// What both seats have still to place, shared (a draft's tiles): the view's map of each kind of
@@ -460,6 +485,16 @@ impl Appearance {
             }
             if tint.size.is_some_and(|s| !(0.05..=1.0).contains(&s)) {
                 out.push(format!("tint {key}: a size from 0.05 to 1"));
+            }
+        }
+        if let Some(tiles) = &self.move_tiles {
+            for name in [&tiles.material, &tiles.ink, &tiles.piece_ink]
+                .into_iter()
+                .flatten()
+            {
+                if !self.materials.contains_key(name) {
+                    out.push(format!("move tiles: no material {name}"));
+                }
             }
         }
         if self.games.is_empty() {

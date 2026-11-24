@@ -938,10 +938,16 @@ fn sync_board(
         };
         let kit = build_board(&mut commands, &mut tools, table, &layout);
         commands.insert_resource(BoardEdge(kit.1.edge.clone()));
-        // Framed with the player's tray in front of it, if it has one.
-        let extra = (kit.1.front - layout.size.y / 2.0).max(0.0);
+        // Framed with the player's tray in front of it, if it has one, and the move tiles
+        // round it (`move_tiles.rs`).
+        let (mut front, mut beside) = (kit.1.front, kit.1.beside);
+        if tools.look.is_some_and(|l| l.move_tiles.is_some()) {
+            let (f, b) = crate::move_tiles::reaches(&kit.1.edge);
+            (front, beside) = (front.max(f), beside.max(b));
+        }
+        let extra = (front - layout.size.y / 2.0).max(0.0);
         built.write(BoardBuilt {
-            size: Vec2::new(layout.size.x.max(2.0 * kit.1.beside), layout.size.y + extra),
+            size: Vec2::new(layout.size.x.max(2.0 * beside), layout.size.y + extra),
             middle: Vec2::Y * extra / 2.0,
         });
         // A board just built shows the position as it is, without dropping every piece.
