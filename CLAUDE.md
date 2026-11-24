@@ -125,10 +125,11 @@ These are Bingle's decisions; the client is built around them, not around changi
 - **No game is named in shared code.** Game-specific looks live in per-game appearance files.
 - **Commercial games stay out of this repository**
   ([ADR 0127](https://github.com/noderunner/bingle/blob/main/docs/decisions/0127-commercial-games-in-a-private-overlay.md)). A server marks the games it builds from its
-  private overlay `private` (API 1.8); this build leaves them out of every list
-  (`session::public`), until the client has a private build of its own.
-  Their appearance is loaded from a folder at run time (plan, decision 2). Never add their names,
-  art, models or rules text here, not even in a test.
+  private overlay `private` (API 1.8); the client leaves them out of every list
+  (`session::public`) unless the private folder has their look. That folder is
+  `bingle-3d/assets` in the overlay, read at run time (plan, decision 2; `--private-dir`,
+  `BINGLE3D_PRIVATE_DIR`, `private_dir`), and their looks go there. Never add their names,
+  art, models or rules text here, not even in a test: a test makes up a game id.
 - **The connection must be secure**
   ([ADR 0065](https://github.com/noderunner/bingle/blob/main/docs/decisions/0065-the-connection-must-be-secure.md)):
   plain HTTP only to loopback; a self-signed server is trusted by its fingerprint after the player
@@ -267,7 +268,9 @@ A game's own rules and its players' words keep their terms.
   `board::fill_trays` carries them there (`hand::Route`: a wait, straight up, across, and a
   sound of their own as they land).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
-  `embedded://<path>`; a test checks the list against the folder. It also reads a model's
+  `embedded://<path>`; a test checks the list against the folder. The private folder's files
+  (`read_private`) are read at start-up and found by the same paths (`all`), never in place
+  of ours. It also reads a model's
   height and its parts' names from the file's own JSON. `src/textures.rs`: mipmaps for
   our JPEG textures when they load (Bevy 0.20 makes none), and the materials using them built
   again. The files are made by the asset pipeline: **Blender 5.3 headless, run from scripts in
@@ -288,7 +291,9 @@ A game's own rules and its players' words keep their terms.
   border (`[board] border`), a material for the cells of a region the board names
   (`[board.regions]`: Fist's keep), and the piece
   what a move aims is shown as while it is built (`aimed`: the server does not say; without it nothing is shown where a move aims). A file is for the games that mean the same by a piece's id.
-  A game's name appears only there, never in shared code.
+  A game's name appears only there, never in shared code. The private folder's files are
+  read the same way (`Appearances::all`), and say which private games are shown
+  (`private_games`); with `BINGLE3D_PRIVATE_DIR` set, `cargo test` checks them too.
 - `src/board.rs`: the watched game's board and pieces, from the game definition's board kind and
   layout coordinates and the position's cells; names no game. Each kind of piece is its
   appearance's model, or the generic stone: stood by the model's foot, and what is on it in a

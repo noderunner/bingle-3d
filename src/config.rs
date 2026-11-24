@@ -54,6 +54,10 @@ pub struct Config {
     /// client choose; the runtime's own when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vr_refresh_rate: Option<u32>,
+    /// The private folder of games' looks this client may not ship (`assets::read_private`):
+    /// a game the server marks private is shown only when the folder has its look.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_dir: Option<PathBuf>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,

@@ -1,8 +1,13 @@
 //! The files in `assets/` the scene is drawn with, compiled into the binary (plan, decision 1) and
 //! loaded through Bevy's asset server as `embedded://<path>`. They are made by the asset pipeline
 //! (`assets-src/README.md`); the fonts are compiled in by `fonts.rs`.
+//!
+//! Beside them, the private folder (plan, decision 2): the looks of games this repository may
+//! not hold (Bingle's ADR 0127), read once at start-up and found by the same paths, so a private
+//! game's appearance file, its models and its textures are used as ours are.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use bevy::asset::io::embedded::EmbeddedAssetRegistry;
 use bevy::prelude::*;
@@ -179,6 +184,90 @@ files![
     "textures/wood/walnut_normal.jpg",
 ];
 
+/// The variable that names the private folder, when `--private-dir` does not.
+pub const PRIVATE_DIR_VAR: &str = "BINGLE3D_PRIVATE_DIR";
+
+/// The private folder's files, by their paths in it, once read (`use_private`).
+static PRIVATE: OnceLock<Vec<(String, &'static [u8])>> = OnceLock::new();
+
+/// Files read from the private folder: each by its path in it, and its bytes.
+pub type PrivateFiles = Vec<(String, Vec<u8>)>;
+
+/// The private folder's files, by their paths in it (with `/` between the folders, as ours), and
+/// what was wrong: a file in place of one of ours is left out, since a private look adds to the
+/// client and never changes what every game draws; so is a hidden file and a text of notes (`.md`).
+pub fn read_private(dir: &Path) -> Result<(PrivateFiles, Vec<String>), String> {
+    fn walk(dir: &Path, root: &Path, out: &mut PrivateFiles, problems: &mut Vec<String>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => return problems.push(format!("{}: {e}", dir.display())),
+        };
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let name = relative.to_string_lossy().replace('\\', "/");
+            let hidden = relative
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+            if hidden {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, root, out, problems);
+            } else if name.ends_with(".md") {
+                continue;
+            } else if FILES.iter().any(|(f, _)| *f == name) {
+                problems.push(format!(
+                    "{name}: the client has its own, so this one is left out"
+                ));
+            } else {
+                match std::fs::read(&path) {
+                    Ok(bytes) => out.push((name, bytes)),
+                    Err(e) => problems.push(format!("{name}: {e}")),
+                }
+            }
+        }
+    }
+    if !dir.is_dir() {
+        return Err(format!(
+            "the private folder {} is not a folder",
+            dir.display()
+        ));
+    }
+    let (mut files, mut problems) = (Vec::new(), Vec::new());
+    walk(dir, dir, &mut files, &mut problems);
+    Ok((files, problems))
+}
+
+/// Takes the private folder's files for the rest of the run. Only the first call counts.
+pub fn use_private(files: PrivateFiles) {
+    // Kept for as long as the client runs, as ours are, so they are lent out as ours are.
+    let files = files
+        .into_iter()
+        .map(|(f, bytes)| (f, &*Box::leak(bytes.into_boxed_slice())))
+        .collect();
+    let _ = PRIVATE.set(files);
+}
+
+/// Every file: ours, then the private folder's.
+pub fn all() -> impl Iterator<Item = (&'static str, &'static [u8])> {
+    let private = PRIVATE.get().map(Vec::as_slice).unwrap_or_default();
+    FILES
+        .iter()
+        .copied()
+        .chain(private.iter().map(|(f, bytes)| (f.as_str(), *bytes)))
+}
+
+/// Whether this file is the private folder's.
+pub fn is_private(file: &str) -> bool {
+    PRIVATE
+        .get()
+        .is_some_and(|files| files.iter().any(|(f, _)| f == file))
+}
+
 /// The path the asset server loads a file by.
 pub fn path(file: &str) -> String {
     format!("embedded://{file}")
@@ -186,13 +275,12 @@ pub fn path(file: &str) -> String {
 
 /// Whether the client has this file.
 pub fn exists(file: &str) -> bool {
-    FILES.iter().any(|(f, _)| *f == file)
+    all().any(|(f, _)| f == file)
 }
 
 /// A file's contents as text, if it is one of ours and is UTF-8.
 pub fn text(file: &str) -> Option<&'static str> {
-    FILES
-        .iter()
+    all()
         .find(|(f, _)| *f == file)
         .and_then(|(_, bytes)| std::str::from_utf8(bytes).ok())
 }
@@ -200,7 +288,7 @@ pub fn text(file: &str) -> Option<&'static str> {
 /// The JSON part of one of our models: a binary glTF file is a 12-byte header, then chunks,
 /// each its length, its kind and its bytes, the JSON first.
 fn model_json(file: &str) -> Option<serde_json::Value> {
-    let bytes = FILES.iter().find(|(f, _)| *f == file)?.1;
+    let bytes = all().find(|(f, _)| *f == file)?.1;
     if bytes.get(..4)? != b"glTF" || bytes.get(16..20)? != b"JSON" {
         return None;
     }
@@ -261,13 +349,28 @@ pub fn model_parts(file: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub struct AssetsPlugin;
+pub struct AssetsPlugin {
+    /// The private folder, if this run has one: its files are added to ours.
+    pub private_dir: Option<PathBuf>,
+}
 
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
+        if let Some(dir) = &self.private_dir {
+            match read_private(dir) {
+                Ok((files, problems)) => {
+                    for problem in problems {
+                        warn!("private folder: {problem}");
+                    }
+                    info!("private folder: {} files", files.len());
+                    use_private(files);
+                }
+                Err(e) => error!("{e}"),
+            }
+        }
         let registry = app.world_mut().resource_mut::<EmbeddedAssetRegistry>();
-        for (file, bytes) in FILES {
-            registry.insert_asset(PathBuf::new(), Path::new(file), *bytes);
+        for (file, bytes) in all() {
+            registry.insert_asset(PathBuf::new(), Path::new(file), bytes);
         }
     }
 }
@@ -330,6 +433,28 @@ mod tests {
             let (low, high) = model_span(file).unwrap_or_else(|| panic!("{file}"));
             assert!(high > low, "{file}");
         }
+    }
+
+    #[test]
+    fn the_private_folder_adds_to_ours_and_never_replaces_them() {
+        let dir = std::env::temp_dir().join(format!("bingle-3d-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for folder in ["appearance", "models", ".git"] {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+        }
+        let write = |file: &str| std::fs::write(dir.join(file), b"x").unwrap();
+        write("appearance/made-up.toml");
+        write("models/made-up.glb");
+        write("models/ring.glb"); // one of ours
+        write(".git/config");
+        write("README.md");
+        let (files, problems) = read_private(&dir).unwrap();
+        let names: Vec<&str> = files.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(names, ["appearance/made-up.toml", "models/made-up.glb"]);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].starts_with("models/ring.glb"));
+        assert!(read_private(&dir.join("not-there")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

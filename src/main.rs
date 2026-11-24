@@ -70,6 +70,23 @@ use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
+/// The private folder of games' looks (`assets::read_private`): the command line's, else the
+/// variable's, else `config.toml`'s.
+fn private_dir(opts: &cli::Options) -> Option<std::path::PathBuf> {
+    opts.private_dir
+        .clone()
+        .or_else(|| {
+            std::env::var_os(assets::PRIVATE_DIR_VAR)
+                .filter(|v| !v.is_empty())
+                .map(Into::into)
+        })
+        .or_else(|| {
+            config::Store::load(config::Store::default_dir())
+                .config
+                .private_dir
+        })
+}
+
 fn main() -> AppExit {
     let opts = match cli::Options::parse(std::env::args().skip(1)) {
         Ok(opts) => opts,
@@ -147,7 +164,9 @@ fn main() -> AppExit {
         })
         // The files the scene is drawn with, and how each game looks.
         .add_plugins((
-            assets::AssetsPlugin,
+            assets::AssetsPlugin {
+                private_dir: private_dir(&opts),
+            },
             textures::TexturesPlugin,
             appearance::AppearancePlugin,
             wood_choice::WoodChoicePlugin,

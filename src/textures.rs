@@ -267,7 +267,7 @@ mod tests {
             app.add_plugins((MinimalPlugins, AssetPlugin::default(), TexturesPlugin))
                 .init_asset::<Image>()
                 .init_asset::<StandardMaterial>();
-            crate::assets::AssetsPlugin.build(&mut app);
+            crate::assets::AssetsPlugin { private_dir: None }.build(&mut app);
             let handle: Handle<Image> = load(
                 app.world().resource::<AssetServer>(),
                 "textures/stone/slate_albedo.jpg",

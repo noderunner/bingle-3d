@@ -32,8 +32,9 @@
 //!   that plays them (`together`: the start of their values), and the view's score sheet to
 //!   show beside the game (`sheet`, by its name in the view).
 //!
-//! The private overlay's games (plan, decision 2) will add files from a folder; this is where
-//! they will be read.
+//! The private folder (plan, decision 2) adds files of its own, for the games of Bingle's
+//! private overlay (ADR 0127), read here as these are; a game the server marks private is
+//! shown only when one of them is for it (`Appearances::private_games`).
 
 use std::collections::BTreeMap;
 
@@ -82,6 +83,10 @@ pub struct Appearance {
     pub stock: Option<StockLook>,
     /// A card game's table, laid out as this file says (`card_table.rs`).
     pub cards: Option<CardsLook>,
+    /// Read from the private folder (`assets::read_private`): its games are shown when the
+    /// server marks them private.
+    #[serde(skip)]
+    pub private: bool,
 }
 
 /// A card game's table as this file lays it out: its piles, the choices clicks on them make,
@@ -473,27 +478,51 @@ impl Appearance {
 pub struct Appearances(pub Vec<Appearance>);
 
 impl Appearances {
-    /// The files compiled into the client. One that cannot be read is left out, and logged.
+    /// The files compiled into the client.
+    #[cfg(test)]
     pub fn built_in() -> Self {
+        Self::read(assets::FILES.iter().copied(), |_| false)
+    }
+
+    /// The files compiled into the client and the private folder's.
+    pub fn all() -> Self {
+        Self::read(assets::all(), assets::is_private)
+    }
+
+    /// The appearance files of these. One that cannot be read is left out, and logged.
+    fn read<'a>(
+        files: impl Iterator<Item = (&'a str, &'a [u8])>,
+        private: impl Fn(&str) -> bool,
+    ) -> Self {
         let mut out = Vec::new();
-        for (file, _) in assets::FILES {
+        for (file, bytes) in files {
             if !file.starts_with("appearance/") {
                 continue;
             }
-            let parsed = assets::text(file)
-                .ok_or_else(|| "not UTF-8".to_string())
+            let parsed = std::str::from_utf8(bytes)
+                .map_err(|_| "not UTF-8".to_string())
                 .and_then(Appearance::parse);
             match parsed {
-                Ok(a) => {
+                Ok(mut a) => {
                     for problem in a.problems() {
                         warn!("{file}: {problem}");
                     }
+                    a.private = private(file);
                     out.push(a);
                 }
                 Err(e) => error!("{file}: {e}"),
             }
         }
         Appearances(out)
+    }
+
+    /// The games the private folder has a look for, by id.
+    pub fn private_games(&self) -> std::collections::HashSet<String> {
+        self.0
+            .iter()
+            .filter(|a| a.private)
+            .flat_map(|a| a.games.iter().cloned())
+            .collect()
     }
 
     pub fn for_game(&self, id: &str) -> Option<&Appearance> {
@@ -520,7 +549,7 @@ pub struct AppearancePlugin;
 
 impl Plugin for AppearancePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Appearances::built_in());
+        app.insert_resource(Appearances::all());
     }
 }
 
@@ -541,6 +570,48 @@ mod tests {
             count += 1;
         }
         assert_eq!(Appearances::built_in().0.len(), count);
+    }
+
+    /// The private folder's looks, when the variable names one (as the private overlay's CI
+    /// does): each reads, and names only what the client and the folder have.
+    #[test]
+    fn the_private_folders_appearances_read_and_name_only_what_they_have() {
+        let Some(dir) = std::env::var_os(assets::PRIVATE_DIR_VAR).filter(|v| !v.is_empty()) else {
+            return;
+        };
+        let (files, problems) = assets::read_private(std::path::Path::new(&dir)).unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        assets::use_private(files);
+        let mut count = 0;
+        for (file, bytes) in assets::all() {
+            if !(assets::is_private(file) && file.starts_with("appearance/")) {
+                continue;
+            }
+            let a = Appearance::parse(std::str::from_utf8(bytes).unwrap())
+                .unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert!(a.problems().is_empty(), "{file}: {:?}", a.problems());
+            count += 1;
+        }
+        assert!(count > 0, "the private folder has no appearance files");
+    }
+
+    #[test]
+    fn the_games_the_private_folder_has_looks_for_are_known() {
+        let files = [
+            ("appearance/ours.toml", &b"games = [\"ours\"]"[..]),
+            (
+                "appearance/made-up.toml",
+                b"games = [\"made-up\", \"made-up-small\"]",
+            ),
+            ("models/made-up.glb", b"x"),
+        ];
+        let all = Appearances::read(files.into_iter(), |f| f.contains("made-up"));
+        assert_eq!(all.0.len(), 2);
+        assert_eq!(
+            all.private_games(),
+            std::collections::HashSet::from(["made-up", "made-up-small"].map(String::from))
+        );
+        assert!(Appearances::built_in().private_games().is_empty());
     }
 
     #[test]

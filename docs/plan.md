@@ -600,11 +600,12 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   under "Your move." until the player chooses something (then how to go on from there, as
   before), and under whose move it is for everyone else. A game that says nothing keeps the
   generic hints.
-- Commercial games are not shown, even when a server offers them, until bingle-3d has a private
-  overlay build of its own (as Bingle's ADR 0127). The client may not name them, so it asked
-  Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its private
-  overlay `private`, and the client, now requiring 1.8, leaves them and their tables out of the
-  *New* and *Active* lists (`session::public`). A public server marks none.
+- Commercial games are not shown, even when a server offers them, unless the private folder
+  has their look (below, *Private games*; Bingle's ADR 0127). The client may not name them, so
+  it asked Bingle to mark them (bingle#260): API 1.8 marks the games a server builds from its
+  private overlay `private`, and the client, now requiring 1.8, leaves those without a look out
+  of the *New* and *Active* lists, and their tables (`session::public`). A public server marks
+  none.
 - A board's lines are as thick round the outside as between its cells: the darkened layer under
   the cells is grown by a cell's margin, since round the outside only one cell's margin made the
   line (half as thick). The cells stand only 0.3 mm proud of the lines, not 1.2 mm: the deeper
@@ -896,6 +897,34 @@ shared code names no game:
   strike and spare marks are the server's, drawn as text.
 - **Next**: the maintainer's eye on it, and a game bowled through.
 
+### Private games: the private folder (2026-11-24)
+
+The games Bingle builds from its private overlay (ADR 0127) are drawn from a folder of looks
+this repository may not hold (decision 2). This repository names none of them, here too.
+
+- **The private folder** is laid out as `assets/` is: `appearance/*.toml`, and any models,
+  textures, sounds and pictures of its own. `--private-dir`, else `BINGLE3D_PRIVATE_DIR`, else
+  `config.toml`'s `private_dir` names it. Its files are read once at start-up and found by the
+  same paths as ours (`assets::all`), so a private look names our models (the disc and the
+  ring) or its own the same way. A file in place of one of ours is left out, and logged: a
+  private look adds to the client, and never changes what another game draws.
+- **A private game is shown when the folder has its look** (`Appearances::private_games`,
+  `session::public`); without one it stays hidden, as before. The binary is the same for
+  everyone.
+- **Its home is the overlay**: `bingle-3d/assets/` in `bingle-private`, beside the server's
+  code for the same games, with an asset pipeline of its own there when a game needs models of
+  its own. `cargo test` with `BINGLE3D_PRIVATE_DIR` set also checks the folder's looks (they
+  read, and name only files and materials that exist), for the overlay's CI.
+- **The first** (its look in the overlay) is a game of rings and two-sided markers on a points
+  board: the ring and disc models (#48), each seat's side of a marker up and a marker turned
+  over where it lies (`sides.rs`), and the view's tints stamped round what stands there. It is
+  watched and played from the generic code, with no change to it.
+- Not built for it, and generic when they are: what a selection turns over, shown before the
+  move is sent (the server says only what it takes, `captures`: a Bingle issue); a count of
+  the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup
+  beside the board when nothing counts it; and the piece held under the pointer when a
+  selection does not name it (a disc is shown where a ring is placed).
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
@@ -904,8 +933,7 @@ shared code names no game:
 - More games: boards that are neither a grid nor hexagons, reserves beside the board (Tak's
   stones in hand), drawn from their definitions.
 - Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
-  reward it; the private overlay's games' appearance loaded from a configured folder, without
-  this repository naming them (decision 2).
+  reward it; more of the private overlay's games (*Private games*).
 - Maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles. (Release builds:
   decision 11.)
 
@@ -984,7 +1012,8 @@ Settled 2026-11-16:
    packaged with the binary. Downloading from the server waits until a data pack needs it.
 2. **Private games' appearance is loaded from a folder at run time.** The binary is the same for
    everyone; a private build is the public binary plus a folder of appearance files from
-   `bingle-private`, found by a configured path. Shared code still names no game.
+   `bingle-private`, found by a configured path. Shared code still names no game. (Built
+   2026-11-24: a private game is shown when that folder has its look; *Private games*.)
 3. **Bingle publishes a schema and an API version** (done in
    [bingle#212](https://github.com/noderunner/bingle/issues/212), Bingle's ADR 0134), so the client
    checks the server it talks to at start-up and says clearly when it is too old or too new, rather
