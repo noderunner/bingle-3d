@@ -31,6 +31,7 @@ STEPS = [
     "tak",
     "fences",
     "tiles",
+    "move_tiles",
     "playing_cards",
     "card_faces",
     "dice",

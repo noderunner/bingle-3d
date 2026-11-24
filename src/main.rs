@@ -33,6 +33,7 @@ mod hud;
 mod lobby;
 mod login;
 mod look;
+mod move_tiles;
 mod net;
 mod new_game;
 mod patience;
@@ -220,6 +221,7 @@ fn main() -> AppExit {
             (
                 board::BoardPlugin,
                 card_table::CardTablePlugin,
+                move_tiles::MoveTilesPlugin,
                 highlight::HighlightPlugin,
             ),
             sounds::SoundsPlugin {

@@ -122,7 +122,7 @@ const GLYPH_SIZE: f32 = 0.44;
 const ADVANCE: f32 = 0.36;
 
 /// Where a glyph is in the atlas, if it has one.
-fn glyph(ch: char) -> Option<usize> {
+pub fn glyph(ch: char) -> Option<usize> {
     GLYPHS.find(ch.to_ascii_lowercase())
 }
 
@@ -139,7 +139,7 @@ fn glyphs(text: &str) -> Vec<(usize, f32)> {
 
 /// A glyph's square, flat on the table and reading from the player's side (its top away from
 /// them), its texture coordinates its cell of the atlas.
-fn glyph_mesh(index: usize, size: f32) -> Mesh {
+pub fn glyph_mesh(index: usize, size: f32) -> Mesh {
     let (col, row) = ((index % COLUMNS) as f32, (index / COLUMNS) as f32);
     let mut mesh = Rectangle::new(size, size)
         .mesh()
@@ -154,6 +154,25 @@ fn glyph_mesh(index: usize, size: f32) -> Mesh {
         warn!("an engraved glyph: {e}");
     }
     mesh
+}
+
+/// The cut a glyph is engraved with: dark where it is deep, its walls catching the light, laid
+/// over the wood it is cut into.
+pub fn engraving(server: &AssetServer) -> StandardMaterial {
+    StandardMaterial {
+        base_color_texture: Some(textures::load(
+            server,
+            "textures/engraving/glyphs_albedo.png",
+        )),
+        normal_map_texture: Some(textures::load(
+            server,
+            "textures/engraving/glyphs_normal.png",
+        )),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.8,
+        reflectance: 0.3,
+        ..default()
+    }
 }
 
 /// The engraved coordinates of the board being shown.
@@ -188,21 +207,7 @@ fn sync_labels(
     }
     let layout = Layout::new(&table.info.board.positions);
     let surface = Surface::of(&table.info.board, appearances.for_game(&table.info.id));
-    // The cut: dark where it is deep, its walls catching the light.
-    let material = materials.add(StandardMaterial {
-        base_color_texture: Some(textures::load(
-            &server,
-            "textures/engraving/glyphs_albedo.png",
-        )),
-        normal_map_texture: Some(textures::load(
-            &server,
-            "textures/engraving/glyphs_normal.png",
-        )),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.8,
-        reflectance: 0.3,
-        ..default()
-    });
+    let material = materials.add(engraving(&server));
     let size = layout.pitch * GLYPH_SIZE;
     let mut shapes: Vec<Option<Handle<Mesh>>> = vec![None; GLYPHS.len()];
     let root = commands
