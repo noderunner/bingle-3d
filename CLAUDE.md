@@ -296,7 +296,8 @@ A game's own rules and its players' words keep their terms.
   changing hands is turned over, `board::dress_sides` and `flip_pieces` drawing it); what a
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
-  (`[sounds]`), a chessboard's two
+  (`[sounds]`), parts of its model in materials of their own (`parts`: an engraving's paint,
+  every seat's alike; `board::dress_parts`), a chessboard's two
   materials (`[board] squares`), its inlaid
   border (`[board] border`), a material for the cells of a region the board names
   (`[board.regions]`: Fist's keep), and the piece
@@ -311,7 +312,9 @@ A game's own rules and its players' words keep their terms.
   else says how tall a model is). The board is one slab
   (`src/slab.rs`: its outline, rounded rim, grid lines, and the shading of a goal's cells,
   geometry with no systems) with the cells cut into it, or, for a game whose appearance says
-  `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings; `BoardWood` is its wood, chosen by `src/wood_choice.rs`
+  `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings, or for
+  `on = "table"` no board at all: the cells unseen on the table, raised to the top of what
+  stands on them (`raise_cells`), the camera and the supply kept to the middle (`table_frame`); `BoardWood` is its wood, chosen by `src/wood_choice.rs`
   (stopgap buttons), and the materials made of it are built again when it changes.
   `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
   and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres

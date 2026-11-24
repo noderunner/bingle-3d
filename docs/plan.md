@@ -939,6 +939,21 @@ this repository may not hold (decision 2). This repository names none of them, h
   over the board on the way. The tile and the ink stamp are the pipeline's (`move_tiles`).
 - Not built for it: a hint on the tile of where the chosen card would take the piece under the
   pointer, and the tiles in the showcase. (The squares the view tints are its look's stamps.)
+- **The third** has no board: tiles laid on the table, which grow as they are placed and moved,
+  and climb on each other. **A game with no board** (the look's `[board] on = "table"`, as the
+  web page's `style: free`; the API does not say it) has no slab, lines or coordinates: its
+  positions are unseen cells on the table, each lit when a click there would be taken, and
+  raised to the top of what stands on it, so a climb is lit where it is seen (`raise_cells`).
+  The server's field is far wider than play, so the camera, and what stands beside the board
+  (the supply), keep to the cells within five of the middle (`table_frame`); the field keeps
+  the layout's pitch, so its tiles are a little smaller than a boxed set's. **A piece's own
+  parts** (the look's `parts`): its model's parts after the first in materials of their own,
+  the same on every seat's piece, as a child of the piece made wherever the piece is
+  (`dress_parts`, as `dress_sides` dresses a disc): an engraving's paint in a tile of its
+  seat's colour. The tiles are the overlay's own models, made by a pipeline script there that
+  uses this one's helpers.
+- Not built for it: a seat's supply lying face up (it stands on edge, as any flat piece's
+  does), and the parts in the showcase.
 
 ### After that
 

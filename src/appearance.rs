@@ -6,15 +6,17 @@
 //! game id, and may give:
 //! - `pieces.<piece id>`: the glTF `model` a piece is drawn as (one the game does not name is
 //!   the generic stone), how it `stands` (`Stands`), and a `material` of its own, when it is not
-//!   its seat's; or, for a piece of two sides (`sides.rs`), the material of each of its
+//!   its seat's; `parts` of its model drawn in materials of their own, whoever's it is (an
+//!   picture inlaid in a tile); or, for a piece of two sides (`sides.rs`), the material of each of its
 //!   model's two parts (`sides`) and which side each seat's are up (`up`);
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
 //!   its goal's edges are stained; `.colour`, the seat's colour in the panels. A colour word no
 //!   seat plays may have one too, for the pieces that are nobody's;
 //! - `materials.<name>`: those materials (`look::MaterialSpec`);
 //! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
-//!   than in its spaces (the default, `cells`). The web page's `style: points` is its own choice
-//!   of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
+//!   than in its spaces (the default, `cells`); `table` for one played on the table itself, with
+//!   no board, its positions unseen until lit. The web page's `style: points` and `style: free`
+//!   are its own choice of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
 //!   game's board, as a Go board's star points are.
 //! - `bowls`: a bowl of its stones for each seat, beside the board: the bowl's model, the heap of
 //!   stones in it, and the material the bowl is made of;
@@ -272,6 +274,8 @@ pub enum PlayOn {
     #[default]
     Cells,
     Points,
+    /// On the table itself: no board is drawn, and a position is seen only when it is lit.
+    Table,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -293,6 +297,11 @@ pub struct PieceLook {
     /// first part's for a seat not named.
     #[serde(default)]
     pub up: BTreeMap<String, String>,
+    /// Parts of its model after the first drawn in a material of their own, by the part's name:
+    /// the same on every seat's piece (an picture inlaid in a tile), the first part being its
+    /// seat's material. Not with `sides`.
+    #[serde(default)]
+    pub parts: BTreeMap<String, String>,
 }
 
 /// How a piece is set down on its position.
@@ -324,6 +333,31 @@ pub struct SeatLook {
     /// The seat's colour wherever the interface shows it (the dot by its name), in sRGB: what its
     /// pieces look like, rather than its colour word.
     pub colour: Option<[f32; 3]>,
+}
+
+/// What is wrong with a piece's parts of their own, if it has them: each must be one of its
+/// model's parts after the first, of a material the file defines, and not on a piece of two
+/// sides.
+fn parts_problems(piece: &PieceLook, materials: &BTreeMap<String, MaterialSpec>) -> Vec<String> {
+    let mut out = Vec::new();
+    if piece.parts.is_empty() {
+        return out;
+    }
+    if !piece.sides.is_empty() {
+        out.push("parts and sides".into());
+    }
+    let parts = assets::model_parts(&piece.model);
+    for (part, name) in &piece.parts {
+        if !parts.iter().skip(1).any(|p| p == part) {
+            out.push(format!(
+                "part {part} is none of the model's after its first: {parts:?}"
+            ));
+        }
+        if !materials.contains_key(name) {
+            out.push(format!("no material {name}"));
+        }
+    }
+    out
 }
 
 /// What is wrong with a piece's two sides, if it has them: they must be its model's two parts,
@@ -396,6 +430,7 @@ impl Appearance {
             out.extend(
                 sides_problems(piece, &self.materials)
                     .into_iter()
+                    .chain(parts_problems(piece, &self.materials))
                     .map(|p| format!("piece {id}: {p}")),
             );
         }
@@ -605,6 +640,32 @@ mod tests {
             count += 1;
         }
         assert_eq!(Appearances::built_in().0.len(), count);
+    }
+
+    #[test]
+    fn a_part_of_a_pieces_own_is_one_of_its_models_after_the_first_in_a_material_it_has() {
+        let look = |parts: &str| {
+            Appearance::parse(&format!(
+                "games = [\"t\"]\n[pieces.die]\nmodel = \"models/die.glb\"\nparts = {{ {parts} }}\n\
+                 [materials.ink]\ntint = [0.1, 0.1, 0.1]\n"
+            ))
+            .unwrap()
+            .problems()
+        };
+        assert!(
+            look("pips = \"ink\"").is_empty(),
+            "{:?}",
+            look("pips = \"ink\"")
+        );
+        let first = look("body = \"ink\"");
+        assert!(first.iter().any(|p| p.contains("part body")), "{first:?}");
+        let none = look("handle = \"ink\"");
+        assert!(none.iter().any(|p| p.contains("part handle")), "{none:?}");
+        let unmade = look("pips = \"paint\"");
+        assert!(
+            unmade.iter().any(|p| p.contains("no material paint")),
+            "{unmade:?}"
+        );
     }
 
     /// The private folder's looks, when the variable names one (as the private overlay's CI
