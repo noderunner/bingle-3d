@@ -89,7 +89,14 @@ impl Plugin for NetPlugin {
                     size
                 }),
             });
-        let session = Session::new(self.server.as_deref(), store);
+        // The games the private folder has a look for are shown, though the server marks them
+        // private (`appearance.rs` reads the folder before this).
+        let private_looks = app
+            .world()
+            .get_resource::<crate::appearance::Appearances>()
+            .map(|a| a.private_games())
+            .unwrap_or_default();
+        let session = Session::new(self.server.as_deref(), store).with_private_looks(private_looks);
         let status = ServerStatus {
             server: session.server(),
             connection: Connection::Connecting,

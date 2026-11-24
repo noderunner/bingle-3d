@@ -343,6 +343,9 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   requests, and invitations to games, and *Write* opens a conversation with a friend; your
   friends see you online while the client runs.
 - `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
+- A server built with Bingle's private overlay offers games this repository does not draw. The
+  client shows them only with the private folder of their looks (`bingle-3d/assets` in the
+  overlay): `--private-dir DIR`, `BINGLE3D_PRIVATE_DIR`, or `private_dir` in `config.toml`.
 
 **Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 with the *Desktop development with C++* workload, then rustup, then `cargo run`.

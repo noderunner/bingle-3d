@@ -174,9 +174,11 @@ pub struct Session {
     session_ended: bool,
     /// The server's bots, once read; nor do they.
     bots: Option<Vec<BotInfo>>,
-    /// The games built from the server's private overlay (commercial games), by id: left out
-    /// of every list this build shows (`public`).
+    /// The games built from the server's private overlay (commercial games) that the private
+    /// folder has no look for, by id: left out of every list this client shows (`public`).
     hidden: HashSet<String>,
+    /// The games the private folder has a look for, by id (`Appearances::private_games`).
+    private_looks: HashSet<String>,
 }
 
 impl Session {
@@ -195,7 +197,14 @@ impl Session {
             account: None,
             session_ended: false,
             hidden: HashSet::new(),
+            private_looks: HashSet::new(),
         }
+    }
+
+    /// The games the private folder has a look for: shown, though the server marks them private.
+    pub fn with_private_looks(mut self, games: HashSet<String>) -> Self {
+        self.private_looks = games;
+        self
     }
 
     /// The address read, and what reaches it: the certificates trusted there, and an agent.
@@ -323,7 +332,7 @@ impl Session {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let (index, api_version) = self.index(&url)?;
         self.check_account(&url)?;
-        let (defs, hidden) = public(self.get_as_me(&url, "/api/game-defs")?);
+        let (defs, hidden) = public(self.get_as_me(&url, "/api/game-defs")?, &self.private_looks);
         self.hidden = hidden;
         let games: OpenGames = self.get_as_me(&url, "/api/games")?;
         Ok(Snapshot {
@@ -1302,11 +1311,14 @@ pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGam
 }
 
 /// `GET /api/games` for `query`, with as many games as the server lists at once.
-/// The games this build shows, and the ids of those it leaves out: the server's private
-/// overlay's (commercial games, which bingle-3d leaves to a private build of its own; Bingle's
-/// ADR 0127). A public server marks none.
-pub fn public(defs: Vec<GameDef>) -> (Vec<GameDef>, HashSet<String>) {
-    let (hidden, shown): (Vec<GameDef>, Vec<GameDef>) = defs.into_iter().partition(|d| d.private);
+/// The games this client shows, and the ids of those it leaves out: the server's private
+/// overlay's (commercial games, whose looks this repository may not hold: Bingle's ADR 0127),
+/// but those the private folder has a look for (`looks`; plan, decision 2). A public server
+/// marks none.
+pub fn public(defs: Vec<GameDef>, looks: &HashSet<String>) -> (Vec<GameDef>, HashSet<String>) {
+    let (hidden, shown): (Vec<GameDef>, Vec<GameDef>) = defs
+        .into_iter()
+        .partition(|d| d.private && !looks.contains(&d.id));
     (shown, hidden.into_iter().map(|d| d.id).collect())
 }
 
@@ -1468,19 +1480,26 @@ pub(crate) mod tests {
             tutorials: 0,
             private,
         };
-        let (shown, hidden) = public(vec![def("hex", false), def("p", true), def("go", false)]);
+        let none = HashSet::new();
+        let defs = || vec![def("hex", false), def("p", true), def("go", false)];
+        let (shown, hidden) = public(defs(), &none);
         let ids: Vec<&str> = shown.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(ids, ["hex", "go"]);
         assert_eq!(hidden, HashSet::from(["p".to_string()]));
         // A public server marks none.
-        assert!(public(vec![def("hex", false)]).1.is_empty());
+        assert!(public(vec![def("hex", false)], &none).1.is_empty());
+        // The private folder has a look for it: shown.
+        let looks = HashSet::from(["p".to_string()]);
+        let (shown, hidden) = public(defs(), &looks);
+        assert_eq!(shown.len(), 3);
+        assert!(hidden.is_empty());
         // Read from the server: absent is public.
         let read: Vec<GameDef> = serde_json::from_str(
             r#"[{"id":"a","name":"A","seats_required":2},
                 {"id":"b","name":"B","seats_required":2,"private":true}]"#,
         )
         .unwrap();
-        assert_eq!(public(read).1, HashSet::from(["b".to_string()]));
+        assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
     const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.10.0","docs":"/api/docs"}"#;
