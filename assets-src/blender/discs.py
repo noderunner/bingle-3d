@@ -7,7 +7,7 @@ As it lies here the light side is up; turned over about any axis across it, the 
 `models/disc_large.glb` is the same disc 24 mm across and 4.4 mm thick, to fill a square of a
 28 mm board.
 
-`models/ring.glb`: a ring 25 mm across and 7 mm tall, with a hole 17 mm across, so a disc lies
+`models/ring.glb`: a ring 25 mm across and 4 mm tall, with a hole 17 mm across, so a disc lies
 inside it with a millimetre to spare, and neighbours on a 28 mm lattice do not touch. One part, with
 no material: an appearance file says what each seat's rings are made of.
 
@@ -36,7 +36,7 @@ PARTS = ["light", "dark"]
 
 RING_INNER = 8.5 * MM
 RING_OUTER = 12.5 * MM
-RING_HEIGHT = 7.0 * MM
+RING_HEIGHT = 4.0 * MM
 # The base's corners eased, and the walls leaning in a little towards the rounded top.
 RING_EASE = 0.6 * MM
 RING_LEAN = 0.25 * MM

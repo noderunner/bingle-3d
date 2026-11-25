@@ -8,7 +8,9 @@
 //!   the generic stone), how it `stands` (`Stands`), and a `material` of its own, when it is not
 //!   its seat's; `parts` of its model drawn in materials of their own, whoever's it is (an
 //!   picture inlaid in a tile); or, for a piece of two sides (`sides.rs`), the material of each of its
-//!   model's two parts (`sides`) and which side each seat's are up (`up`);
+//!   model's two parts (`sides`) and which side each seat's are up (`up`); and the piece a move
+//!   of it `leaves` where it started (a disc dropped in a ring that then moves), shown while
+//!   the move is built, since the server does not say;
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
 //!   its goal's edges are stained; `.colour`, the seat's colour in the panels. A colour word no
 //!   seat plays may have one too, for the pieces that are nobody's;
@@ -17,7 +19,8 @@
 //!   than in its spaces (the default, `cells`); `table` for one played on the table itself, with
 //!   no board, its positions unseen until lit. The web page's `style: points` and `style: free`
 //!   are its own choice of the same; the API does not say it. `board.marks.<game id>`: positions marked on that
-//!   game's board, as a Go board's star points are.
+//!   game's board, as a Go board's star points are. `board.margin`: a wider margin of wood
+//!   round the positions, in their spacing (room for a score kept on it);
 //! - `bowls`: a bowl of its stones for each seat, beside the board: the bowl's model, the heap of
 //!   stones in it, and the material the bowl is made of;
 //! - `card.pictures.<game id>`: the picture on the game's card in the main screen's list (an
@@ -29,6 +32,9 @@
 //!   `edge`, the default for a flat piece, or `flat`, its face up to be seen), and, for a game
 //!   whose view counts it rather than its reserves, the view's `counter` and the choice that
 //!   `take`s one (`supply.rs`);
+//! - `score`: a seat's score as the view counts it (`counter`), kept on a row of dots on the
+//!   board's margin at the seat's right hand, one for each point its win wants, each with a
+//!   `piece` of the seat's own on it once that piece has left the board (`trays.rs`);
 //! - `stock.counts`: the view's count of each kind of piece both seats have still to place (a
 //!   draft's tiles), shown beside the board.
 //! - `move_tiles`: the view's move cards, each a tile of wood beside the board with the squares
@@ -73,6 +79,9 @@ pub struct Appearance {
     /// The trays a seat keeps what it captures in (`trays.rs`), when the game counts that.
     #[serde(default)]
     pub trays: TrayLook,
+    /// A seat's score kept on the board's margin with its own pieces, one on each of a row of
+    /// dots, when the view counts it (`trays.rs`).
+    pub score: Option<ScoreLook>,
     /// How the pieces a seat has left to place lie, and where they are counted when the view
     /// counts them rather than the reserves (`supply.rs`).
     pub supply: Option<SupplyLook>,
@@ -256,6 +265,19 @@ pub struct TrayLook {
     pub size: Option<f32>,
 }
 
+/// A seat's score as the view counts it, kept with pieces of its own that left the board: a
+/// dot on the board's margin at the seat's right hand for each point its win wants (the
+/// counter's `max`), and on each dot one of those pieces, as the count rises.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoreLook {
+    /// The view's counter of each seat that is its score.
+    pub counter: String,
+    /// The kind of piece, by its id in `pieces`, that goes on a dot: one of the seat's own
+    /// that leaves the board as its score rises.
+    pub piece: String,
+}
+
 /// How a game shows on its card in the list of games to start.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -284,6 +306,9 @@ pub struct BoardLook {
     /// the region's name: over the squares' materials, or the board's wood.
     #[serde(default)]
     pub regions: BTreeMap<String, String>,
+    /// How far the wood reaches beyond the outermost spaces or points, in the spacing of the
+    /// positions, when it is wider than the usual (room for a score kept on it).
+    pub margin: Option<f32>,
 }
 
 impl BoardLook {
@@ -327,6 +352,10 @@ pub struct PieceLook {
     /// seat's material. Not with `sides`.
     #[serde(default)]
     pub parts: BTreeMap<String, String>,
+    /// The kind of piece, by its id in `pieces`, that a move of this one leaves where it
+    /// started, in the mover's colour (a disc dropped in a ring before the ring moves). The
+    /// server says only where the move goes; this shows the rest while it is built.
+    pub leaves: Option<String>,
 }
 
 /// How a piece is set down on its position.
@@ -534,6 +563,21 @@ impl Appearance {
             && !self.pieces.contains_key(id)
         {
             out.push(format!("aimed: no piece {id}"));
+        }
+        for (id, piece) in &self.pieces {
+            if let Some(left) = &piece.leaves
+                && (!self.pieces.contains_key(left) || left == id)
+            {
+                out.push(format!("piece {id}: leaves no other piece {left}"));
+            }
+        }
+        if let Some(score) = &self.score
+            && !self.pieces.contains_key(&score.piece)
+        {
+            out.push(format!("score: no piece {}", score.piece));
+        }
+        if self.board.margin.is_some_and(|m| !(0.5..=4.0).contains(&m)) {
+            out.push("board: a margin from 0.5 to 4".into());
         }
         for (key, tint) in &self.tints {
             match (&tint.piece, &tint.stamp) {
@@ -951,6 +995,53 @@ mod tests {
         let half = Appearance::parse("games = [\"g\"]\n[supply]\ncounter = \"stock\"").unwrap();
         assert_eq!(half.problems().len(), 1, "{:?}", half.problems());
         assert!(Appearance::parse("games = [\"g\"]\n[supply]\nlie = \"askew\"").is_err());
+    }
+
+    #[test]
+    fn a_piece_may_leave_another_and_a_score_be_kept_on_a_wide_margin() {
+        let a = Appearance::parse(
+            r#"
+            games = ["g"]
+            [board]
+            margin = 2.2
+            [pieces.ring]
+            model = "models/ring.glb"
+            leaves = "disc"
+            [pieces.disc]
+            model = "models/disc.glb"
+            [score]
+            counter = "rings"
+            piece = "ring"
+            "#,
+        )
+        .unwrap();
+        assert!(a.problems().is_empty(), "{:?}", a.problems());
+        assert_eq!(a.board.margin, Some(2.2));
+        assert_eq!(a.pieces["ring"].leaves.as_deref(), Some("disc"));
+        let score = a.score.as_ref().unwrap();
+        assert_eq!(
+            (score.counter.as_str(), score.piece.as_str()),
+            ("rings", "ring")
+        );
+
+        let wrong = Appearance::parse(
+            r#"
+            games = ["g"]
+            [board]
+            margin = 9.0
+            [pieces.ring]
+            model = "models/ring.glb"
+            leaves = "ring"
+            [pieces.disc]
+            model = "models/disc.glb"
+            leaves = "nothing"
+            [score]
+            counter = "rings"
+            piece = "absent"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(wrong.problems().len(), 4, "{:?}", wrong.problems());
     }
 
     #[test]

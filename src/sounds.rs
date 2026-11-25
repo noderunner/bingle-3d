@@ -343,6 +343,7 @@ mod tests {
             options: vec![option("1"), option("2")],
             complete: false,
             may_end: false,
+            state: None,
         });
         let before = Moment::of(Some(&turn), true);
         turn.gesture(&Gesture::pos("b2"));

@@ -43,7 +43,9 @@ use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoar
 use crate::highlight::{Lit, Outline, Tone};
 use crate::look::{self, MaterialSpec, seat_colour};
 use crate::net::WatchStatus;
-use crate::net::api::{Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard};
+use crate::net::api::{
+    Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard, Position,
+};
 use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeToPlace, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
@@ -142,6 +144,10 @@ const LINE_WIDTH: f32 = 0.035;
 const EDGE_LINE_WIDTH: f32 = 0.07;
 /// A marked position's dot (a Go board's star points), across, in pitches.
 const MARK_SIZE: f32 = 0.2;
+/// A score's dots (`trays::marks`): how far beyond the outermost positions, and how far apart,
+/// in pitches; room for a ring as wide as most of a pitch round each.
+const SCORE_OUT: f32 = 1.2;
+const SCORE_STEP: f32 = 1.15;
 
 /// What a game is played on: its board's spaces (cells of a shape), or the points where its
 /// lines cross. The server says which positions there are and where; which of these they are
@@ -185,8 +191,23 @@ impl Surface {
         }
     }
 
+    /// How far the board's wood reaches beyond its outermost spaces' edges, or its outermost
+    /// points, in pitches: as the game's look says (room for what it lays there), or the
+    /// usual.
+    pub fn margin(self, look: Option<&Appearance>) -> f32 {
+        let usual = match self {
+            Surface::Points => POINTS_MARGIN,
+            Surface::Cells(_) | Surface::Table(_) => MARGIN,
+        };
+        match self {
+            Surface::Table(_) => usual,
+            _ => look.and_then(|l| l.board.margin).unwrap_or(usual),
+        }
+    }
+
     /// Where the flat of the board ends beyond the outermost position's middle, in pitches: the
-    /// margin of wood, short of the rounded rim.
+    /// usual margin of wood, short of the rounded rim. A wider margin a look asks for is room
+    /// for what it lays there: the coordinates keep to the lines.
     pub fn flat_to(self, along: bool, pitch: f32) -> f32 {
         let margin = match self {
             Surface::Cells(_) | Surface::Table(_) => self.reach(along) + MARGIN,
@@ -486,6 +507,9 @@ struct Kit {
     surface: f32,
     /// The kind of piece what a move aims is shown as, if the game's look says.
     aimed: Option<String>,
+    /// The kind of piece a move of each kind leaves where it started, where the game's look
+    /// says (a disc dropped in a ring that moves on).
+    leaves: HashMap<String, String>,
     /// Where a stone taken from each colour's bowl waits, by colour word.
     bowls: HashMap<String, Vec3>,
     /// Each seat's supply beside the board, by its colour word, and each kind of piece's pool;
@@ -520,6 +544,9 @@ struct Kit {
     trays: Vec<Tray>,
     counter: String,
     tray_scale: f32,
+    /// A score kept on dots on the board's margin in place of trays, for a game whose look
+    /// says: the view's counter, and the kind of piece of a seat's own that goes on a dot.
+    score: Option<(String, String)>,
     /// How far towards the player the first seat's tray reaches, if there are trays.
     front: f32,
     /// How each key of the view's tints is drawn, for a game whose look says (`tints.rs`).
@@ -646,6 +673,7 @@ struct InSupply {
 /// plays, and where each square's middle is.
 struct Tray {
     seat: String,
+    number: u32,
     colours: Vec<String>,
     squares: Vec<Vec3>,
 }
@@ -993,6 +1021,7 @@ fn sync_board(
         commands.insert_resource(BoardOutline::default());
         return;
     };
+    let preview = watch.turn.as_ref().and_then(Turn::preview);
     // A card game's cards are laid in place of its board, which is nothing to look at
     // (`card_table.rs`).
     if crate::card_table::on_table(&table.info, drawing.appearances.for_game(&table.info.id)) {
@@ -1042,7 +1071,17 @@ fn sync_board(
         });
         // A board just built shows the position as it is, without dropping every piece.
         let root = kit.0;
-        place_pieces(&mut commands, root, &kit.1, &layout, table, &[], None, &[]);
+        let wanted = wanted_pieces(table, &kit.1, preview);
+        place_pieces(
+            &mut commands,
+            root,
+            &kit.1,
+            &layout,
+            (table, &wanted),
+            &[],
+            None,
+            &[],
+        );
         fill_trays(&mut commands, root, &kit.1, table, &[], &[]);
         commands.entity(root).insert(kit.1);
         return;
@@ -1059,7 +1098,7 @@ fn sync_board(
         .chain(from_bowls.iter().filter_map(|f| f.cell.as_deref()))
         .collect();
     // What left the board and was captured goes to its captor's tray, rather than away.
-    let wanted = wanted_pieces(table, kit);
+    let wanted = wanted_pieces(table, kit, preview);
     let gone: Vec<(Entity, &PieceAt)> = shown
         .iter()
         .filter(|(_, at)| !wanted.contains(at))
@@ -1072,7 +1111,7 @@ fn sync_board(
         root,
         kit,
         &layout,
-        table,
+        (table, &wanted),
         &shown,
         Some(&put),
         &taken,
@@ -1132,12 +1171,11 @@ fn place_pieces(
     root: Entity,
     kit: &Kit,
     layout: &Layout,
-    table: &Table,
+    (table, wanted): (&Table, &[PieceAt]),
     shown: &[(Entity, &PieceAt)],
     animate: Option<&[&str]>,
     kept: &[Entity],
 ) {
-    let wanted = wanted_pieces(table, kit);
     // A piece of two sides that changed hands is turned over where it lies, rather than taken
     // away and another put down; at once on a board just built.
     let from = table
@@ -1271,15 +1309,35 @@ fn fill_trays(
     let counts: Vec<u32> = kit
         .trays
         .iter()
-        .map(|t| table.state.state.count(&t.seat, &kit.counter))
+        .map(|t| match &kit.score {
+            Some((counter, _)) => table
+                .state
+                .state
+                .view_counter(t.number, counter)
+                .unwrap_or(0),
+            None => table.state.state.count(&t.seat, &kit.counter),
+        })
         .collect();
     let colours: Vec<Vec<String>> = kit.trays.iter().map(|t| t.colours.clone()).collect();
+    // A score kept with the seats' own pieces takes only its kind (a ring, not the row's
+    // discs that went with it).
+    let gone: Vec<(Entity, &PieceAt)> = gone
+        .iter()
+        .filter(|(_, at)| {
+            kit.score
+                .as_ref()
+                .is_none_or(|(_, piece)| *piece == at.piece.piece)
+        })
+        .copied()
+        .collect();
+    let gone = gone.as_slice();
     let gone_colours: Vec<&str> = gone
         .iter()
         .map(|(_, at)| kit.colour_of(&at.piece.piece, &at.piece.color))
         .collect();
     let mut taken = Vec::new();
-    for (seat, change) in trays::fill(&had, &counts, &colours, &gone_colours)
+    let own = kit.score.is_some();
+    for (seat, change) in trays::fill(&had, &counts, &colours, &gone_colours, own)
         .into_iter()
         .enumerate()
     {
@@ -1316,7 +1374,10 @@ fn fill_trays(
                     taken.push(entity);
                 }
                 trays::Source::Unseen(colour) => {
-                    let id = kit.kind_in(&colour);
+                    let id = match &kit.score {
+                        Some((_, piece)) => piece.as_str(),
+                        None => kit.kind_in(&colour),
+                    };
                     let Some(to) = kit.in_tray(id, &colour, seat, index) else {
                         continue;
                     };
@@ -1414,19 +1475,31 @@ fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> Stance {
 }
 
 /// Every piece of the position, bottom of each stack first.
-fn wanted_pieces(table: &Table, kit: &Kit) -> Vec<PieceAt> {
+fn wanted_pieces(table: &Table, kit: &Kit, preview: Option<&Position>) -> Vec<PieceAt> {
     let mut out = Vec::new();
     let tints = table.state.state.tints();
     for (cell, stack) in &table.state.state.cells {
         let mut under = kit.floor(&tints, cell);
         for (layer, piece) in stack.iter().enumerate() {
+            let mut piece = piece.clone();
+            // A piece of two sides that the move being built turns over (the discs a ring
+            // jumps) is shown turned, as the server's preview has it, until the move is played
+            // or taken back.
+            if let Some(after) = preview
+                .and_then(|p| p.cells.get(cell)?.get(layer))
+                .filter(|a| a.piece == piece.piece && a.color != piece.color)
+                .filter(|_| kit.piece(&piece.piece).sides.is_some())
+            {
+                piece.color = after.color.clone();
+            }
+            let height = kit.piece(&piece.piece).height;
             out.push(PieceAt {
                 cell: cell.clone(),
                 layer,
-                piece: piece.clone(),
+                piece,
                 under: (under * 1e6_f32).round() as u32,
             });
-            under += kit.piece(&piece.piece).height;
+            under += height;
         }
     }
     out
@@ -1486,9 +1559,9 @@ fn build_board(
         ),
         Surface::Points => slab::hull(&centres),
     };
+    let margin = surface.margin(tools.look);
     let outline = match surface {
-        Surface::Cells(_) => slab::grown(&playing, pitch * MARGIN, 6),
-        Surface::Points => slab::grown(&playing, pitch * POINTS_MARGIN, 6),
+        Surface::Cells(_) | Surface::Points => slab::grown(&playing, pitch * margin, 6),
         // No board: what stands round it (the supply) and the camera keep to the middle of the
         // table, where play is, however far its positions reach.
         Surface::Table(_) => slab::grown(
@@ -1842,15 +1915,61 @@ fn build_board(
         bowls_at = crate::bowls::spawn(commands, root, tools.server, bowls, bowl, seats, &edge);
     }
     // A tray in front of each seat for a game that counts what each captures, a square for each
-    // capture its win wants.
+    // capture its win wants; or, for a game whose look keeps a score with the seats' own pieces,
+    // a dot for each point on the margin at each seat's right hand.
+    let score = tools.look.and_then(|l| l.score.as_ref());
     let counter = table
         .info
         .counters
         .iter()
-        .find(|c| c.max > 0 && c.max <= trays::MOST);
-    let tray_size = tools.look.and_then(|l| l.trays.size).unwrap_or(trays::SIZE);
+        .find(|c| c.max > 0 && c.max <= trays::MOST)
+        .filter(|_| score.is_none());
+    let tray_size = match score {
+        Some(_) => 1.0,
+        None => tools.look.and_then(|l| l.trays.size).unwrap_or(trays::SIZE),
+    };
     let mut seat_trays = Vec::new();
     let mut front = 0.0;
+    let points = score
+        .and_then(|s| table.state.state.view_counter_max(1, &s.counter))
+        .filter(|n| (1..=trays::MOST).contains(n));
+    if let Some(n) = points {
+        let seats = &table.info.seats;
+        let at = trays::marks(
+            seats.len(),
+            &playing,
+            n as usize,
+            pitch * SCORE_OUT,
+            pitch * SCORE_STEP,
+        );
+        let dot = slab::cell_corners(CellShape::Spot, pitch * MARK_SIZE / 0.6);
+        let all: Vec<Vec2> = at.iter().flatten().copied().collect();
+        let ink = tools.material(&look::groove());
+        commands.spawn((
+            Name::new("Score's dots"),
+            Mesh3d(tools.meshes.add(look::world_uvs(
+                slab::flat_cells(&all, &dot, surface.height() + 0.00015),
+                Vec3::ZERO,
+            ))),
+            MeshMaterial3d(ink),
+            ChildOf(root),
+        ));
+        for (s, dots) in seats.iter().zip(at) {
+            seat_trays.push(Tray {
+                seat: s.color.clone(),
+                number: s.seat,
+                colours: if s.colors.is_empty() {
+                    vec![s.color.clone()]
+                } else {
+                    s.colors.clone()
+                },
+                squares: dots
+                    .iter()
+                    .map(|d| Vec3::new(d.x, surface.height(), d.y))
+                    .collect(),
+            });
+        }
+    }
     if let Some(counter) = counter {
         let spec = tools
             .look
@@ -1885,6 +2004,7 @@ fn build_board(
             );
             seat_trays.push(Tray {
                 seat: s.color.clone(),
+                number: s.seat,
                 colours: if s.colors.is_empty() {
                     vec![s.color.clone()]
                 } else {
@@ -2160,6 +2280,15 @@ fn build_board(
         woodwork: std::mem::take(&mut tools.woodwork),
         surface: surface.height(),
         aimed: tools.look.and_then(|l| l.aimed.clone()),
+        leaves: tools
+            .look
+            .map(|l| {
+                l.pieces
+                    .iter()
+                    .filter_map(|(id, p)| Some((id.clone(), p.leaves.clone()?)))
+                    .collect()
+            })
+            .unwrap_or_default(),
         bowls: bowls_at,
         piece_colour,
         dress,
@@ -2167,6 +2296,7 @@ fn build_board(
         trays: seat_trays,
         counter: counter.map(|c| c.id.clone()).unwrap_or_default(),
         tray_scale: pitch / PITCH * tray_size,
+        score: score.map(|s| (s.counter.clone(), s.piece.clone())),
         front,
         tints: tint_kits,
         stock,
@@ -2702,10 +2832,23 @@ fn show_turn(
             }
         }
     }
-    // The piece picked up to be moved (its selections do not have it clicked): under the
-    // pointer, in place of its arrow, and not in the way of a click on where it goes.
-    // Where the move being built has put it, if it has moved it already.
-    let lifted = turn.and_then(Turn::lifted).and_then(|from| {
+    // The piece picked up to be moved (its selections do not have it clicked; or it leaves
+    // something where it stood, as the game's look says): under the pointer, in place of its
+    // arrow, and not in the way of a click on where it goes. Where the move being built has put
+    // it, if it has moved it already.
+    let leaves = |from: &str| {
+        cells
+            .get(from)
+            .and_then(|s| s.last())
+            .is_some_and(|p| kit.leaves.contains_key(&p.piece))
+    };
+    let picked = turn.and_then(|t| {
+        t.carried()
+            .into_iter()
+            .find(|c| c.to.is_none() && leaves(c.from))
+            .map(|c| c.from)
+    });
+    let lifted = turn.and_then(Turn::lifted).or(picked).and_then(|from| {
         let top = (from.to_string(), after.get(from)?.len().checked_sub(1)?);
         Some(origin.get(&top).cloned().unwrap_or(top))
     });
@@ -2942,15 +3085,17 @@ fn show_taken(
         return;
     };
     // What the server says the move takes (`Turn::taking`), but where a piece the move carries
-    // lands on it: the piece arriving stands in its place.
+    // lands on it (the piece arriving stands in its place), or where one it carries away stood
+    // (what is taken there is what it left behind: `bowl_stones`).
     let taken: Vec<&str> = watch
         .turn
         .as_ref()
         .map(|t| {
             let landing: Vec<&str> = t.made.iter().filter_map(|s| s.to.as_deref()).collect();
+            let left: Vec<&str> = t.carried().iter().map(|c| c.from).collect();
             t.taking()
                 .into_iter()
-                .filter(|c| !landing.contains(c))
+                .filter(|c| !landing.contains(c) && !left.contains(c))
                 .collect()
         })
         .unwrap_or_default();
@@ -3145,9 +3290,90 @@ fn bowl_stones(
             }
         }
     }
-    // The stone a turn holds by itself (every click places one): under the pointer, in place of
-    // its arrow, from its bowl's source if it has one.
-    if let Some(piece) = turn.auto_hand() {
+    // What a move leaves where it started, as the game's look says (a disc dropped in the
+    // ring that then moves on): put down there from the hand as the piece is picked up, in the
+    // mover's colour, and see-through while a later selection of the move takes it off again
+    // (in a row that the move made).
+    let tints = table.state.state.tints();
+    let taking = turn.taking();
+    for c in turn.carried() {
+        let Some(stack) = cells.get(c.from).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let (moved, under) = stack.split_last().expect("not empty");
+        let (Some(left), Some(centre)) = (kit.leaves.get(&moved.piece), layout.centres.get(c.from))
+        else {
+            continue;
+        };
+        let to = kit.set_down(
+            left,
+            &moved.color,
+            *centre,
+            (c.from, under.len()),
+            kit.floor(&tints, c.from) + kit.stack_height(under),
+        );
+        let kind = kit.piece(left);
+        let material = if taking.contains(c.from) {
+            kind.ghost
+                .clone()
+                .or_else(|| kit.ghosts.get(&moved.color).cloned())
+                .unwrap_or_else(|| kit.ghost.clone())
+        } else {
+            kind.material
+                .clone()
+                .or_else(|| kit.materials.get(&moved.color).cloned())
+                .unwrap_or_default()
+        };
+        let placed = FromBowl {
+            source: HAND.to_string(),
+            piece: left.clone(),
+            cell: Some(c.from.to_string()),
+        };
+        let looks = (Mesh3d(kind.mesh.clone()), MeshMaterial3d(material));
+        if let Some((entity, _)) = take(&|f| f.cell.as_deref() == Some(c.from)) {
+            commands.entity(entity).insert(looks.1);
+            continue;
+        }
+        match take(&|f| f.cell.is_none() && f.source == HAND) {
+            // From under the pointer, where it was held.
+            Some((entity, _)) => {
+                commands.entity(entity).remove::<Held>().insert((
+                    placed,
+                    looks,
+                    Rest(to),
+                    Carry::Put(to),
+                    Visibility::Inherited,
+                ));
+            }
+            None => {
+                commands.spawn((
+                    Name::new(format!("{left} left on {}", c.from)),
+                    placed,
+                    looks,
+                    to,
+                    Rest(to),
+                    ChildOf(root),
+                ));
+            }
+        }
+    }
+    // What a move leaves, held before the piece it moves is picked up: every move begins by
+    // picking up a piece that leaves the same kind.
+    let leaving = {
+        let mut kinds = turn.moves_only().into_iter().map(|from| {
+            cells
+                .get(from)
+                .and_then(|s| s.last())
+                .and_then(|p| kit.leaves.get(&p.piece))
+        });
+        match kinds.next() {
+            Some(Some(first)) if kinds.all(|k| k == Some(first)) => Some(first.as_str()),
+            _ => None,
+        }
+    };
+    // The stone a turn holds by itself (every click places one), or what a move leaves: under
+    // the pointer, in place of its arrow, from its bowl's source if it has one.
+    if let Some(piece) = turn.auto_hand().or(leaving) {
         let source = kit
             .source_for(&Gesture::piece(piece), yours)
             .map_or_else(|| HAND.to_string(), |(s, _)| s);
@@ -3310,7 +3536,18 @@ fn show_tints(
     }
     let layout = Layout::new(&table.info.board.positions);
     let tints = table.state.state.tints();
-    let wanted: Vec<TintAt> = tints::shown(&tints, |key| kit.tints.contains_key(key))
+    // What the view stamps is what it points out, the preview's while a move is built (a line
+    // the move makes, to be removed next); what it lays is the board's own (terrain),
+    // which the move being built shows for itself.
+    let preview = watch
+        .turn
+        .as_ref()
+        .and_then(Turn::preview)
+        .map(|p| p.tints());
+    let laid = |key: &str| matches!(kit.tints.get(key), Some(TintKit::Laid { .. }));
+    let stamped = |key: &str| matches!(kit.tints.get(key), Some(TintKit::Stamp { .. }));
+    let wanted: Vec<TintAt> = tints::shown(&tints, laid)
+        .chain(tints::shown(preview.as_ref().unwrap_or(&tints), stamped))
         .map(|(cell, key)| TintAt {
             cell: cell.to_string(),
             key: key.to_string(),
@@ -4498,6 +4735,7 @@ mod tests {
                 options: vec![place("flat", "c3"), place("wall", "Sc3")],
                 complete: false,
                 may_end: false,
+                state: None,
             });
             turn.gesture(&Gesture {
                 kind: "piece".into(),
@@ -4665,6 +4903,7 @@ wood = "contrast"
                 options: vec![step("a2"), step("b1")],
                 complete: false,
                 may_end: false,
+                state: None,
             });
             turn.gesture(&Gesture {
                 kind: "action".into(),
@@ -4735,6 +4974,7 @@ wood = "contrast"
                 options,
                 complete: false,
                 may_end: false,
+                state: None,
             };
             let counts = |app: &mut App| {
                 let mut ghosts = app.world_mut().query_filtered::<(), With<Ghost>>();
@@ -4844,6 +5084,7 @@ wood = "contrast"
                 options: vec![shoot("a2", "a3"), shoot("a2", "a1"), shoot("b2", "c3")],
                 complete: false,
                 may_end: false,
+                state: None,
             });
             let click = |app: &mut App, at: &str| {
                 let mut watch = app.world_mut().resource_mut::<WatchStatus>();
@@ -4941,6 +5182,7 @@ wood = "contrast"
                 turn.answered(Selections {
                     complete: true,
                     may_end: false,
+                    state: None,
                     ..Selections {
                         seat: 1,
                         ply: 3,
@@ -4948,6 +5190,7 @@ wood = "contrast"
                         options: vec![],
                         complete: false,
                         may_end: false,
+                        state: None,
                     }
                 });
             }
@@ -5224,6 +5467,7 @@ wood = "contrast"
                 options,
                 complete: false,
                 may_end: false,
+                state: None,
             });
             turn
         }
@@ -5533,6 +5777,7 @@ wood = "contrast"
                 options: vec![then("c2"), then("c1")],
                 complete: false,
                 may_end: true,
+                state: None,
             });
             turn.gesture(&Gesture::pos("b2"));
             assert_eq!(turn.lifted(), Some("b2"));
@@ -6115,6 +6360,7 @@ wood = "contrast"
                 ],
                 complete: false,
                 may_end: false,
+                state: None,
             });
             turn.gesture(&Gesture {
                 kind: "piece".into(),
@@ -6145,6 +6391,7 @@ wood = "contrast"
                     options: vec![],
                     complete: true,
                     may_end: false,
+                    state: None,
                 });
             }
             app.update();
@@ -6472,6 +6719,225 @@ tint = [0.1, 0.2, 0.6]
             assert!(pieces(&mut app).is_empty(), "the board goes with the game");
             let mut roots = app.world_mut().query::<&BoardRoot>();
             assert_eq!(roots.iter(app.world()).count(), 0);
+        }
+
+        /// A made-up game of rings and discs on a grid's points, played by white: a move of
+        /// a ring leaves a disc where it stood, and each seat's rings removed are its score,
+        /// kept on dots, three wanted.
+        fn with_rings_look(cells: &[(&str, &[(&str, &str)])]) -> App {
+            let mut app = app();
+            let look = Appearance::parse(
+                r#"
+games = ["t-rings"]
+
+[board]
+on = "points"
+margin = 2.0
+
+[pieces.ring]
+model = "models/ring.glb"
+stands = "upright"
+leaves = "disc"
+
+[pieces.disc]
+model = "models/disc.glb"
+stands = "upright"
+sides = { light = "light", dark = "dark" }
+up = { black = "dark", white = "light" }
+
+[materials.light]
+tint = [0.9, 0.88, 0.82]
+
+[materials.dark]
+tint = [0.05, 0.05, 0.05]
+
+[score]
+counter = "rings"
+piece = "ring"
+"#,
+            )
+            .unwrap();
+            assert!(look.problems().is_empty(), "{:?}", look.problems());
+            app.insert_resource(Appearances(vec![look]));
+            let mut table = grid_table("t-rings", cells);
+            table.game.seats = vec![crate::net::api::GameSeat {
+                seat: 1,
+                color: "white".into(),
+                name: "Ana".into(),
+                bot: String::new(),
+                yours: true,
+            }];
+            table.state.state.ext = rings_removed(0, 0);
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+            app
+        }
+
+        /// The view's count of each seat's rings removed.
+        fn rings_removed(white: u32, black: u32) -> serde_json::Value {
+            let seat =
+                |n: u32| serde_json::json!({"counters": [{"id": "rings", "value": n, "max": 3}]});
+            serde_json::json!({"view": {"seats": {"1": seat(white), "2": seat(black)}}})
+        }
+
+        #[test]
+        fn the_rings_a_seat_removes_go_on_the_dots_at_its_right_hand() {
+            let mut app = with_rings_look(&[
+                ("a1", &[("ring", "white")]),
+                ("b2", &[("disc", "white")]),
+                ("c3", &[("ring", "black")]),
+            ]);
+            let mut names = app.world_mut().query::<&Name>();
+            assert!(
+                names
+                    .iter(app.world())
+                    .any(|n| n.as_str() == "Score's dots")
+            );
+            assert!(in_trays(&mut app).is_empty());
+            // White removes its ring on a1 (with a row, gone with it): its count is one.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let mut after = stacks(2, &[("c3", &[("ring", "black")])]);
+            after.state.ext = rings_removed(1, 0);
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: after,
+            });
+            app.update();
+            let held = in_trays(&mut app);
+            assert_eq!(held.len(), 1, "the ring, not the disc: {held:?}");
+            let (at, name, rest) = &held[0];
+            assert_eq!((at.seat, at.index), (0, 0));
+            assert!(name.starts_with("ring"), "{name}");
+            // At the right hand of white (who sits at +z), beyond the points, on the board's
+            // margin: the first dot, the nearest white.
+            let layout = Layout::new(&grid_table("t-rings", &[]).info.board.positions);
+            let right = layout
+                .centres
+                .values()
+                .map(|c| c.x)
+                .fold(f32::MIN, f32::max);
+            let p = rest.translation;
+            assert!(p.x > right + layout.pitch && p.z > 0.0, "{p}");
+            assert!(
+                p.y >= BOARD_HEIGHT - 1e-4,
+                "on the board, not the table: {p}"
+            );
+        }
+
+        #[test]
+        fn a_ring_leaves_its_disc_from_the_hand_where_it_stood_as_it_is_picked_up() {
+            let mut app =
+                with_rings_look(&[("a1", &[("ring", "white")]), ("c3", &[("ring", "black")])]);
+            let step = |to: &str| {
+                let mut o = option(&[("pos", "a1"), ("pos", to)], Some("a1"));
+                o.to = Some(to.into());
+                o
+            };
+            app.world_mut().resource_mut::<WatchStatus>().turn =
+                Some(tak_turn(vec![step("a3"), step("b1")]));
+            app.update();
+            // The disc is in hand, under the pointer, before the ring is picked up.
+            let mut q = app.world_mut().query_filtered::<&FromBowl, With<Held>>();
+            let held = q.single(app.world()).expect("a disc held");
+            assert_eq!((held.piece.as_str(), held.cell.as_deref()), ("disc", None));
+            // The ring picked up: the disc is put where it stood, the ring held instead.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture::pos("a1"));
+            app.update();
+            let mut q = app.world_mut().query::<(&FromBowl, &Carry, Has<Held>)>();
+            let (left, carry, held) = q.single(app.world()).unwrap();
+            assert_eq!(
+                (left.piece.as_str(), left.cell.as_deref()),
+                ("disc", Some("a1"))
+            );
+            assert!(matches!(carry, Carry::Put(_)) && !held);
+            let mut q = app.world_mut().query_filtered::<&PieceAt, With<Held>>();
+            let ring = q.single(app.world()).expect("the ring under the pointer");
+            assert_eq!(
+                (ring.cell.as_str(), ring.piece.piece.as_str()),
+                ("a1", "ring")
+            );
+            // Put down on a3: carried there, the disc staying on a1.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let outcome = watch.turn.as_mut().unwrap().gesture(&Gesture::pos("a3"));
+            assert_eq!(outcome, crate::play::Outcome::Ask);
+            app.update();
+            let mut q = app.world_mut().query::<(&PieceAt, &Carry, Has<Held>)>();
+            let (_, carry, held) = q
+                .iter(app.world())
+                .find(|(at, ..)| at.piece.piece == "ring" && at.cell == "a1")
+                .expect("the ring");
+            assert!(matches!(carry, Carry::Put(to) if to.translation.distance(
+                Layout::new(&grid_table("t-rings", &[]).info.board.positions).centres["a3"]
+                    .with_y(to.translation.y)
+            ) < 1e-5));
+            assert!(!held);
+            let mut q = app.world_mut().query::<&FromBowl>();
+            assert_eq!(q.single(app.world()).unwrap().cell.as_deref(), Some("a1"));
+            // Back to the start: nothing left on a1, the disc in hand again.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            turn.back();
+            turn.back();
+            app.update();
+            let mut q = app.world_mut().query::<(&FromBowl, Has<Held>)>();
+            let (f, held) = q.single(app.world()).unwrap();
+            assert!(f.cell.is_none() && held);
+        }
+
+        #[test]
+        fn a_disc_the_move_being_built_turns_over_is_shown_turned_until_it_is_taken_back() {
+            let mut app = with_rings_look(&[
+                ("a1", &[("ring", "white")]),
+                ("a2", &[("disc", "black")]),
+                ("c3", &[("ring", "black")]),
+            ]);
+            let mut jump = option(&[("pos", "a1"), ("pos", "a3")], Some("a1"));
+            jump.to = Some("a3".into());
+            let mut turn = tak_turn(vec![jump]);
+            turn.gesture(&Gesture::pos("a1"));
+            assert_eq!(turn.gesture(&Gesture::pos("a3")), crate::play::Outcome::Ask);
+            // The server's preview: the disc jumped is white's now.
+            let mut preview = stacks(
+                2,
+                &[
+                    ("a1", &[("disc", "white")]),
+                    ("a2", &[("disc", "white")]),
+                    ("a3", &[("ring", "white")]),
+                    ("c3", &[("ring", "black")]),
+                ],
+            )
+            .state;
+            preview.ext = rings_removed(0, 0);
+            turn.answered(crate::net::api::Selections {
+                seat: 1,
+                ply: 4,
+                made: vec!["m".into()],
+                options: vec![],
+                complete: true,
+                may_end: false,
+                state: Some(preview),
+            });
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let colour_at = |app: &mut App, cell: &str| {
+                let mut q = app.world_mut().query::<(&PieceAt, Has<Flipping>)>();
+                q.iter(app.world())
+                    .find(|(at, _)| at.cell == cell)
+                    .map(|(at, flipping)| (at.piece.color.clone(), flipping))
+                    .unwrap()
+            };
+            assert_eq!(
+                colour_at(&mut app, "a2"),
+                ("white".into(), true),
+                "turned over"
+            );
+            assert_eq!(colour_at(&mut app, "c3").0, "black", "the rest as they are");
+            // Taken back: turned back.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().back();
+            app.update();
+            assert_eq!(colour_at(&mut app, "a2"), ("black".into(), true));
         }
     }
 

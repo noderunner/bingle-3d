@@ -276,7 +276,10 @@ A game's own rules and its players' words keep their terms.
 - `src/trays.rs`: a tray in front of each seat for a game that counts what each captures
   (`GameInfo.counters` with a `max`: a square for each capture wanted; the counts are the
   position's `reserves`). `grid`, `places` and `fill` have no Bevy in them: `fill` says which
-  pieces that left the board each seat's rising count took (the server does not say).
+  pieces that left the board each seat's rising count took (the server does not say). A game
+  whose look has `[score]` keeps a seat's score the same way with its own pieces instead: a
+  dot on the board's margin at its right hand for each point (`marks`; the view's counter and
+  its `max`), each taking one of its pieces of the look's kind as they leave the board.
   `board::fill_trays` carries them there (`hand::Route`: a wait, straight up, across, and a
   sound of their own as they land).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
@@ -299,7 +302,9 @@ A game's own rules and its players' words keep their terms.
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
   (`[sounds]`), parts of its model in materials of their own (`parts`: an engraving's paint,
-  every seat's alike; `board::dress_parts`), a chessboard's two
+  every seat's alike; `board::dress_parts`), the piece a move of it leaves where it started
+  (`leaves`: a disc dropped in a ring that moves on, held under the pointer until the ring is
+  picked up; the server does not say), a wider margin (`[board] margin`), a chessboard's two
   materials (`[board] squares`), its inlaid
   border (`[board] border`), a material for the cells of a region the board names
   (`[board.regions]`: Fist's keep), and the piece
@@ -392,7 +397,10 @@ A game's own rules and its players' words keep their terms.
   its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
   it and held under the pointer; `clicks_only` a turn where nothing is chosen for the player
   and a whole move plays itself, a card game's; `enter_all` a whole selection's gestures at
-  once, put together by the player in an order of their own); its systems turn clicks on a `Spot` (a board cell or a
+  once, put together by the player in an order of their own; `preview` the position after the
+  selections made, as the server's answer has it (`Selections.state`): what its view asks next
+  is the panel's words, what it stamps is stamped, and a piece of two sides it turns over is
+  shown turned, until the move is played or taken back); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh

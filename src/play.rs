@@ -26,7 +26,7 @@ use bevy::prelude::*;
 use crate::camera::{PIXELS_PER_LINE, PointerOverUi, WheelTaken};
 use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::escape_menu::{self, EscapeMenu};
-use crate::net::api::{Gesture, LegalSelection, Selections};
+use crate::net::api::{Gesture, LegalSelection, Position, Selections};
 use crate::net::session::Problem;
 use crate::net::{self, Net, WatchStatus};
 
@@ -139,9 +139,9 @@ pub struct Turn {
     pub ply: Option<u64>,
     /// The selections made so far, in order.
     pub made: Vec<LegalSelection>,
-    /// What could be selected before each of those, and whether the move could end there, to go
-    /// back to.
-    before: Vec<(Vec<LegalSelection>, bool)>,
+    /// What could be selected before each of those, whether the move could end there, and the
+    /// server's preview then, to go back to.
+    before: Vec<(Vec<LegalSelection>, bool, Option<Position>)>,
     /// What may be selected now.
     pub options: Vec<LegalSelection>,
     /// The gestures made towards the next selection.
@@ -154,6 +154,8 @@ pub struct Turn {
     pub may_end: bool,
     /// Why the last attempt went wrong, for the player.
     pub problem: Option<Problem>,
+    /// The position after the selections made, as the server previews it (`preview`).
+    after: Option<Position>,
     /// Something taken in hand that a later click puts somewhere (a fence from its bowl): the
     /// choices it may become, one of which that click makes. Not a gesture: nothing is chosen
     /// until it is put down.
@@ -185,6 +187,7 @@ impl Turn {
             stage: Stage::Asking,
             may_end: false,
             problem: None,
+            after: None,
             taken: None,
             to_place: false,
             lifted: false,
@@ -470,6 +473,32 @@ impl Turn {
         piece
     }
 
+    /// Where the pieces the selection being entered may move stand, before anything is chosen
+    /// towards it, when every selection still possible that has a click in it moves a piece and
+    /// begins with a click on it (a ring, then where it goes). Empty when any does something
+    /// else with a click. Choices that are not clicks (a pass) are the panel's.
+    pub fn moves_only(&self) -> Vec<&str> {
+        if !self.untouched() {
+            return Vec::new();
+        }
+        let n = self.gestures.len();
+        let mut out: Vec<&str> = Vec::new();
+        for o in self.matching() {
+            let Some(click) = o.gestures[n..].iter().find(|g| g.is_pos()) else {
+                continue;
+            };
+            match (o.from.as_deref(), &o.to) {
+                (Some(from), Some(_)) if click.value == from => {
+                    if !out.contains(&from) {
+                        out.push(from);
+                    }
+                }
+                _ => return Vec::new(),
+            }
+        }
+        out
+    }
+
     /// The selections still possible that would place something (not move it) on `cell`.
     pub fn could_place(&self, cell: &str) -> impl Iterator<Item = &LegalSelection> {
         self.matching()
@@ -615,6 +644,25 @@ impl Turn {
         Some(out)
     }
 
+    /// The position after the selections made, as the server previews it, while any are and
+    /// the move is not yet played: what its view asks next, the positions it tints, the pieces
+    /// it turns over. (While the server is asked about the last selection, the one before it.)
+    pub fn preview(&self) -> Option<&Position> {
+        let building = self.stage != Stage::Failed;
+        self.after
+            .as_ref()
+            .filter(|_| building && !self.made.is_empty())
+    }
+
+    /// Whether nothing is chosen yet towards the selection being entered: no click, nothing
+    /// in hand or taken up, nothing picked up.
+    pub fn untouched(&self) -> bool {
+        self.stage == Stage::Choosing
+            && self.gestures.len() == self.forced
+            && self.taken.is_none()
+            && self.lifted().is_none()
+    }
+
     /// The server's answer to the last question.
     pub fn answered(&mut self, selections: Selections) -> Outcome {
         if self.stage != Stage::Asking {
@@ -622,6 +670,7 @@ impl Turn {
         }
         self.ply = Some(selections.ply);
         self.problem = None;
+        self.after = selections.state;
         self.may_end = selections.may_end && !selections.made.is_empty();
         if selections.complete {
             self.stage = Stage::Ready;
@@ -672,12 +721,13 @@ impl Turn {
         match self.stage {
             Stage::Choosing => self.enter(gesture),
             Stage::Ready => {
-                // A click on the preview plays it, as a second click does on the web page.
+                // A click on the preview plays it, as a second click does on the web page: where
+                // the last selection puts something, or on what it takes away (a piece removed).
                 if gesture.is_pos()
                     && self
                         .made
                         .last()
-                        .and_then(|s| s.aim.as_ref().or(s.to.as_ref()))
+                        .and_then(|s| s.aim.as_ref().or(s.to.as_ref()).or(s.from.as_ref()))
                         == Some(&gesture.value)
                 {
                     return Outcome::Submit;
@@ -734,8 +784,9 @@ impl Turn {
                 true
             }
             Stage::Choosing | Stage::Ready | Stage::Asking => match self.before.pop() {
-                Some((options, may_end)) => {
+                Some((options, may_end, after)) => {
                     self.may_end = may_end;
+                    self.after = after;
                     let undone = self.made.pop();
                     self.options = options;
                     self.stage = Stage::Choosing;
@@ -1116,8 +1167,11 @@ impl Turn {
                 _ => return Outcome::Changed,
             }
         };
-        self.before
-            .push((std::mem::take(&mut self.options), self.may_end));
+        self.before.push((
+            std::mem::take(&mut self.options),
+            self.may_end,
+            self.after.clone(),
+        ));
         self.made.push(chosen);
         self.gestures.clear();
         self.stage = Stage::Asking;
@@ -1755,6 +1809,7 @@ mod tests {
         let more = Selections {
             made: vec!["m".into()],
             may_end: true,
+            state: None,
             ..answer(3, vec![card(&["from-t4-1", "to-t1"]), card(&["draw"])])
         };
         assert_eq!(t.answered(more.clone()), Outcome::Submit);
@@ -2328,6 +2383,7 @@ mod tests {
         // One stone placed: a second may follow, or the move may go as it is.
         t.answered(Selections {
             may_end: true,
+            state: None,
             made: vec!["a1".into()],
             ..answer(5, vec![yellow("b1")])
         });
@@ -2383,6 +2439,87 @@ mod tests {
         sel("swap", None, &[("action", "swap")])
     }
 
+    /// A position whose view asks `words` and tints `tinted` with `key`, as a preview.
+    fn asking(words: &str, tinted: &[&str], key: &str) -> Position {
+        let tints: serde_json::Map<String, serde_json::Value> = tinted
+            .iter()
+            .map(|c| (c.to_string(), serde_json::Value::from(key)))
+            .collect();
+        Position {
+            ext: serde_json::json!({"view": {"impulse": words, "tints": tints}}),
+            ..Position::default()
+        }
+    }
+
+    #[test]
+    fn a_move_that_goes_on_is_asked_in_the_previews_words_and_its_last_part_played_by_a_click() {
+        // A ring moved to make a line, which is then removed, and a ring with it: three
+        // selections of one impulse, the last taking a piece away rather than putting one down.
+        let mut t = Turn::new(1);
+        t.answered(answer(18, vec![step("j7", "e7"), step("c4", "c5")]));
+        assert_eq!(
+            t.preview(),
+            None,
+            "nothing made: the position is the table's"
+        );
+        t.gesture(&g("pos", "j7"));
+        assert_eq!(t.gesture(&g("pos", "e7")), Outcome::Ask);
+        let row = LegalSelection {
+            from: Some("f7".into()),
+            ..sel("row:f7-j7", Some("j7"), &[("pos", "f7"), ("pos", "j7")])
+        };
+        let words = "Choose a line to remove.";
+        t.answered(Selections {
+            made: vec!["j7-e7".into()],
+            state: Some(asking(words, &["f7", "j7"], "row")),
+            ..answer(18, vec![row])
+        });
+        assert_eq!(t.stage, Stage::Choosing);
+        assert!(!t.can_play(), "not a whole move: Enter does nothing yet");
+        let after = t.preview().expect("the server's preview");
+        assert_eq!(after.impulse_words(), Some(words));
+        assert_eq!(after.tints()["f7"], "row");
+        assert!(t.untouched());
+        t.gesture(&g("pos", "f7"));
+        assert!(!t.untouched());
+        assert_eq!(t.gesture(&g("pos", "j7")), Outcome::Ask);
+        // Still the row's preview while the server is asked.
+        assert!(t.preview().is_some());
+        let ring = |at: &str| LegalSelection {
+            from: Some(at.into()),
+            ..sel(&format!("ring:{at}"), None, &[("pos", at)])
+        };
+        t.answered(Selections {
+            made: vec!["j7-e7".into(), "row:f7-j7".into()],
+            state: Some(asking("Choose one of your rings to remove.", &[], "")),
+            ..answer(18, vec![ring("c4"), ring("e7")])
+        });
+        assert_eq!(
+            t.preview().and_then(Position::impulse_words),
+            Some("Choose one of your rings to remove.")
+        );
+        assert_eq!(t.gesture(&g("pos", "c4")), Outcome::Ask);
+        t.answered(Selections {
+            made: vec!["j7-e7".into(), "row:f7-j7".into(), "ring:c4".into()],
+            state: Some(Position::default()),
+            ..complete(18)
+        });
+        assert_eq!(t.stage, Stage::Ready);
+        // A click again on the ring taken away plays the move, as one on where a piece is put.
+        assert_eq!(t.gesture(&g("pos", "c4")), Outcome::Submit);
+        // Back, the ring's choice goes, and the row's preview is back.
+        t.back();
+        assert_eq!(
+            t.preview().and_then(Position::impulse_words),
+            Some("Choose one of your rings to remove.")
+        );
+        t.back();
+        t.back();
+        assert_eq!(t.preview().and_then(Position::impulse_words), Some(words));
+        assert_eq!(t.submit(), None);
+        assert_eq!(t.notation(), "j7-e7");
+    }
+
     fn answer(ply: u64, options: Vec<LegalSelection>) -> Selections {
         Selections {
             seat: 1,
@@ -2391,6 +2528,7 @@ mod tests {
             options,
             complete: false,
             may_end: false,
+            state: None,
         }
     }
 
@@ -2398,6 +2536,7 @@ mod tests {
         Selections {
             complete: true,
             may_end: false,
+            state: None,
             ..answer(ply, vec![])
         }
     }

@@ -932,6 +932,10 @@ pub struct Selections {
     /// stone).
     #[serde(default)]
     pub may_end: bool,
+    /// The position after the selections made, as this seat sees it: what the view then asks
+    /// (a line to remove, after the move that made it). Not when nothing is made.
+    #[serde(default)]
+    pub state: Option<Position>,
 }
 
 /// One selection the seat may make, and the gestures that enter it.
@@ -1108,6 +1112,17 @@ impl Position {
             .as_array()?
             .iter()
             .find(|c| c["id"] == id)?["value"]
+            .as_u64()
+            .map(|n| n.min(u32::MAX as u64) as u32)
+    }
+
+    /// The most seat `seat`'s counter `id` in the view may reach, if it says (the rings a win
+    /// wants removed).
+    pub fn view_counter_max(&self, seat: u32, id: &str) -> Option<u32> {
+        self.ext["view"]["seats"][seat.to_string()]["counters"]
+            .as_array()?
+            .iter()
+            .find(|c| c["id"] == id)?["max"]
             .as_u64()
             .map(|n| n.min(u32::MAX as u64) as u32)
     }
@@ -2097,5 +2112,17 @@ mod tests {
         )
         .unwrap();
         assert!(done.complete);
+        assert_eq!(s.state, None);
+        // With the position after them, and what its view asks next.
+        let more: Selections = serde_json::from_str(
+            r#"{"seat":1,"ply":18,"made":["j7-e7"],"options":[],"complete":false,
+            "state":{"v":2,"cells":{"e7":[{"piece":"ring","color":"white"}]},"ply":19,
+            "ext":{"view":{"impulse":"Choose a line to remove.","tints":{"f7":"row"}}}}}"#,
+        )
+        .unwrap();
+        let after = more.state.unwrap();
+        assert_eq!(after.cells["e7"][0].piece, "ring");
+        assert_eq!(after.impulse_words(), Some("Choose a line to remove."));
+        assert_eq!(after.tints()["f7"], "row");
     }
 }
