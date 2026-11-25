@@ -212,6 +212,7 @@ mod tests {
                 opening: None,
                 reserves: Default::default(),
                 cards: None,
+                engine: String::new(),
             },
             game: Game {
                 game_def_id: "g".into(),

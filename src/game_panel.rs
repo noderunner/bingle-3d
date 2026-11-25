@@ -248,6 +248,17 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
                 ));
             }
         });
+        // What the look has the panel count for each seat, as the view counts it.
+        let counted = counts(table, appearances, seat.seat);
+        if !counted.is_empty() {
+            p.spawn((
+                Node {
+                    margin: UiRect::left(px(22)),
+                    ..default()
+                },
+                children![line(f.regular(13.0), colours::MUTED, &counted)],
+            ));
+        }
     }
     let colour = if table.finished() {
         colours::GOOD
@@ -265,6 +276,21 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
     if let Some(words) = asked(table) {
         p.spawn(line(f.regular(14.0), colours::TEXT, words));
     }
+}
+
+/// A seat's counters of the view that the game's look has the panel show (`[panel]
+/// counters`), each with the view's label, in the look's order: "Points 12  ·  Tricks 3".
+fn counts(table: &Table, appearances: &Appearances, seat: u32) -> String {
+    let Some(look) = appearances.for_game(&table.info.id) else {
+        return String::new();
+    };
+    look.panel
+        .counters
+        .iter()
+        .filter_map(|id| table.state.state.view_count(seat, id))
+        .map(|(label, value)| format!("{label} {value}"))
+        .collect::<Vec<_>>()
+        .join("  ·  ")
 }
 
 /// One frame of a score sheet: its number, the marks of its balls, its total once scored, and
@@ -446,11 +472,12 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     }
     p.spawn(buttons()).with_children(|row| {
         for choice in choices {
-            row.spawn(button(
-                f,
-                &choice_label(&table.info, &choice),
-                Action::Choose(choice.clone()),
-            ));
+            // In the view's words where it has them (a team, by its members' names).
+            let label = match table.state.state.choice_words(&choice.value) {
+                Some(words) => words.to_string(),
+                None => choice_label(&table.info, &choice),
+            };
+            row.spawn(button(f, &label, Action::Choose(choice.clone())));
         }
         if turn.can_play() {
             row.spawn(button(f, "Play", Action::Submit));
@@ -553,6 +580,7 @@ mod tests {
             opening: None,
             reserves: Default::default(),
             cards: None,
+            engine: String::new(),
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),
@@ -706,5 +734,40 @@ mod tests {
         app.update();
         assert!(requests.try_recv().is_err());
         assert!(app.world().resource::<WatchStatus>().is_watching());
+    }
+
+    #[test]
+    fn the_panel_counts_for_each_seat_what_the_games_look_names_in_the_looks_order() {
+        let appearances = Appearances(vec![
+            crate::appearance::Appearance::parse(
+                "games = [\"g\"]\n[panel]\ncounters = [\"tricks\", \"score\", \"none\"]",
+            )
+            .unwrap(),
+        ]);
+        let mut table = crate::table::Table::new(crate::net::session::Opened {
+            room_code: "AB12CD".into(),
+            info: GameInfo {
+                id: "g".into(),
+                ..GameInfo::default()
+            },
+            game: serde_json::from_str(r#"{"game_def_id":"g","status":"active","seats":[]}"#)
+                .unwrap(),
+            state: serde_json::from_str(
+                r#"{"state":{"cells":{},"ext":{"view":{"seats":{"2":{"counters":[
+                    {"id":"score","label":"Points","value":-6},
+                    {"id":"tricks","label":"Tricks","value":2}]}}}}},
+                    "status":"active","move_seq":4}"#,
+            )
+            .unwrap(),
+            bots: vec![],
+        });
+        assert_eq!(counts(&table, &appearances, 2), "Tricks 2  ·  Points -6");
+        assert_eq!(
+            counts(&table, &appearances, 1),
+            "",
+            "a seat the view counts nothing for"
+        );
+        table.info.id = "other".into();
+        assert_eq!(counts(&table, &appearances, 2), "", "a game with no look");
     }
 }

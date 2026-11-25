@@ -676,7 +676,10 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     the rank and suit in two corners, the suit as many times as the rank counts in the places
     cards have them, and for a court card a crown, a coronet or a plumed cap in a frame, twice,
     so it reads the same from either end. The client finds one by the suit's symbol and the
-    rank's label as the server gives them (`props::standard_face`), so no game is named. 1 MB
+    rank's label as the server gives them (`props::standard_face`), so no game is named. With
+    them, the 16 a deck numbered from 1 to 13 has where the usual one has its aces and courts
+    (2026-11-25): a 1, an ace with 1 in its corners, and an 11, a 12 and a 13, each its figure,
+    large, between two suits, since that many suits are not counted at a glance. 1.3 MB
     together. No jokers: no game deals one yet.
   - **A die**: six sides, pips hollowed out, turned to show a number (`props::die_showing`).
   - **A two-sided disc and a ring** (2026-11-23): a disc 15 mm across, light on one side and
@@ -961,6 +964,69 @@ this repository may not hold (decision 2). This repository names none of them, h
   uses this one's helpers.
 - Not built for it: a seat's supply lying face up (it stands on edge, as any flat piece's
   does), and the parts in the showcase.
+
+### A card game of several seats: a table laid round its seats (2026-11-25)
+
+The first game with hands of cards that each player keeps to themselves, and the first for
+more than two seats, is one of the overlay's (so it is not named here, and its look is there).
+What it needed is generic, and any card game of several seats is drawn the same way from a
+look of its own:
+
+- **A seat's own view.** A game whose rules are written in Go (`engine: "ruleset"`) may keep
+  secrets from a seat, so the server sends everybody a public view of the position, on the
+  socket too. A client that holds a seat now reads the position as that seat
+  (`/state?player_name=`, as the web page does): when the game is opened, when it is read
+  again, and for every event, on the network thread, before the event reaches the table
+  (`net::own_view`), so the player's hand is never drawn face down and then turned up. A
+  guest who holds several seats (a game played against oneself) plays, and sees as, the one
+  on impulse (`Table::yours`).
+- **A table laid round its seats** (`Layout::seated`, the look's `[cards.piles.<zone>] seat`):
+  a zone each seat has lies in front of its seat, on the seat's own terms (to its right, and
+  from the middle towards it), the cloth is round, and the whole is seen from the seat this
+  client plays, with play going to the left. A hand `held` is the player's own fanned in
+  front of them and tilted up to them, each card over the one to its left so its corner is
+  read, and anybody else's **standing in the air beyond the table's edge, its back to the
+  table**. A pile `played` (a trick) lies in the middle, each card a little towards the seat
+  that played it, as the view's captions say who did. A pile shown `unless` another has
+  cards (the trick before) stays where it was played until the next is led, and a card it
+  shows is not also drawn where else the position has it. A `row` shows what a seat has
+  taken. A card the client may not know shows its back from both sides.
+- **A click on a card of the hand plays it** (`[cards] play`: the look's choice, then the
+  card's kind; the game says whether that plays, discards or passes it). The cards that may be
+  played stand a little out of the fan while not all may be, and the one under the pointer
+  further; the pointer's hand points at one.
+- **A board of choices** (`choice_grid.rs`, the look's `[grid]`): the view's lines of boxes
+  as a board of wood on the table, a tile for each box with the look's picture for it and
+  each line's picture at its head. A click on a box makes its choice. A box a seat crossed
+  has that seat's marker on it, small, carried there from in front of the seat; a box out of
+  the game is covered; the box left on a line has a brass rim; with the legal moves lit (L)
+  the boxes that may be crossed are.
+- **Seat markers** (`seat_markers.rs`, the look's `[markers]`): a piece for each seat, by its
+  colour word, standing in front of the seat and looking to the middle, the part the look
+  names in the seat's own colour. Once the view puts the seats on sides, the markers of one
+  side are made of one material and the other's of another (pale wood and dark, as a chess
+  set's), so partners are seen to be; the seat the view names has a ring round its marker's
+  foot. Clicks on the markers make the choices that name seats (a team picked by its
+  members): one that no other choice names more seats than is made at once, a seat that may
+  be one of several hovers until another is clicked or the player's own marker settles it,
+  and the player's own marker alone makes the choice that names nobody. The panel's buttons
+  make the same choices, in the view's words for them (`view.labels`).
+- **A move of several selections is drawn as the server previews it** (`WatchStatus::shown`):
+  the seat that picks the team goes on to choose a card in the same impulse, so nothing is
+  sent yet, and the cards, the grid and the markers are drawn from the preview of the
+  selections made (the team's woods, the ring, the card gone from the hand) until the move is
+  played or taken back.
+- **The panel counts for each seat** what the look names of the view's counters
+  (`[panel] counters`: points, tricks taken), under the seat's name, with the view's labels.
+- **A deck numbered from 1 to 13** has faces too (`card_faces.py`): `1`, `11`, `12` and `13`
+  of each suit beside the usual 52, found the same way (`props::standard_face`).
+- The pictures and the markers' models are the look's own, made by scripts in the overlay
+  that use this pipeline's helpers.
+- Not built: a card dragged to the middle; the cards a seat may play lit (they stand out
+  instead); a place printed for a pile on a round table; a taken trick carried to its
+  winner's pile (it leaves the middle when the next is led, and the pile has grown already);
+  the round table in a headset is not tried.
+- **Next**: the maintainer's eye on it, and a game played through with other people.
 
 ### After that
 

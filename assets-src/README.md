@@ -54,7 +54,7 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 | `tiles` | `models/tile_hex.glb`: a hexagonal tile of wood laid over one cell of a hexagonal board (Courtfall's terrain), a little narrower than a 28 mm cell across its flats, so the board's lines show round it; its points to the far and near sides, as the client's cells' are | a hexagonal prism with its edges eased |
 | `move_tiles` | `models/move_tile.glb`: a tile of wood 64 mm by 70 mm and 4.5 mm thick, on which the client draws a move card (its grid, its stamped squares, its name); `textures/stamp/square_albedo.png`: a square stamped in ink on wood, its alpha the ink's cover | the tile's outline with its corners rounded, extruded, its top and bottom edges eased; the stamp drawn with numpy: a square with a ragged edge, the ink thinner in places and the wood's grain showing through in specks |
 | `playing_cards` | `models/card.glb`: a blank playing card with a place on each side for a picture; `textures/cards/back_albedo.jpg`: a back for it | the card's outline, its `face`, `back` and `edge` each a part; the back drawn with numpy |
-| `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame; the outlines are filled on a grid four times as fine and averaged down |
+| `card_faces` | `textures/cards/faces/<suit>_<rank>_albedo.png`: the faces of the usual deck's 52 cards (`spades_a`, `hearts_10`, `clubs_k`), and the 16 a deck numbered from 1 to 13 has in place of its aces and courts (`spades_1`, `hearts_13`), 640 × 896 | drawn with numpy: a suit is an outline of curves, a rank is lettered in Fira Sans (set by Blender, turned into triangles), a court card has a crown, a coronet or a plumed cap in a frame, an 11, a 12 and a 13 their figure, large, between two suits; the outlines are filled on a grid four times as fine and averaged down |
 | `dice` | `models/die.glb`: a die of six sides | a cube with its edges rounded, a ball cut out of it for each pip (`body` and `pips` are its parts) |
 | `discs` | `models/disc.glb`: a disc 15 mm across and 3.6 mm thick, light on one side and dark on the other, and `models/disc_large.glb`, the same 24 mm across and 4.4 mm thick to fill a square (Reversi's); `models/ring.glb`: a ring 25 mm across and 4 mm tall (a disc lying inside it stands not much lower) that a disc lies inside | each turned from a profile, the disc's faces dished inside a rim; the disc's faces with the half of the edge beside each are its two parts, `light` (up, as it lies) and `dark` |
 | `garden` | `environments/garden.glb`: the whole garden, one file | modelled in `garden.py` with the helpers of `meshkit.py`; the rocks are a scanned set, made lighter |
@@ -117,11 +117,15 @@ the file would differ from run to run.
   is made a PNG or a JPEG first (Blender's own SVG import reads filled shapes, but no text and
   no strokes, so it will not do for a card in general).
 - **The usual deck's faces** (`card_faces.py`) are such pictures, one for each of its 52 cards:
-  the card's paper with the face printed on it. The client finds one by the suit's symbol and
-  the rank's label, as the server gives them (`props::standard_face`); a card of any other deck
-  has no picture here. The step also lays the whole deck on one sheet to look at,
-  `target/asset-previews/card-faces.png`. A PNG, since a JPEG rings round flat ink on flat
-  paper; the 52 are 1 MB together. There are no jokers: no game deals one yet.
+  the card's paper with the face printed on it. With them, for **a deck numbered from 1 to 13**
+  in the same suits, the 16 it has where the usual one has its aces and courts: a 1, which is
+  an ace with 1 in its corners, and an 11, a 12 and a 13, which are number cards whose suits
+  are not counted out (twelve and thirteen of them cannot be told apart across a table): each
+  has its figure, large, between two suits where a two has its own. The client finds one by
+  the suit's symbol and the rank's label, as the server gives them (`props::standard_face`);
+  a card of any other deck has no picture here. The step also lays them all on one sheet to
+  look at, `target/asset-previews/card-faces.png`. A PNG, since a JPEG rings round flat ink
+  on flat paper; the 68 are 1.3 MB together. There are no jokers: no game deals one yet.
 - **The die** has 1 up and 6 down, 2 towards the player and 5 away, 3 to the right and 4 to
   the left, as dice are made; `props::die_showing` turns it to show a number.
 - Their generic looks are in `src/look.rs` (`paper`, `card_side`, `die`, `pips`), which

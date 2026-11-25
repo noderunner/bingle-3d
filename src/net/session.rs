@@ -937,7 +937,8 @@ impl Session {
         };
         let socket = Socket::open(&url, room_code, role, self.tls.clone())
             .map_err(|e| self.socket_problem(&url, e))?;
-        let state = self.state(room_code)?;
+        let held = held(&info, &game.seats);
+        let state = self.state_seen(room_code, &held)?;
         // The bots a seat can be given before the game starts, by a player at the table.
         let bots = if game.status == "waiting" && game.seats.iter().any(|s| s.yours) {
             self.bots(&url)?
@@ -954,10 +955,31 @@ impl Session {
         Ok((opened, socket))
     }
 
-    /// Where a game stands now.
-    pub fn state(&mut self, room_code: &str) -> Result<GameState, Problem> {
+    /// Where a game stands now: as everybody sees it, or, with `viewer`, as the player of that
+    /// name does (the seat's own hand, in a game that keeps secrets; anybody who does not hold
+    /// that seat gets the public view).
+    pub fn state(&mut self, room_code: &str, viewer: Option<&str>) -> Result<GameState, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
-        self.get_as_me(&url, &format!("/api/games/{room_code}/state"))
+        let mut path = format!("/api/games/{room_code}/state");
+        if let Some(name) = viewer {
+            path.push_str(&format!("?player_name={}", query_value(name)));
+        }
+        self.get_as_me(&url, &path)
+    }
+
+    /// Where a game stands now, as this client sees it from the seats it holds (`held`): as
+    /// the one on impulse, when it holds several, else the first; as everybody, with none.
+    pub fn state_seen(
+        &mut self,
+        room_code: &str,
+        held: &[(u32, String)],
+    ) -> Result<GameState, Problem> {
+        let first = held.first().map(|(_, name)| name.as_str());
+        let state = self.state(room_code, first)?;
+        match viewer(held, state.impulse_seat) {
+            Some(name) if Some(name) != first => self.state(room_code, Some(name)),
+            _ => Ok(state),
+        }
     }
 
     /// What a failure on an open game socket means for the player.
@@ -1182,6 +1204,41 @@ pub struct Opened {
     pub state: GameState,
     /// The server's bots, in a game not yet started that this client has a seat in.
     pub bots: Vec<BotInfo>,
+}
+
+/// The seats this client holds in a game that may keep secrets from a seat, each with its
+/// player's name: what it reads the position as. None in any other game, whose position is
+/// the same for everybody.
+pub fn held(info: &GameInfo, seats: &[GameSeat]) -> Vec<(u32, String)> {
+    if !info.may_keep_secrets() {
+        return Vec::new();
+    }
+    seats
+        .iter()
+        .filter(|s| s.yours && s.bot.is_empty() && !s.name.is_empty())
+        .map(|s| (s.seat, s.name.clone()))
+        .collect()
+}
+
+/// The seats of `held` as they sit now (`seats`, as an event lists them): each player's by
+/// its name, which only one person at the table goes by.
+pub fn held_now(held: &[(u32, String)], seats: &[GameSeat]) -> Vec<(u32, String)> {
+    seats
+        .iter()
+        .filter(|s| s.bot.is_empty())
+        .filter_map(|s| {
+            let (_, name) = held.iter().find(|(_, n)| n.eq_ignore_ascii_case(&s.name))?;
+            Some((s.seat, name.clone()))
+        })
+        .collect()
+}
+
+/// The player a position is read as: of the seats held, the one on impulse, else the first.
+pub fn viewer(held: &[(u32, String)], impulse: Option<u32>) -> Option<&str> {
+    held.iter()
+        .find(|(seat, _)| impulse == Some(*seat))
+        .or(held.first())
+        .map(|(_, name)| name.as_str())
 }
 
 /// The bots to watch, best first among those this client knows something about: ones that look
@@ -2277,5 +2334,74 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert!(!err.worth_retrying());
+    }
+
+    #[test]
+    fn a_game_that_may_keep_secrets_is_read_as_the_seat_this_client_holds() {
+        let seat = |seat: u32, name: &str, bot: &str, yours: bool| GameSeat {
+            seat,
+            color: String::new(),
+            name: name.into(),
+            bot: bot.into(),
+            yours,
+        };
+        let seats = [
+            seat(1, "Ana", "", true),
+            seat(2, "Ana · Blue", "", true),
+            seat(3, "Bot", "mcts", false),
+            seat(4, "Ben", "", false),
+        ];
+        let open = GameInfo::default();
+        assert!(held(&open, &seats).is_empty(), "the same for everybody");
+        let secret = GameInfo {
+            engine: "ruleset".into(),
+            ..GameInfo::default()
+        };
+        let mine = held(&secret, &seats);
+        assert_eq!(
+            mine,
+            [(1, "Ana".to_string()), (2, "Ana · Blue".to_string())]
+        );
+        // As the one on impulse, of several; else as the first.
+        assert_eq!(viewer(&mine, Some(2)), Some("Ana · Blue"));
+        assert_eq!(viewer(&mine, Some(4)), Some("Ana"));
+        assert_eq!(viewer(&mine, None), Some("Ana"));
+        assert_eq!(viewer(&[], Some(1)), None, "a spectator");
+        // Seats changed in the lobby: each is found again by its player's name.
+        let moved = [seat(3, "ana", "", false), seat(1, "Ben", "", false)];
+        assert_eq!(held_now(&mine, &moved), [(3, "Ana".to_string())]);
+    }
+
+    #[test]
+    fn a_seats_own_view_is_asked_for_by_its_players_name() {
+        let state = r#"{"state":{"cells":{}},"status":"active","move_seq":3,"impulse_seat":2}"#;
+        let (addr, seen) = serve(Box::new(move |r: &Seen| {
+            match (r.method.as_str(), r.path.as_str()) {
+                ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
+                (_, p) if p.starts_with("/api/games/AB12CD/state") => (200, state.into()),
+                _ => (404, "{}".into()),
+            }
+        }));
+        let mut s = session(&addr);
+        let held = [(1, "Ana".to_string()), (2, "Ana · Blue".to_string())];
+        let read = s.state_seen("AB12CD", &held).unwrap();
+        assert_eq!(read.move_seq, 3);
+        assert_eq!(s.state("AB12CD", None).unwrap().move_seq, 3);
+        let paths: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.path.contains("/state"))
+            .map(|r| r.path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/api/games/AB12CD/state?player_name=Ana",
+                // The seat on impulse is another of this client's: read again as that one.
+                "/api/games/AB12CD/state?player_name=Ana%20%C2%B7%20Blue",
+                "/api/games/AB12CD/state",
+            ]
+        );
     }
 }

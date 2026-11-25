@@ -82,14 +82,18 @@ impl Table {
                 // table goes by: after a move to another seat it is there, and after leaving, or
                 // being cleared by the host, nowhere.
                 if !seats.is_empty() {
-                    let mine = self.yours().map(|s| s.name.clone());
+                    let mine: Vec<String> = self
+                        .game
+                        .seats
+                        .iter()
+                        .filter(|s| s.yours)
+                        .map(|s| s.name.clone())
+                        .collect();
                     self.game.seats = seats
                         .iter()
                         .map(|s| GameSeat {
                             yours: s.bot.is_empty()
-                                && mine
-                                    .as_ref()
-                                    .is_some_and(|m| s.name.eq_ignore_ascii_case(m)),
+                                && mine.iter().any(|m| s.name.eq_ignore_ascii_case(m)),
                             ..s.clone()
                         })
                         .collect();
@@ -134,9 +138,16 @@ impl Table {
         true
     }
 
-    /// The seat this client plays, if it has one.
+    /// The seat this client plays, if it has one: of several (a game played against oneself),
+    /// the one on impulse, else the first.
     pub fn yours(&self) -> Option<&GameSeat> {
-        self.game.seats.iter().find(|s| s.yours)
+        let mut mine = self.game.seats.iter().filter(|s| s.yours);
+        let on_impulse = (self.state.status == "active")
+            .then_some(self.state.impulse_seat)
+            .flatten();
+        mine.clone()
+            .find(|s| Some(s.seat) == on_impulse)
+            .or_else(|| mine.next())
     }
 
     /// The game has not started, and this client has a seat at it: what the lobby is for.
@@ -319,6 +330,7 @@ mod tests {
                 opening: None,
                 reserves: Default::default(),
                 cards: None,
+                engine: String::new(),
             },
             game: Game {
                 game_def_id: "g".into(),
@@ -513,5 +525,46 @@ mod tests {
         t.game.seats[0].yours = false;
         assert_eq!(t.yours(), None);
         assert!(!t.against_bots());
+    }
+
+    #[test]
+    fn a_client_holding_several_seats_plays_the_one_on_impulse() {
+        let mut table = table(0);
+        table.game.seats.push(GameSeat {
+            seat: 2,
+            color: "blue".into(),
+            name: "Ana · Blue".into(),
+            bot: String::new(),
+            yours: true,
+        });
+        assert_eq!(table.yours().map(|s| s.seat), Some(1));
+        assert!(table.to_play());
+        assert_eq!(table.apply(&mv(1, &[("a1", "red")])), Step::Changed);
+        assert_eq!(
+            table.yours().map(|s| s.seat),
+            Some(2),
+            "the seat on impulse"
+        );
+        assert!(table.to_play());
+        // Seats listed again by an event are still this client's, each by its own name.
+        let seats = table.game.seats.clone();
+        let event = Event::State {
+            reason: "seat".into(),
+            state: state(1, &[("a1", "red")]),
+            seats: seats
+                .iter()
+                .map(|s| GameSeat {
+                    yours: false,
+                    ..s.clone()
+                })
+                .collect(),
+            lobby: false,
+            host_seat: Some(1),
+        };
+        table.apply(&event);
+        assert!(table.game.seats.iter().all(|s| s.yours));
+        // Over, or waiting: the first.
+        table.state.status = "finished".into();
+        assert_eq!(table.yours().map(|s| s.seat), Some(1));
     }
 }
