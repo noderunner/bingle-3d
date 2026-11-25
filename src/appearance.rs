@@ -6,14 +6,16 @@
 //! game id, and may give:
 //! - `pieces.<piece id>`: the glTF `model` a piece is drawn as (one the game does not name is
 //!   the generic stone), how it `stands` (`Stands`), and a `material` of its own, when it is not
-//!   its seat's; `parts` of its model drawn in materials of their own, whoever's it is (an
+//!   its seat's; `parts` of its model drawn in materials of their own, whoever's it is (a
 //!   picture inlaid in a tile); or, for a piece of two sides (`sides.rs`), the material of each of its
 //!   model's two parts (`sides`) and which side each seat's are up (`up`); and the piece a move
 //!   of it `leaves` where it started (a disc dropped in a ring that then moves), shown while
 //!   the move is built, since the server does not say;
 //! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
-//!   its goal's edges are stained; `.colour`, the seat's colour in the panels. A colour word no
-//!   seat plays may have one too, for the pieces that are nobody's;
+//!   its goal's edges are stained; `.colour`, the seat's colour in the panels; `.parts`, the
+//!   material of a part of its pieces' models, by the part's name, where one seat's differs
+//!   from another's (a ring's trim, gold on one seat's and silver on the other's). A colour
+//!   word no seat plays may have one too, for the pieces that are nobody's;
 //! - `materials.<name>`: those materials (`look::MaterialSpec`);
 //! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
 //!   than in its spaces (the default, `cells`); `table` for one played on the table itself, with
@@ -486,8 +488,9 @@ pub struct PieceLook {
     #[serde(default)]
     pub up: BTreeMap<String, String>,
     /// Parts of its model after the first drawn in a material of their own, by the part's name:
-    /// the same on every seat's piece (an picture inlaid in a tile), the first part being its
-    /// seat's material. Not with `sides`.
+    /// the same on every seat's piece (a picture inlaid in a tile), the first part being its
+    /// seat's material. Not with `sides`. A part not named here is of its seat's material for
+    /// that part (`SeatLook::parts`), or else of the piece's own.
     #[serde(default)]
     pub parts: BTreeMap<String, String>,
     /// The kind of piece, by its id in `pieces`, that a move of this one leaves where it
@@ -525,6 +528,12 @@ pub struct SeatLook {
     /// The seat's colour wherever the interface shows it (the dot by its name), in sRGB: what its
     /// pieces look like, rather than its colour word.
     pub colour: Option<[f32; 3]>,
+    /// The material of a part of this seat's pieces' models after the first, by the part's
+    /// name, on every piece whose model has such a part and whose look gives it nothing of its
+    /// own (`PieceLook::parts`): a trim that is gold on one seat's pieces and silver on
+    /// another's.
+    #[serde(default)]
+    pub parts: BTreeMap<String, String>,
 }
 
 /// What is wrong with a piece's parts of their own, if it has them: each must be one of its
@@ -601,9 +610,25 @@ impl Appearance {
             out.push("supply: a counter and the choice that takes one, or neither".into());
         }
         for (word, seat) in &self.seats {
-            for name in [&seat.pieces, &seat.goal].into_iter().flatten() {
+            for name in [&seat.pieces, &seat.goal]
+                .into_iter()
+                .flatten()
+                .chain(seat.parts.values())
+            {
                 if !self.materials.contains_key(name) {
                     out.push(format!("seat {word}: no material {name}"));
+                }
+            }
+            for part in seat.parts.keys() {
+                let has = |piece: &PieceLook| {
+                    piece.sides.is_empty()
+                        && assets::model_parts(&piece.model)
+                            .iter()
+                            .skip(1)
+                            .any(|p| p == part)
+                };
+                if !self.pieces.values().any(has) {
+                    out.push(format!("seat {word}: no piece's model has a part {part}"));
                 }
             }
         }
@@ -814,6 +839,19 @@ impl Appearance {
     pub fn material(&self, name: Option<&String>) -> Option<&MaterialSpec> {
         name.and_then(|n| self.materials.get(n))
     }
+
+    /// What a part of a piece's model after its first is made of, on the piece of the seat
+    /// with this colour word: the piece's own for it (`PieceLook::parts`), else the seat's
+    /// (`SeatLook::parts`). None when neither says: it is of the piece's own material.
+    pub fn part_material(
+        &self,
+        piece: &PieceLook,
+        word: &str,
+        part: &str,
+    ) -> Option<&MaterialSpec> {
+        let seats = || self.seats.get(word)?.parts.get(part);
+        self.material(piece.parts.get(part).or_else(seats))
+    }
 }
 
 /// Every appearance the client has.
@@ -937,6 +975,60 @@ mod tests {
         let unmade = look("pips = \"paint\"");
         assert!(
             unmade.iter().any(|p| p.contains("no material paint")),
+            "{unmade:?}"
+        );
+    }
+
+    #[test]
+    fn a_seats_part_is_one_some_pieces_model_has_and_a_pieces_own_comes_before_it() {
+        let look = |seats: &str, own: &str| {
+            Appearance::parse(&format!(
+                "games = [\"t\"]\n[pieces.ring]\nmodel = \"models/ring.glb\"\n{own}\n\
+                 [pieces.disc]\nmodel = \"models/disc.glb\"\n\
+                 sides = {{ light = \"gold\", dark = \"silver\" }}\n\
+                 [seats.black]\npieces = \"silver\"\n{seats}\n\
+                 [seats.white]\npieces = \"gold\"\n\
+                 [materials.gold]\ntint = [1.0, 0.8, 0.4]\nmetallic = 1.0\n\
+                 [materials.silver]\ntint = [0.9, 0.9, 0.9]\nmetallic = 1.0\n"
+            ))
+            .unwrap()
+        };
+        let a = look("parts = { trim = \"gold\" }", "");
+        assert!(a.problems().is_empty(), "{:?}", a.problems());
+        assert_eq!(a.materials["gold"].metallic, Some(1.0));
+        let ring = &a.pieces["ring"];
+        // The seat's own for the part; a seat that gives none has the piece's own material.
+        assert_eq!(
+            a.part_material(ring, "black", "trim"),
+            a.materials.get("gold")
+        );
+        assert_eq!(a.part_material(ring, "white", "trim"), None);
+        // What the piece's look gives a part is every seat's.
+        let b = look(
+            "parts = { trim = \"gold\" }",
+            "parts = { trim = \"silver\" }",
+        );
+        assert!(b.problems().is_empty(), "{:?}", b.problems());
+        let ring = &b.pieces["ring"];
+        for word in ["black", "white"] {
+            assert_eq!(
+                b.part_material(ring, word, "trim"),
+                b.materials.get("silver")
+            );
+        }
+        // A part no piece's model has after its first (a piece of two sides has none to give),
+        // and a material the file does not have.
+        for (part, said) in [
+            ("rim", "a part rim"),
+            ("piece", "a part piece"),
+            ("dark", "a part dark"),
+        ] {
+            let problems = look(&format!("parts = {{ {part} = \"gold\" }}"), "").problems();
+            assert!(problems.iter().any(|p| p.contains(said)), "{problems:?}");
+        }
+        let unmade = look("parts = { trim = \"brass\" }", "").problems();
+        assert!(
+            unmade.iter().any(|p| p.contains("no material brass")),
             "{unmade:?}"
         );
     }

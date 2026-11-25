@@ -9,6 +9,8 @@ fills 80 % of a 28 mm cell. It is mapped flat from above, the texture's middle o
 - Slate: near black, a little cool, faintly mottled.
 - Polished minerals (`minerals.py`): lapis lazuli, red jasper, tiger's eye and black slate, for
   games of coloured stones.
+- Polished marbles (`minerals.py` too), white and black, for pieces mapped in metres (a disc, a
+  ring): each the same again every 64 mm, so a piece of any size is cut from it.
 - Shell: warm white with fine growth lines, the way a shell grows: thin lines a fraction of a
   millimetre apart, bending a little, some stronger than others, and a few broad soft bands.
 
@@ -173,4 +175,7 @@ def run():
     span_mm = 2.0 * RADIUS * 1000.0 / UV_SPAN
     for name, (size, make) in minerals.MINERALS.items():
         albedo = common.linear_to_srgb(make(size, span_mm))
+        common.write_jpeg(common.output("textures", "stone", f"{name}_albedo.jpg"), albedo, 90)
+    for name, (size, make) in minerals.MARBLES.items():
+        albedo = common.linear_to_srgb(make(size, minerals.MARBLE_SPAN_MM))
         common.write_jpeg(common.output("textures", "stone", f"{name}_albedo.jpg"), albedo, 90)

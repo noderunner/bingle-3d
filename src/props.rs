@@ -51,7 +51,8 @@ pub const DISC: &str = "models/disc.glb";
 /// Across and through, in metres.
 pub const DISC_SIZE: Vec2 = Vec2::new(0.015, 0.0036);
 
-/// A ring a disc lies inside, about its middle: one part, made of what its seat's pieces are.
+/// A ring a disc lies inside, about its middle. Its parts are `piece`, made of what its seat's
+/// pieces are, and `trim`, a band round each edge of its top.
 pub const RING: &str = "models/ring.glb";
 /// Across, the hole across, and how tall, in metres.
 pub const RING_SIZE: Vec3 = Vec3::new(0.025, 0.017, 0.004);
@@ -144,7 +145,7 @@ mod tests {
         assert_eq!(assets::model_parts(CARD), ["face", "back", "edge"]);
         assert_eq!(assets::model_parts(DIE), ["body", "pips"]);
         assert_eq!(assets::model_parts(DISC), ["light", "dark"]);
-        assert_eq!(assets::model_parts(RING), [""]);
+        assert_eq!(assets::model_parts(RING), ["piece", "trim"]);
     }
 
     #[test]

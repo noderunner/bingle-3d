@@ -76,6 +76,7 @@ def build(name, spec):
         return node
 
     bsdf.inputs["Roughness"].default_value = spec.get("roughness", 0.5)
+    bsdf.inputs["Metallic"].default_value = spec.get("metallic", 0.0)
     # Bevy's reflectance r gives F0 = 0.16 r²; Blender's level l gives F0 = 0.08 l.
     bsdf.inputs["Specular IOR Level"].default_value = 2.0 * spec.get("reflectance", 0.5) ** 2
     bsdf.inputs["Coat Weight"].default_value = spec.get("clearcoat", 0.0)
