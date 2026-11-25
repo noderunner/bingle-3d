@@ -1,7 +1,8 @@
 //! What each seat has left to place, beside the board: the pieces of its reserve (Tak's stones
 //! and capstones), in a line along the board's side at the seat's right hand, from its near
-//! corner. A flat piece stands on its edge, the line of them a low wall; a tall one (a capstone)
-//! stands upright, nearest the seat.
+//! corner. A flat piece stands on its edge, the line of them a low wall, unless the game's look
+//! lays it flat (`Lie::Flat`: a tile whose face says what it is); a tall one (a capstone) stands
+//! upright, nearest the seat.
 //!
 //! The server says what each seat starts with (`GameInfo.reserves`), which pool each kind of
 //! piece is taken from (`pieces[].pool`) and how many each seat has left (the position's
@@ -13,6 +14,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::prelude::*;
 
+use crate::appearance::Lie;
 use crate::net::api::GameInfo;
 
 /// The space between the board and the supply, between one piece and the next along the line,
@@ -69,10 +71,10 @@ pub struct Stance {
 
 impl Stance {
     /// A flat piece (less than half as thick as it is wide) on its edge, its faces along the
-    /// line; any other upright.
-    pub fn of(low: Vec3, high: Vec3, scale: f32) -> Self {
+    /// line, unless it lies flat; any other upright.
+    pub fn of(low: Vec3, high: Vec3, scale: f32, lie: Lie) -> Self {
         let size = (high - low) * scale;
-        if size.y * 2.0 < size.x.min(size.z) {
+        if lie == Lie::Edge && size.y * 2.0 < size.x.min(size.z) {
             // A quarter turn about x: its thickness (y) goes along the line (z), its depth (z)
             // up.
             Stance {
@@ -205,12 +207,12 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_piece_stands_on_its_edge_and_a_tall_one_upright() {
-        let flat = Stance::of(
+    fn a_flat_piece_stands_on_its_edge_or_lies_flat_and_a_tall_one_upright() {
+        let (low, high) = (
             Vec3::new(-0.0093, -0.0033, -0.0093),
             Vec3::new(0.0093, 0.0033, 0.0093),
-            1.0,
         );
+        let flat = Stance::of(low, high, 1.0, Lie::Edge);
         assert!(
             (flat.along - 0.0066).abs() < 1e-6,
             "its thickness along the line"
@@ -222,13 +224,23 @@ mod tests {
         // Its thickness turned along the line (z), its depth up.
         let up = flat.turn * Vec3::Z;
         assert!(up.y.abs() > 0.99, "{up}");
-        let pawn = Stance::of(
-            Vec3::new(-0.01, 0.0, -0.01),
-            Vec3::new(0.01, 0.04, 0.01),
-            0.5,
-        );
-        assert_eq!(pawn.turn, Quat::IDENTITY);
-        assert!((pawn.along - 0.01).abs() < 1e-6 && pawn.raise == 0.0);
+        // Laid flat, its face up: as wide along the line as it is, on its foot, as low as it is
+        // thick.
+        let lying = Stance::of(low, high, 1.0, Lie::Flat);
+        assert_eq!(lying.turn, Quat::IDENTITY);
+        assert!((lying.along - 0.0186).abs() < 1e-6 && (lying.out - 0.0186).abs() < 1e-6);
+        assert!((lying.raise - 0.0033).abs() < 1e-6 && (lying.height - 0.0066).abs() < 1e-6);
+        // A tall piece is upright either way.
+        for lie in [Lie::Edge, Lie::Flat] {
+            let pawn = Stance::of(
+                Vec3::new(-0.01, 0.0, -0.01),
+                Vec3::new(0.01, 0.04, 0.01),
+                0.5,
+                lie,
+            );
+            assert_eq!(pawn.turn, Quat::IDENTITY);
+            assert!((pawn.along - 0.01).abs() < 1e-6 && pawn.raise == 0.0);
+        }
     }
 
     #[test]

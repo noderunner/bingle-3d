@@ -236,8 +236,10 @@ A game's own rules and its players' words keep their terms.
 - `src/supply.rs`: what each seat has left to place (the definition's `reserves` and each
   piece's `pool`; the position's counts; or, for a game whose rules are written in Go, the
   view's counter its look names, `[supply]`, taken with the choice it names), in a line along the board's side at the seat's right
-  hand: a flat piece on its edge, a tall one upright. `pools`, `Stance` and `line` have no Bevy
-  in them. A click on the player's own takes its plain piece (`board::show_supply`); it waits
+  hand: a flat piece on its edge (or face up, where its look says `[supply] lie = "flat"`), a
+  tall one upright. `pools`, `Stance` and `line` have no Bevy in them. A click on the player's
+  own, found on a box of its model's size (`SimplifiedMesh`: Bevy's ray cast passes through a
+  model's smallest triangles, in metres), takes its plain piece (`board::show_supply`); it waits
   over its place and is carried where it goes, as from a bowl (`board::bowl_stones`, whose
   sources are both). In an opening where seats place each other's pieces (`opening.owner`), the
   piece is shown in the other's colour.
