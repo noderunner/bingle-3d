@@ -1044,7 +1044,8 @@ pub struct GameState {
     pub status: String,
     #[serde(default)]
     pub impulse_seat: Option<u32>,
-    /// Selections played so far. A `move` event's `seq` is this after it.
+    /// Moves played so far, a move being one impulse, as `ply` is. (A `move` event's `seq`
+    /// counts selections instead, of which a move may be several: `Event::Move`.)
     #[serde(default)]
     pub move_seq: u64,
     /// Impulses played so far.
@@ -1324,7 +1325,9 @@ pub struct PieceOnBoard {
 pub enum Event {
     /// The first message: the selections played when the socket subscribed.
     Joined { move_seq: u64 },
-    /// One selection was played; the game now stands as `state` says.
+    /// One selection was played, the `seq`th of the game; the game now stands as `state`
+    /// says, whose `move_seq` and `ply` are the moves played (a move of several selections
+    /// is several of these, the count rising with the last).
     Move { seq: u64, state: GameState },
     /// Something other than a move changed the game (a seat taken, an undo, a resignation).
     /// `seats` are who sits where now; they never say which is this client's.
@@ -1377,10 +1380,23 @@ impl Event {
                 move_seq: serde_json::from_value::<JoinedData>(env.data)?.move_seq,
             },
             "move" => {
+                // The impulse the selection is part of, and whether it ended it: the game
+                // has then played that many, else one fewer (Bingle's ADR 0114).
+                let part_of = env.data["ply"].as_u64();
+                let ended = env.data["ends_impulse"].as_bool().unwrap_or(false);
                 let d: MoveData = serde_json::from_value(env.data)?;
-                // A move event says where the game stands after it, but not as `move_seq`.
+                // A move event says where the game stands after it, but not how many moves
+                // have been played, as a state read does: its `seq` counts selections, of
+                // which a move may be several.
                 let mut state = d.state;
-                state.move_seq = d.seq;
+                let played = match part_of {
+                    Some(ply) if ended => ply,
+                    Some(ply) => ply.saturating_sub(1),
+                    // A server that does not say: every move one selection.
+                    None => d.seq,
+                };
+                state.move_seq = played;
+                state.ply = played;
                 Event::Move { seq: d.seq, state }
             }
             "state" => {
@@ -1621,6 +1637,7 @@ mod tests {
         let mv = Event::parse(
             r#"{"type":"move","data":{"seq":5,"seat":1,"color":"red","from":"","to":"c3","captured":null,
             "impulse_seat":2,"game_ended":false,"winner_seat":null,"status":"active","board_state":{},"ply":5,
+            "ends_impulse":true,
             "state":{"v":2,"cells":{"c3":[{"piece":"stone","color":"red"}]},"ply":5}}}"#,
         )
         .unwrap();
@@ -1628,7 +1645,31 @@ mod tests {
             panic!("{mv:?}")
         };
         assert_eq!(seq, 5);
-        assert_eq!(state.move_seq, 5, "a move's seq is where the game stands");
+        assert_eq!(
+            state.move_seq, 5,
+            "the moves played, as a state read counts them"
+        );
+        // A move of several selections: its first is the seventh selection of the game and
+        // part of the sixth move, which is not played until its last.
+        let part = |seq: u64, ends: &str| {
+            let text = format!(
+                r#"{{"type":"move","data":{{"seq":{seq},"status":"active","ply":6{ends},
+                "state":{{"cells":{{}}}}}}}}"#
+            );
+            match Event::parse(&text).unwrap() {
+                Event::Move { seq, state } => (seq, state.move_seq, state.ply),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(part(7, ""), (7, 5, 5));
+        assert_eq!(part(8, r#","ends_impulse":true"#), (8, 6, 6));
+        // A server that does not say which move a selection is part of: one each.
+        let Event::Move { state: unsaid, .. } =
+            Event::parse(r#"{"type":"move","data":{"seq":3,"status":"active"}}"#).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(unsaid.move_seq, 3);
         assert_eq!(state.impulse_seat, Some(2));
         assert_eq!(state.state.cells["c3"][0].color, "red");
         let seated = Event::parse(

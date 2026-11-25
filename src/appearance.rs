@@ -172,9 +172,11 @@ pub struct MarkersLook {
     pub small: Option<f32>,
     /// What a marker's first part is made of: a material of this file's.
     pub material: String,
-    /// The part of its model drawn in its seat's own material (`seats.<word>.pieces`, or the
-    /// seat's colour as a lacquer).
-    pub seat_part: Option<String>,
+    /// The parts of its model drawn in its seat's own material (`seats.<word>.pieces`, or the
+    /// seat's colour as a lacquer): a plinth, and what else tells whose it is from across the
+    /// table (its eyes). One name, or several.
+    #[serde(default, alias = "seat_part", deserialize_with = "one_or_several")]
+    pub seat_parts: Vec<String>,
     /// The view's list of the seats on one side (`ext.view.<sides>`), once there are sides:
     /// the markers of those seats are made of `on`, the others' of `off`, in place of
     /// `material`, so partners are seen to be.
@@ -194,6 +196,20 @@ pub struct MarkersLook {
     /// The choice that names no seat, made by a click on the player's own marker with none
     /// chosen.
     pub alone: Option<String>,
+}
+
+/// A name, or a list of them.
+fn one_or_several<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Names {
+        One(String),
+        Several(Vec<String>),
+    }
+    Ok(match Names::deserialize(d)? {
+        Names::One(name) => vec![name],
+        Names::Several(names) => names,
+    })
 }
 
 /// What the game's panel shows of each seat beyond its name: the view's counters of the seat
@@ -1344,6 +1360,11 @@ mod tests {
         );
         assert_eq!(a.grid.as_ref().unwrap().box_size, Some(0.03));
         assert_eq!(a.panel.counters, ["score"]);
+        // A marker's parts in its seat's colour: one name, or several.
+        assert_eq!(a.markers.as_ref().unwrap().seat_parts, ["base"]);
+        let several = good.replace("seat_part = \"base\"", "seat_parts = [\"base\", \"eyes\"]");
+        let markers = Appearance::parse(&several).unwrap().markers.unwrap();
+        assert_eq!(markers.seat_parts, ["base", "eyes"]);
 
         let bad = good
             .replace("unless = \"trick\"", "unless = \"nothing\"")

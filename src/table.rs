@@ -23,6 +23,11 @@ pub struct Table {
     pub timing: Option<Timing>,
     /// The bots an open seat can be given before the game starts.
     pub bots: Vec<BotInfo>,
+    /// The selections played, as the socket counts them (its first message, then each move's
+    /// `seq`): what says an event is stale or that one was missed. Not the moves played
+    /// (`state.move_seq`), of which each may be several selections. Until the socket says,
+    /// taken to be the same.
+    pub seq: Option<u64>,
 }
 
 /// What an event did.
@@ -51,18 +56,35 @@ impl Table {
             state: opened.state,
             last_move: None,
             bots: opened.bots,
+            seq: None,
         }
     }
 
     pub fn apply(&mut self, event: &Event) -> Step {
-        let have = self.state.move_seq;
+        let have = self.seq.unwrap_or(self.state.move_seq);
         match event {
-            // Subscribed after more had been played than the state read: one was missed.
-            Event::Joined { move_seq } if *move_seq > have => Step::Reload,
-            Event::Joined { .. } => Step::Unchanged,
+            // The socket's own count of selections. More than the state read was taken to
+            // have: one may have been missed (or a move was of several), so read it again.
+            Event::Joined { move_seq } => {
+                self.seq = Some(*move_seq);
+                if *move_seq > have {
+                    Step::Reload
+                } else {
+                    Step::Unchanged
+                }
+            }
             Event::Move { seq, .. } if *seq <= have => Step::Unchanged,
-            Event::Move { seq, .. } if *seq > have + 1 => Step::Reload,
-            Event::Move { state, .. } => {
+            Event::Move { seq, .. } if *seq > have + 1 => {
+                // What is read again has this one in it.
+                self.seq = Some(*seq);
+                Step::Reload
+            }
+            Event::Move { seq, state } => {
+                self.seq = Some(*seq);
+                // Read before the event came, the state may be ahead of it already.
+                if state.move_seq < self.state.move_seq {
+                    return Step::Unchanged;
+                }
                 self.timed(state);
                 self.last_move = arrived(&self.state, state);
                 self.state = state.clone();
@@ -388,8 +410,13 @@ mod tests {
         let mut t = table(1);
         assert_eq!(t.apply(&mv(3, &[])), Step::Reload);
         assert_eq!(t.state.move_seq, 1, "the table is left as it was");
-        assert_eq!(t.apply(&Event::Joined { move_seq: 2 }), Step::Reload);
-        assert_eq!(t.apply(&Event::Joined { move_seq: 1 }), Step::Unchanged);
+        // The socket subscribed after more had been played than the state read was taken to
+        // have.
+        assert_eq!(table(1).apply(&Event::Joined { move_seq: 2 }), Step::Reload);
+        assert_eq!(
+            table(1).apply(&Event::Joined { move_seq: 1 }),
+            Step::Unchanged
+        );
 
         assert!(t.reloaded(state(3, &[("a1", "red"), ("c3", "red")])));
         assert_eq!(t.state.move_seq, 3);
@@ -566,5 +593,45 @@ mod tests {
         // Over, or waiting: the first.
         table.state.status = "finished".into();
         assert_eq!(table.yours().map(|s| s.seat), Some(1));
+    }
+
+    /// A selection as the socket reports it: the `seq`th of the game, after which `played`
+    /// moves have been played.
+    fn selection(seq: u64, played: u64, cells: &[(&str, &str)]) -> Event {
+        Event::Move {
+            seq,
+            state: GameState {
+                move_seq: played,
+                ply: played,
+                ..state(played, cells)
+            },
+        }
+    }
+
+    #[test]
+    fn a_move_of_several_selections_is_followed_by_the_sockets_count_not_the_moves_played() {
+        // Opened after two moves, the first of two selections: the socket has counted three.
+        let mut t = table(2);
+        assert_eq!(t.apply(&Event::Joined { move_seq: 3 }), Step::Reload);
+        assert!(
+            !t.reloaded(state(2, &[("a1", "red")])),
+            "nothing was missed"
+        );
+        // Two selections of one move: both are shown, and the move is played with the last.
+        assert_eq!(t.apply(&selection(4, 2, &[("b2", "red")])), Step::Changed);
+        assert_eq!((t.seq, t.state.move_seq), (Some(4), 2));
+        assert_eq!(t.apply(&selection(5, 3, &[("c3", "red")])), Step::Changed);
+        assert_eq!((t.seq, t.state.move_seq), (Some(5), 3));
+        // Seen already; and a selection missed.
+        assert_eq!(t.apply(&selection(5, 3, &[])), Step::Unchanged);
+        assert_eq!(t.apply(&selection(7, 4, &[])), Step::Reload);
+        assert!(t.reloaded(state(4, &[("d4", "red")])));
+        assert_eq!(t.apply(&selection(8, 5, &[("e5", "red")])), Step::Changed);
+        // A state read ahead of the socket is not taken back by what was played before it.
+        let mut ahead = table(4);
+        ahead.apply(&Event::Joined { move_seq: 4 });
+        assert_eq!(ahead.apply(&selection(5, 3, &[])), Step::Unchanged);
+        assert_eq!(ahead.state.move_seq, 4);
+        assert_eq!(ahead.seq, Some(5));
     }
 }
