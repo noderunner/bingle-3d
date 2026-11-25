@@ -245,7 +245,8 @@ A game's own rules and its players' words keep their terms.
   piece is shown in the other's colour.
 - `src/fences.rs`: the walls the view says stand between positions (`Position::walls`; Fendo's
   fences), drawn on the side two squares share; where one stands has no Bevy in it. A game whose
-  look has `[fences]` has a bowl of them both seats take from (`play::TakeUp`: a click takes
+  look has `[fences]` has a bowl of them both seats take from, just off the board's side to the
+  first seat's left where its supply leaves room (`bowl_place`) (`play::TakeUp`: a click takes
   one up, `Turn::take_up`; or it is taken up by itself once nothing else may follow,
   `Turn::auto_take`). It is held under the pointer (`hand::Held`), the sides it may go on lit;
   the side nearest the pointer, or turned to with the wheel, is aimed at (`play::SideAim`,
