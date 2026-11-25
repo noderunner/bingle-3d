@@ -45,9 +45,65 @@ pub fn neighbour<'a>(
         .map(|(id, _)| id.as_str())
 }
 
+/// Where the bowl of fences stands on the table, to the first seat's left (x < 0), for a board
+/// whose side there is `edge` from the middle and runs from `side.0` to `side.1` (z), where
+/// `taken` are the stretches of that side (z) something already lies along (a seat's supply),
+/// reaching `beyond` from the middle. Just off the board's edge, `gap` from it and from what lies
+/// there, in the clear stretch nearest the side's middle that a bowl of `radius` fits; or, with
+/// none, beyond what lies there.
+pub fn bowl_place(
+    edge: f32,
+    side: (f32, f32),
+    taken: &[(f32, f32)],
+    beyond: f32,
+    radius: f32,
+    gap: f32,
+) -> Vec2 {
+    let mut taken: Vec<(f32, f32)> = taken.to_vec();
+    taken.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // The clear stretches between what is taken, each narrowed to where a bowl's middle may be.
+    let mut clear = Vec::new();
+    let mut from = side.0;
+    for &(lo, hi) in &taken {
+        clear.push((from, lo - gap));
+        from = from.max(hi + gap);
+    }
+    clear.push((from, side.1));
+    clear
+        .into_iter()
+        .map(|(lo, hi)| (lo + radius, hi - radius))
+        .filter(|(lo, hi)| lo <= hi)
+        .map(|(lo, hi)| 0.0f32.clamp(lo, hi))
+        .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .map_or(Vec2::new(-(beyond + gap + radius), 0.0), |z| {
+            Vec2::new(-(edge + gap + radius), z)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bowl_stands_just_off_the_board_where_the_side_is_clear() {
+        // A side from -0.2 to 0.2, its far half taken by a supply reaching 0.27 out.
+        let at = bowl_place(0.2, (-0.2, 0.2), &[(-0.2, 0.0)], 0.27, 0.04, 0.01);
+        assert!((at.x - -0.25).abs() < 1e-6, "{at}");
+        // As near the middle as clears the supply.
+        assert!((at.y - 0.05).abs() < 1e-6, "{at}");
+        // With nothing there, beside the middle of the side.
+        assert_eq!(
+            bowl_place(0.2, (-0.2, 0.2), &[], 0.2, 0.04, 0.01),
+            Vec2::new(-0.25, 0.0)
+        );
+    }
+
+    #[test]
+    fn the_bowl_stands_beyond_a_side_with_no_room_for_it() {
+        let taken = [(-0.2, -0.05), (0.0, 0.2)];
+        let at = bowl_place(0.2, (-0.2, 0.2), &taken, 0.27, 0.04, 0.01);
+        assert_eq!(at, Vec2::new(-0.32, 0.0));
+    }
 
     #[test]
     fn a_wall_is_named_by_its_two_squares_either_way_round() {

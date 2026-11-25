@@ -626,8 +626,8 @@ impl FenceKit {
     }
 }
 
-/// The space between the bowl of fences and what stands beside the board.
-const FENCE_BOWL_GAP: f32 = 0.025;
+/// The space between the bowl of fences and the board, or what stands beside it.
+const FENCE_BOWL_GAP: f32 = 0.012;
 
 /// A see-through fence on the side a click would put the one taken on.
 #[derive(Component)]
@@ -2042,6 +2042,8 @@ fn build_board(
     let mut beside = 0.0f32;
     // How far to the first seat's left the supply reaches (the other seat's line, at its right).
     let mut left = edge.iter().fold(0.0f32, |l, p| l.max(-p.x));
+    // The board's own side there, and the stretches of it the supply lies along (z).
+    let (board_left, mut along_left) = (left, Vec::new());
     let mut kinds: Vec<(crate::supply::Pool, Option<String>, Gesture)> =
         crate::supply::pools(&table.info)
             .into_iter()
@@ -2121,6 +2123,8 @@ fn build_board(
                     beside = beside.max(t.translation.x.abs() + stance.out);
                     if t.translation.x < 0.0 {
                         left = left.max(-t.translation.x + stance.out / 2.0);
+                        let z = t.translation.z;
+                        along_left.push((z - stance.along / 2.0, z + stance.along / 2.0));
                     }
                 }
                 supply
@@ -2161,9 +2165,15 @@ fn build_board(
         let (wood, bowl_wood) = (spec(&said.material), spec(&said.bowl_material));
         let (fence_material, bowl_material) = (tools.material(&wood), tools.material(&bowl_wood));
         let radius = crate::bowls::BOWL_RADIUS * size;
-        // Shared: beside the middle of the board's side to the first seat's left, beyond any
-        // supply there.
-        let at = Vec2::new(-(left + FENCE_BOWL_GAP + radius), 0.0);
+        // Shared: just off the board's side to the first seat's left, where the supply there
+        // leaves room, or beyond it.
+        let side = edge
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.y), hi.max(p.y))
+            });
+        let at =
+            crate::fences::bowl_place(board_left, side, &along_left, left, radius, FENCE_BOWL_GAP);
         beside = beside.max(at.x.abs() + radius);
         let choices: Vec<Gesture> = said
             .sides
