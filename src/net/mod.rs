@@ -1659,6 +1659,7 @@ mod tests {
             complete: options.is_empty(),
             options,
             may_end: false,
+            state: None,
         }
     }
 

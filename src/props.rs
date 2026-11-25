@@ -53,7 +53,7 @@ pub const DISC_SIZE: Vec2 = Vec2::new(0.015, 0.0036);
 /// A ring a disc lies inside, about its middle: one part, made of what its seat's pieces are.
 pub const RING: &str = "models/ring.glb";
 /// Across, the hole across, and how tall, in metres.
-pub const RING_SIZE: Vec3 = Vec3::new(0.025, 0.017, 0.007);
+pub const RING_SIZE: Vec3 = Vec3::new(0.025, 0.017, 0.004);
 
 /// One part of a model's first mesh, by its place.
 pub fn part(server: &AssetServer, file: &str, index: usize) -> Handle<Mesh> {

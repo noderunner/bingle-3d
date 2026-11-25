@@ -8,6 +8,10 @@
 //! pieces that leave it when a seat's count goes up (`fill`). A game whose count was already up
 //! when it was opened has its trays filled with the other seats' colours.
 //!
+//! A seat may keep its score the same way with pieces of its own (a game's look's `[score]`): a
+//! row of dots on the board's margin at its right hand (`marks`), one for each point its win
+//! wants, each taking one of its own pieces that left the board as its count in the view rises.
+//!
 //! The layout and `fill` have no Bevy in them; `board.rs` builds the trays with `spawn` and
 //! carries the captured pieces into them.
 
@@ -98,11 +102,35 @@ pub struct Change {
     pub drop: usize,
 }
 
+/// Where each of `seats` seats keeps its score of `n`: dots in a line beyond the board's playing
+/// area (`edge`, its outline) at the seat's right hand, `out` beyond it, `step` apart, the first
+/// the nearest the seat. The seats sit round the table as `places` has them.
+pub fn marks(seats: usize, edge: &[Vec2], n: usize, out: f32, step: f32) -> Vec<Vec<Vec2>> {
+    (0..seats)
+        .map(|i| {
+            let turn = TAU * i as f32 / seats as f32;
+            let back = Vec2::new(turn.sin(), turn.cos());
+            let right = Vec2::new(turn.cos(), -turn.sin());
+            let side = edge.iter().fold(0.0f32, |x, p| x.max(p.dot(right)));
+            (0..n)
+                .map(|k| right * (side + out) + back * ((n as f32 - 1.0) / 2.0 - k as f32) * step)
+                .collect()
+        })
+        .collect()
+}
+
 /// How each seat's tray changes, when the seats' trays hold `had` and their counts are now
 /// `counts`: a seat whose count went up takes pieces that left the board (`gone`, each by its
 /// colour word) and are not of a colour it plays (`colours`, each seat's), each piece taken
 /// once, and pieces nobody saw for the rest; one whose count went down gives the last back.
-pub fn fill(had: &[usize], counts: &[u32], colours: &[Vec<String>], gone: &[&str]) -> Vec<Change> {
+/// With `own`, a seat's score kept with its own pieces: it takes those of a colour it plays.
+pub fn fill(
+    had: &[usize],
+    counts: &[u32],
+    colours: &[Vec<String>],
+    gone: &[&str],
+    keeps_own: bool,
+) -> Vec<Change> {
     let mut used = vec![false; gone.len()];
     had.iter()
         .zip(counts)
@@ -123,14 +151,17 @@ pub fn fill(had: &[usize], counts: &[u32], colours: &[Vec<String>], gone: &[&str
                 .flat_map(|(_, c)| c)
                 .filter(|c| !own.contains(c))
                 .collect();
+            let takes = |colour: &str| own.iter().any(|c| c == colour) == keeps_own;
             let add = (had..count)
                 .map(|k| {
-                    let seen =
-                        (0..gone.len()).find(|&i| !used[i] && !own.iter().any(|c| c == gone[i]));
+                    let seen = (0..gone.len()).find(|&i| !used[i] && takes(gone[i]));
                     match seen {
                         Some(i) => {
                             used[i] = true;
                             Source::Board(i)
+                        }
+                        None if keeps_own => {
+                            Source::Unseen(own.first().map_or_else(String::new, |c| c.to_string()))
                         }
                         None => Source::Unseen(
                             others
@@ -283,31 +314,68 @@ mod tests {
         let colours = words(&[&["red", "yellow"], &["blue", "black"]]);
         // Warm captured two of Cool's; a red stone left the board too (not Warm's to take).
         let gone = ["red", "black", "blue"];
-        let changes = fill(&[3, 1], &[5, 1], &colours, &gone);
+        let changes = fill(&[3, 1], &[5, 1], &colours, &gone, false);
         assert_eq!(changes[0].add, [Source::Board(1), Source::Board(2)]);
         assert_eq!(changes[1], Change::default());
         // Both seats at once, each its own.
-        let changes = fill(&[0, 0], &[1, 1], &colours, &gone);
+        let changes = fill(&[0, 0], &[1, 1], &colours, &gone, false);
         assert_eq!(changes[0].add, [Source::Board(1)]);
         assert_eq!(changes[1].add, [Source::Board(0)]);
+    }
+
+    #[test]
+    fn a_score_kept_with_its_own_pieces_takes_them_as_they_leave_the_board() {
+        let colours = words(&[&["white"], &["black"]]);
+        // A row of the mover's discs and one of its rings left the board (the caller keeps
+        // only the rings): its count rose by one.
+        let changes = fill(&[0, 1], &[1, 1], &colours, &["black", "white"], true);
+        assert_eq!(changes[0].add, [Source::Board(1)]);
+        assert_eq!(changes[1], Change::default());
+        // Opened with points scored already: its own colour.
+        let changes = fill(&[0, 0], &[0, 2], &colours, &[], true);
+        assert_eq!(
+            changes[1].add,
+            ["black", "black"].map(|c| Source::Unseen(c.into()))
+        );
+    }
+
+    #[test]
+    fn each_seats_score_is_a_line_of_dots_beyond_the_board_at_its_right_hand() {
+        let square = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .map(|(x, z)| Vec2::new(x, z) * 0.2);
+        let at = marks(2, &square, 3, 0.03, 0.025);
+        assert_eq!((at.len(), at[0].len()), (2, 3));
+        // The first seat, at +z looking across to -z: its right hand is +x.
+        for p in &at[0] {
+            assert!((p.x - 0.23).abs() < 1e-6, "{p}");
+        }
+        assert!(
+            (at[0][0].y - 0.025).abs() < 1e-6,
+            "the first nearest the seat"
+        );
+        assert!(at[0][1].y.abs() < 1e-6 && (at[0][2].y + 0.025).abs() < 1e-6);
+        // The other's across the board, the first nearest it.
+        for (mine, theirs) in at[0].iter().zip(&at[1]) {
+            assert!(theirs.distance(-*mine) < 1e-6, "{theirs}");
+        }
     }
 
     #[test]
     fn captures_nobody_saw_are_the_other_seats_colours_and_a_take_back_empties_squares() {
         let colours = words(&[&["red", "yellow"], &["blue", "black"]]);
         // Opened with captures made already: the other seat's colours by turns.
-        let changes = fill(&[0, 0], &[3, 0], &colours, &[]);
+        let changes = fill(&[0, 0], &[3, 0], &colours, &[], false);
         assert_eq!(
             changes[0].add,
             ["blue", "black", "blue"].map(|c| Source::Unseen(c.into()))
         );
         // More counted than left the board.
-        let changes = fill(&[2, 0], &[4, 0], &colours, &["black"]);
+        let changes = fill(&[2, 0], &[4, 0], &colours, &["black"], false);
         assert_eq!(
             changes[0].add,
             [Source::Board(0), Source::Unseen("black".into())]
         );
         // A move taken back.
-        assert_eq!(fill(&[4, 2], &[1, 2], &colours, &[])[0].drop, 3);
+        assert_eq!(fill(&[4, 2], &[1, 2], &colours, &[], false)[0].drop, 3);
     }
 }

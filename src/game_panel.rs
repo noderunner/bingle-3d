@@ -428,7 +428,14 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
         p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
     }
     let drawn = table.state.state.panel_actions();
-    let hint = hint(turn, table.state.state.impulse_words(), &drawn);
+    // After a selection, what the position it leaves asks next (a line to remove, once
+    // the move that made it is chosen), as the server previews it.
+    let said = match turn.preview() {
+        Some(after) => after.impulse_words(),
+        None if turn.made.is_empty() => table.state.state.impulse_words(),
+        None => None,
+    };
+    let hint = hint(turn, said, &drawn);
     if !hint.is_empty() {
         p.spawn(line(f.regular(14.0), colours::TEXT, &hint));
     }
@@ -466,14 +473,16 @@ fn on_panel(choices: Vec<Gesture>, drawn: &[&str]) -> (Vec<Gesture>, bool) {
     (buttons, !on_table.is_empty())
 }
 
-/// What the player is told of their move: before they have chosen anything, what the server
-/// says they are asked (`said`), if it says; after that, or without it, how to go on from here.
-/// `drawn` is what the view says is chosen on the table rather than on the panel.
+/// What the player is told of their move: before they have chosen anything towards a
+/// selection, what the server says they are asked (`said`: for the first, the position's view;
+/// for one after it, the preview's), if it says and the move may not be played as it is; after
+/// that, or without it, how to go on from here. `drawn` is what the view says is chosen on the
+/// table rather than on the panel.
 fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
     let (buttons, on_table) = on_panel(turn.choices(), drawn);
     match turn.stage {
         Stage::Asking => String::new(),
-        Stage::Choosing if !turn.can_go_back() && said.is_some() => {
+        Stage::Choosing if turn.untouched() && !turn.can_play() && said.is_some() => {
             said.unwrap_or_default().to_string()
         }
         // Something in hand, to be put where it goes on the table.
@@ -589,6 +598,7 @@ mod tests {
             ],
             complete: false,
             may_end: false,
+            state: None,
         });
         let said = Some("Choose where to lay a tile.");
         assert_eq!(hint(&turn, said, &[]), "Choose where to lay a tile.");
@@ -644,6 +654,7 @@ mod tests {
             options: vec![option(&["from-t1-1", "to-t2"]), option(&["draw"])],
             complete: false,
             may_end: false,
+            state: None,
         });
         assert_eq!(hint(&turn, None, &drawn), "Click what to move.");
         assert_eq!(hint(&turn, Some("Click a card."), &drawn), "Click a card.");
