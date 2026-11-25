@@ -317,7 +317,8 @@ A game's own rules and its players' words keep their terms.
   stands on them (`raise_cells`), the camera and the supply kept to the middle (`table_frame`); `BoardWood` is its wood, chosen by `src/wood_choice.rs`
   (stopgap buttons), and the materials made of it are built again when it changes.
   `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
-  and `MaterialSpec`, a material as data; a wooden mesh needs texture coordinates in metres
+  and `MaterialSpec`, a material as data (its `wood` may be `board`, the board's, or `contrast`,
+  one that stands out against it: an inlay); a wooden mesh needs texture coordinates in metres
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour; a goal every

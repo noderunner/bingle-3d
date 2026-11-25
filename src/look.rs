@@ -59,6 +59,19 @@ pub const BOARD_WOODS: [&str; 3] = ["teak", "walnut", "cherry"];
 /// The wood a material names as `board`: whichever the board is made of.
 pub const BOARD: &str = "board";
 
+/// The wood a material names as `contrast`: one that stands out against the board's, as an
+/// inlay of another wood does (`contrasting`).
+pub const CONTRAST: &str = "contrast";
+
+/// The wood that stands out against a board of `board_wood`: the dark walnut against the
+/// lighter woods, and golden teak against walnut.
+pub fn contrasting(board_wood: &str) -> &'static str {
+    match board_wood {
+        "walnut" => "teak",
+        _ => "walnut",
+    }
+}
+
 /// How much finer the grain's relief (its normal map) is than its colour: the pores and the
 /// small ripples a close look sees, laid over the figure without stretching a single photograph.
 /// Not a whole number, so the two never line up.
@@ -81,9 +94,9 @@ pub struct MaterialSpec {
     /// The size in metres one copy of the textures covers, on a mesh whose texture coordinates
     /// are in metres (a floor, a wall); without it they are used as the mesh has them.
     pub metres: Option<f32>,
-    /// One of `WOODS`, or `board` for the board's own: its colour, normals and roughness,
-    /// mapped by position on the table, so a mesh using it needs texture coordinates in metres
-    /// (`world_uvs`).
+    /// One of `WOODS`, `board` for the board's own, or `contrast` for one that stands out
+    /// against it: its colour, normals and roughness, mapped by position on the table, so a
+    /// mesh using it needs texture coordinates in metres (`world_uvs`).
     pub wood: Option<String>,
     /// Multiplies the colour (sRGB), as a stain does; the whole colour when there is no texture.
     pub tint: Option<[f32; 3]>,
@@ -126,6 +139,7 @@ impl MaterialSpec {
         }
         if let Some(name) = &self.wood
             && name != BOARD
+            && name != CONTRAST
             && wood(name).is_none()
         {
             out.push(format!("no wood {name}"));
@@ -136,22 +150,26 @@ impl MaterialSpec {
         out
     }
 
-    /// The same, with `board` for a wood replaced by the board's wood.
+    /// The same, with `board` for a wood replaced by the board's wood, and `contrast` by the
+    /// wood that stands out against it.
     pub fn on_board(&self, board_wood: &str) -> MaterialSpec {
         let mut out = self.clone();
-        if out.wood.as_deref() == Some(BOARD) {
-            out.wood = Some(board_wood.to_string());
+        match out.wood.as_deref() {
+            Some(BOARD) => out.wood = Some(board_wood.to_string()),
+            Some(CONTRAST) => out.wood = Some(contrasting(board_wood).to_string()),
+            _ => {}
         }
         out
     }
 
-    /// Whether it is made of the board's wood, whichever that is.
+    /// Whether its wood follows the board's, whichever that is: the board's own, or the one
+    /// that stands out against it.
     pub fn is_board_wood(&self) -> bool {
-        self.wood.as_deref() == Some(BOARD)
+        matches!(self.wood.as_deref(), Some(BOARD | CONTRAST))
     }
 
-    /// Builds it. A `board` wood here is the first of `BOARD_WOODS`: use `on_board` first to
-    /// choose another.
+    /// Builds it. A `board` wood here is the first of `BOARD_WOODS`, and `contrast` the wood
+    /// that stands out against that: use `on_board` first to choose another.
     pub fn build(&self, server: &AssetServer) -> StandardMaterial {
         let tint = self.tint.unwrap_or([1.0; 3]);
         let mut m = StandardMaterial {
@@ -196,6 +214,7 @@ impl MaterialSpec {
         }
         let name = match self.wood.as_deref() {
             Some(BOARD) => Some(BOARD_WOODS[0]),
+            Some(CONTRAST) => Some(contrasting(BOARD_WOODS[0])),
             other => other,
         };
         if let Some(w) = name.and_then(wood) {
@@ -497,6 +516,29 @@ mod tests {
             ..default()
         };
         assert_eq!(felt.on_board("cherry"), felt, "another wood stays itself");
+    }
+
+    #[test]
+    fn a_contrasting_wood_stands_out_against_whichever_board_is_chosen() {
+        let inlay = MaterialSpec {
+            wood: Some(CONTRAST.into()),
+            ..default()
+        };
+        assert!(inlay.problems().is_empty());
+        assert!(
+            inlay.is_board_wood(),
+            "built again when the board's wood changes"
+        );
+        for board in BOARD_WOODS {
+            let on = inlay.on_board(board);
+            let named = on.wood.as_deref().unwrap();
+            assert_ne!(named, board, "never the board's own wood");
+            assert!(wood(named).is_some(), "{named}");
+            assert!(!on.is_board_wood());
+        }
+        assert_eq!(inlay.on_board("teak").wood.as_deref(), Some("walnut"));
+        assert_eq!(inlay.on_board("cherry").wood.as_deref(), Some("walnut"));
+        assert_eq!(inlay.on_board("walnut").wood.as_deref(), Some("teak"));
     }
 
     #[test]
