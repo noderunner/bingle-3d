@@ -24,8 +24,9 @@ use serde_json::Value;
 
 use crate::appearance::{Appearance, Appearances, MoveTilesLook};
 use crate::assets;
+use crate::board::BoardOutline;
 use crate::coordinates;
-use crate::hand::{self, BoardEdge};
+use crate::hand;
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
 use crate::net::WatchStatus;
@@ -37,7 +38,8 @@ pub struct MoveTilesPlugin;
 
 impl Plugin for MoveTilesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (sync_tiles, slide_tiles).chain());
+        app.init_resource::<BoardOutline>()
+            .add_systems(Update, (sync_tiles, slide_tiles).chain());
     }
 }
 
@@ -47,8 +49,8 @@ pub const WIDTH: f32 = 0.064;
 pub const DEPTH: f32 = 0.070;
 /// The stamp the squares are printed with.
 const STAMP: &str = "textures/stamp/square_albedo.png";
-/// Between the board and the tiles, and between two tiles.
-const GAP: f32 = 0.022;
+/// Between the board's edge and the tiles (a gap the eye sees), and between two tiles.
+const GAP: f32 = 0.015;
 const BETWEEN: f32 = 0.012;
 /// The grid: its side, and how far its middle is from the tile's, away from its holder.
 const GRID: f32 = 0.040;
@@ -286,7 +288,7 @@ fn sync_tiles(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     appearances: Res<Appearances>,
-    edge: Res<BoardEdge>,
+    edge: Res<BoardOutline>,
     server: Res<AssetServer>,
     (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     roots: Query<(Entity, &TilesRoot)>,
@@ -854,7 +856,7 @@ mod tests {
             .init_asset::<StandardMaterial>()
             .init_asset::<Image>()
             .insert_resource(Appearances(vec![look]))
-            .insert_resource(BoardEdge(vec![
+            .insert_resource(BoardOutline(vec![
                 Vec2::new(-half, -half),
                 Vec2::new(half, -half),
                 Vec2::new(half, half),

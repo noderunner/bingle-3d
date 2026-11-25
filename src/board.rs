@@ -95,6 +95,7 @@ impl Plugin for BoardPlugin {
                     .chain(),
             )
             .init_resource::<BoardWood>()
+            .init_resource::<BoardOutline>()
             .init_resource::<SideAim>()
             .init_resource::<ShowLegalMoves>();
     }
@@ -455,6 +456,11 @@ struct Flipping {
     secs: f32,
 }
 
+/// The outline on the table (x, z) of the board being shown, its margin round the cells too:
+/// what lies beside it (the move tiles) keeps clear of it. Empty with no board.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct BoardOutline(pub Vec<Vec2>);
+
 /// The meshes and materials of the board being shown.
 #[derive(Component)]
 struct Kit {
@@ -487,6 +493,9 @@ struct Kit {
     /// The board's playing area's outline (its cells', or its points'), for what is held to
     /// stay over while the pointer is off the board.
     edge: Vec<Vec2>,
+    /// The slab's own outline, its margin round the playing area too: what lies beside the
+    /// board keeps clear of it (`BoardOutline`).
+    outline: Vec<Vec2>,
     /// The width (X) and depth (Z) the camera frames: the board's, or the middle of the table
     /// for a game with no board.
     size: Vec2,
@@ -972,6 +981,7 @@ fn sync_board(
             commands.entity(root).despawn();
         }
         commands.insert_resource(BoardEdge::default());
+        commands.insert_resource(BoardOutline::default());
         return;
     };
     // A card game's cards are laid in place of its board, which is nothing to look at
@@ -1007,11 +1017,12 @@ fn sync_board(
         };
         let kit = build_board(&mut commands, &mut tools, table, &layout);
         commands.insert_resource(BoardEdge(kit.1.edge.clone()));
+        commands.insert_resource(BoardOutline(kit.1.outline.clone()));
         // Framed with the player's tray in front of it, if it has one, and the move tiles
         // round it (`move_tiles.rs`).
         let (mut front, mut beside) = (kit.1.front, kit.1.beside);
         if tools.look.is_some_and(|l| l.move_tiles.is_some()) {
-            let (f, b) = crate::move_tiles::reaches(&kit.1.edge);
+            let (f, b) = crate::move_tiles::reaches(&kit.1.outline);
             (front, beside) = (front.max(f), beside.max(b));
         }
         let size = kit.1.size;
@@ -2120,6 +2131,7 @@ fn build_board(
     };
     let kit = Kit {
         edge: playing,
+        outline: edge,
         size,
         on_table,
         fences,
@@ -2843,11 +2855,17 @@ fn show_turn(
         if coming.aimed && aimed.is_none() {
             continue;
         }
+        // A selection's piece is what arrives only when it is a kind of piece: a move made by
+        // a card names the card there, and what arrives is the piece standing where it starts.
+        let a_piece = |id: &&str| {
+            kit.pieces.contains_key(*id) || table.info.pieces.iter().any(|p| p.id == *id)
+        };
         let id = if coming.aimed {
             aimed
         } else {
             coming
                 .piece
+                .filter(a_piece)
                 .or_else(|| Some(cells.get(coming.from?)?.last()?.piece.as_str()))
                 // What is in hand, when the selections do not say (Fendo's pawn, added).
                 .or(in_hand.as_deref())
@@ -4528,6 +4546,140 @@ mod tests {
                 look.unwrap().board.regions.get("keep").map(String::as_str),
                 Some("dark_square")
             );
+        }
+
+        /// A made-up game played with cards that name the move: a piece of its own model, and
+        /// a region of the board inlaid in the wood that stands out against the board's.
+        fn with_card_moves_look() -> App {
+            let mut app = app();
+            let look = Appearance::parse(
+                r#"
+games = ["t-cards"]
+
+[pieces.chief]
+model = "models/chess/king.glb"
+stands = "forward"
+
+[board.regions]
+band = "inlay"
+
+[materials.inlay]
+wood = "contrast"
+"#,
+            )
+            .unwrap();
+            assert!(look.problems().is_empty(), "{:?}", look.problems());
+            app.insert_resource(Appearances(vec![look]));
+            let mut table = grid_table("t-cards", &[("a1", &[("chief", "white")])]);
+            table
+                .info
+                .board
+                .regions
+                .insert("band".into(), vec!["b2".into()]);
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
+            app.update();
+            app
+        }
+
+        #[test]
+        fn a_region_inlaid_in_a_contrasting_wood_follows_the_boards_wood() {
+            let mut app = with_card_moves_look();
+            let texture = |app: &mut App, cell: &str| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&Cell, &MeshMaterial3d<StandardMaterial>)>();
+                let handle = q
+                    .iter(app.world())
+                    .find(|(c, _)| c.id == cell)
+                    .map(|(_, m)| m.0.clone())
+                    .expect("the cell");
+                let materials = app.world().resource::<Assets<StandardMaterial>>();
+                let texture = materials.get(&handle).unwrap().base_color_texture.clone();
+                texture.and_then(|t| t.path().map(|p| p.to_string()))
+            };
+            let wood_of = |app: &mut App, cell: &str| {
+                let path = texture(app, cell).expect("a wood's texture");
+                look::WOODS
+                    .iter()
+                    .map(|w| w.name)
+                    .find(|w| path.contains(&format!("/{w}_")))
+                    .unwrap_or_else(|| panic!("{path}"))
+            };
+            // On the teak board the inlay is walnut; on a walnut board, teak.
+            assert_eq!(wood_of(&mut app, "a1"), "teak");
+            assert_eq!(wood_of(&mut app, "b2"), "walnut");
+            app.insert_resource(BoardWood("walnut"));
+            app.update();
+            assert_eq!(wood_of(&mut app, "a1"), "walnut");
+            assert_eq!(wood_of(&mut app, "b2"), "teak");
+        }
+
+        #[test]
+        fn a_piece_moved_by_a_card_is_shown_as_itself_where_it_would_go() {
+            use crate::net::api::{LegalSelection, Selections};
+            use crate::play::Turn;
+
+            // The selection's piece is the card that makes the move (as a game of move cards
+            // names it), not a kind of piece: what arrives is the piece that stands where the
+            // move starts.
+            let mut app = with_card_moves_look();
+            let step = |to: &str| LegalSelection {
+                notation: format!("q a1-{to}"),
+                action: "move".into(),
+                to: Some(to.into()),
+                from: Some("a1".into()),
+                piece: Some("q".into()),
+                aim: None,
+                gestures: vec![
+                    Gesture {
+                        kind: "action".into(),
+                        value: "card-q".into(),
+                    },
+                    Gesture::pos("a1"),
+                    Gesture::pos(to),
+                ],
+                captures: Vec::new(),
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 1,
+                made: vec![],
+                options: vec![step("a2"), step("b1")],
+                complete: false,
+                may_end: false,
+            });
+            turn.gesture(&Gesture {
+                kind: "action".into(),
+                value: "card-q".into(),
+            });
+            turn.gesture(&Gesture::pos("a1"));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a2".into());
+            app.update();
+            let chief = drawn(&mut app)[&("a1".to_string(), 0)].2.clone();
+            let mut ghosts = app.world_mut().query_filtered::<&Mesh3d, With<Ghost>>();
+            let shown: Vec<Handle<Mesh>> = ghosts.iter(app.world()).map(|m| m.0.clone()).collect();
+            assert_eq!(shown, [chief], "the piece itself, not a stone");
+        }
+
+        #[test]
+        fn what_lies_beside_the_board_is_kept_clear_of_its_margin() {
+            let app = with_card_moves_look();
+            let edge = &app.world().resource::<BoardEdge>().0;
+            let outline = &app.world().resource::<BoardOutline>().0;
+            assert!(!edge.is_empty() && !outline.is_empty());
+            let reach = |points: &[Vec2], dir: Vec2| {
+                points.iter().fold(f32::MIN, |far, p| far.max(p.dot(dir)))
+            };
+            let pitch = Layout::new(&grid_table("t-cards", &[]).info.board.positions).pitch;
+            for dir in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+                let margin = reach(outline, dir) - reach(edge, dir);
+                assert!(
+                    (margin - pitch * MARGIN).abs() < 1e-4,
+                    "the slab's edge is its margin beyond the cells: {margin}"
+                );
+            }
         }
 
         #[test]
