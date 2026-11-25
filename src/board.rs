@@ -46,7 +46,7 @@ use crate::net::WatchStatus;
 use crate::net::api::{
     Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard, Position,
 };
-use crate::play::{Choice, Hovering, SideAim, Spot, Stage, TakeToPlace, TakeUp, Turn};
+use crate::play::{Choice, Hovering, LineAim, SideAim, Spot, Stage, TakeToPlace, TakeUp, Turn};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -78,10 +78,12 @@ impl Plugin for BoardPlugin {
                 (
                     sync_board.run_if(resource_changed::<WatchStatus>),
                     raise_cells.run_if(resource_changed::<WatchStatus>),
+                    line_aim,
                     show_turn.run_if(
                         resource_changed::<WatchStatus>
                             .or_eager(resource_changed::<Hovering>)
-                            .or_eager(resource_changed::<ShowLegalMoves>),
+                            .or_eager(resource_changed::<ShowLegalMoves>)
+                            .or_eager(resource_changed::<LineAim>),
                     ),
                     show_taken.run_if(resource_changed::<WatchStatus>),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
@@ -100,6 +102,7 @@ impl Plugin for BoardPlugin {
             .init_resource::<BoardWood>()
             .init_resource::<BoardOutline>()
             .init_resource::<SideAim>()
+            .init_resource::<LineAim>()
             .init_resource::<ShowLegalMoves>();
     }
 }
@@ -144,6 +147,9 @@ const LINE_WIDTH: f32 = 0.035;
 const EDGE_LINE_WIDTH: f32 = 0.07;
 /// A marked position's dot (a Go board's star points), across, in pitches.
 const MARK_SIZE: f32 = 0.2;
+/// How far over the board a point a click lands on lies, so it is picked before the board.
+const POINT_RAISE: f32 = 0.0003;
+
 /// A score's dots (`trays::marks`): how far beyond the outermost positions, and how far apart,
 /// in pitches; room for a ring as wide as most of a pitch round each.
 const SCORE_OUT: f32 = 1.2;
@@ -1021,7 +1027,7 @@ fn sync_board(
         commands.insert_resource(BoardOutline::default());
         return;
     };
-    let preview = watch.turn.as_ref().and_then(Turn::preview);
+    let previews = watch.turn.as_ref().map(Turn::previews).unwrap_or_default();
     // A card game's cards are laid in place of its board, which is nothing to look at
     // (`card_table.rs`).
     if crate::card_table::on_table(&table.info, drawing.appearances.for_game(&table.info.id)) {
@@ -1071,7 +1077,7 @@ fn sync_board(
         });
         // A board just built shows the position as it is, without dropping every piece.
         let root = kit.0;
-        let wanted = wanted_pieces(table, &kit.1, preview);
+        let wanted = wanted_pieces(table, &kit.1, &previews);
         place_pieces(
             &mut commands,
             root,
@@ -1098,7 +1104,7 @@ fn sync_board(
         .chain(from_bowls.iter().filter_map(|f| f.cell.as_deref()))
         .collect();
     // What left the board and was captured goes to its captor's tray, rather than away.
-    let wanted = wanted_pieces(table, kit, preview);
+    let wanted = wanted_pieces(table, kit, &previews);
     let gone: Vec<(Entity, &PieceAt)> = shown
         .iter()
         .filter(|(_, at)| !wanted.contains(at))
@@ -1367,7 +1373,7 @@ fn fill_trays(
                                 delay: CAPTURE_WAIT + CAPTURE_EACH * taken.len() as f32,
                                 over: CAPTURE_OVER * kit.scale,
                                 across: CAPTURE_ACROSS,
-                                lands: Cue::Capture,
+                                lands: lands_in_tray(kit),
                             },
                             Carry::Put(to),
                         ));
@@ -1401,6 +1407,16 @@ fn fill_trays(
         }
     }
     taken
+}
+
+/// The sound a piece carried to a tray makes as it lands there: a capture's, or where the look
+/// keeps a score with the seats' own pieces (`[score]`), a point scored, cheered as a win is.
+fn lands_in_tray(kit: &Kit) -> Cue {
+    if kit.score.is_some() {
+        Cue::Win
+    } else {
+        Cue::Capture
+    }
 }
 
 /// A number from 0 to 1 for a place on the board and what it is for: the same for the same
@@ -1475,7 +1491,7 @@ fn stance(stands: Stands, cell: &str, layer: usize, facing: f32) -> Stance {
 }
 
 /// Every piece of the position, bottom of each stack first.
-fn wanted_pieces(table: &Table, kit: &Kit, preview: Option<&Position>) -> Vec<PieceAt> {
+fn wanted_pieces(table: &Table, kit: &Kit, previews: &[&Position]) -> Vec<PieceAt> {
     let mut out = Vec::new();
     let tints = table.state.state.tints();
     for (cell, stack) in &table.state.state.cells {
@@ -1484,10 +1500,16 @@ fn wanted_pieces(table: &Table, kit: &Kit, preview: Option<&Position>) -> Vec<Pi
             let mut piece = piece.clone();
             // A piece of two sides that the move being built turns over (the discs a ring
             // jumps) is shown turned, as the server's preview has it, until the move is played
-            // or taken back.
-            if let Some(after) = preview
-                .and_then(|p| p.cells.get(cell)?.get(layer))
-                .filter(|a| a.piece == piece.piece && a.color != piece.color)
+            // or taken back; and one it then takes away, as the last preview to have it had it.
+            if let Some(after) = previews
+                .iter()
+                .find_map(|p| {
+                    p.cells
+                        .get(cell)?
+                        .get(layer)
+                        .filter(|a| a.piece == piece.piece)
+                })
+                .filter(|a| a.color != piece.color)
                 .filter(|_| kit.piece(&piece.piece).sides.is_some())
             {
                 piece.color = after.color.clone();
@@ -1776,9 +1798,10 @@ fn build_board(
                     Name::new(format!("Point {id}")),
                     Mesh3d(disc.clone()),
                     MeshMaterial3d(unseen.clone()),
-                    Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + 0.0003)),
+                    Transform::from_translation(*centre + Vec3::Y * (BOARD_HEIGHT + POINT_RAISE)),
                     Cell { id: id.clone() },
                     Outline::point(pitch, 0.0),
+                    OnPoint { pitch },
                     Spot(id.clone()),
                     Pickable::default(),
                     ChildOf(root),
@@ -2658,12 +2681,64 @@ type LitCell = (
     Has<Lit>,
     Has<TintAt>,
     Option<&'static Tone>,
+    (Option<&'static OnPoint>, &'static Outline),
 );
+
+/// A point of a board played on points, `pitch` apart: lit as a dot while nothing stands on
+/// it, and round what stands there, at its top, while something does (`point_outline`).
+#[derive(Component, Debug, Clone, Copy)]
+struct OnPoint {
+    pitch: f32,
+}
+
+/// How far out from a point what stands on it is lit, in pitches: just beyond a ring's rim.
+const ON_POINT_LIT: f32 = 0.47;
+
+/// A point's outline as it is lit: a dot when nothing stands on it (whose stack is `under`
+/// high, in the cell's units), else round the piece, at its top, so the light is not hidden
+/// under it.
+fn point_outline(pitch: f32, under: Option<f32>) -> Outline {
+    match under {
+        None => Outline::point(pitch, 0.0),
+        Some(top) => Outline::space(
+            (0..24)
+                .map(|i| Vec2::from_angle(-(i as f32) * TAU / 24.0) * pitch * ON_POINT_LIT)
+                .collect(),
+            top,
+        ),
+    }
+}
+
+/// Which line a click would choose, where the selections are lines chosen by what they take
+/// (`Turn::lines`): of those through the piece under the pointer, the one whose middle is
+/// nearest it (`play::nearest_line`).
+fn line_aim(
+    watch: Res<WatchStatus>,
+    hovering: Res<Hovering>,
+    pointer: Res<PointerOnBoard>,
+    roots: Query<&Kit, With<BoardRoot>>,
+    mut aim: ResMut<LineAim>,
+) {
+    let wanted = (|| {
+        let table = watch.table.as_ref()?;
+        let lines = watch.turn.as_ref()?.lines();
+        let at = hovering.0.as_deref()?;
+        let kit = roots.single().ok()?;
+        let (hit, eye) = pointer.0?;
+        let on = crate::hand::on_surface(hit, eye, kit.surface);
+        let layout = Layout::new(&table.info.board.positions);
+        let centre = |c: &str| layout.centres.get(c).map(|v| (v.x, v.z));
+        crate::play::nearest_line(&lines, at, (on.x, on.z), centre).cloned()
+    })();
+    if aim.0 != wanted {
+        aim.0 = wanted;
+    }
+}
 
 fn show_turn(
     mut commands: Commands,
     watch: Res<WatchStatus>,
-    (hovering, legal): (Res<Hovering>, Res<ShowLegalMoves>),
+    (hovering, legal, line): (Res<Hovering>, Res<ShowLegalMoves>, Res<LineAim>),
     roots: Query<(Entity, &Kit), With<BoardRoot>>,
     cells: Query<LitCell>,
     mut pieces: Query<TurnPiece>,
@@ -2686,21 +2761,38 @@ fn show_turn(
     // A cell a tile lies on is lit on the tile.
     let tiled: Vec<&str> = cells
         .iter()
-        .filter(|(_, _, _, on_tile, _)| *on_tile)
+        .filter(|(_, _, _, on_tile, ..)| *on_tile)
         .map(|(_, c, ..)| c.id.as_str())
         .collect();
-    for (entity, cell, was, on_tile, tone) in &cells {
+    let stacks = &table.state.state.cells;
+    let floors = table.state.state.tints();
+    for (entity, cell, was, on_tile, tone, (point, outline)) in &cells {
         let id = cell.id.as_str();
-        let wanted = lit
-            && targets.contains(&cell.id)
-            && previewed != Some(id)
+        // A line pointed at is lit alone, whether the legal moves are or not.
+        let wanted = match &line.0 {
+            Some(aimed) => aimed.captures.contains(&cell.id),
+            None => lit && targets.contains(&cell.id),
+        } && previewed != Some(id)
             && (on_tile || !tiled.contains(&id));
         let toned = if wanted && turn.is_some_and(|t| t.takes_at(id)) {
             Tone::Take
         } else {
             Tone::Plain
         };
-        if wanted && !was {
+        // A point is lit round what stands on it; drawn again when that changes (`light`
+        // draws a position again when its tone is set).
+        let reshaped = point
+            .filter(|_| wanted)
+            .map(|p| {
+                let under = stacks.get(id).filter(|s| !s.is_empty()).map(|s| {
+                    (kit.floor(&floors, id) + kit.stack_height(s)) * kit.scale - POINT_RAISE
+                });
+                point_outline(p.pitch, under)
+            })
+            .filter(|o| o != outline);
+        if let Some(o) = reshaped {
+            commands.entity(entity).insert((o, toned, Lit));
+        } else if wanted && !was {
             commands.entity(entity).insert((Lit, toned));
         } else if !wanted && was {
             commands.entity(entity).remove::<(Lit, Tone)>();
@@ -2932,6 +3024,38 @@ fn show_turn(
     }
 
     let Some(turn) = turn else { return };
+    // Over a piece a move may start with that leaves another where it stood (a ring, which
+    // leaves a disc), what it would leave, see-through in its place: where the one held under
+    // the pointer would go.
+    if let Some(cell) = hovering.0.as_deref()
+        && turn.moves_only().contains(&cell)
+        && let Some(stack) = cells.get(cell).filter(|s| !s.is_empty())
+        && let Some(centre) = layout.centres.get(cell)
+    {
+        let (moved, under) = stack.split_last().expect("not empty");
+        if let Some(left) = kit.leaves.get(&moved.piece) {
+            let kind = kit.piece(left);
+            commands.spawn((
+                Name::new(format!("{left} to leave on {cell}")),
+                Ghost,
+                Mesh3d(kind.mesh.clone()),
+                MeshMaterial3d(
+                    kind.ghost
+                        .clone()
+                        .or_else(|| kit.ghosts.get(&moved.color).cloned())
+                        .unwrap_or_else(|| kit.ghost.clone()),
+                ),
+                kit.set_down(
+                    left,
+                    &moved.color,
+                    *centre,
+                    (cell, under.len()),
+                    kit.floor(&tints, cell) + kit.stack_height(under),
+                ),
+                ChildOf(root),
+            ));
+        }
+    }
     let mut shown: Vec<&str> = match turn.stage {
         Stage::Asking | Stage::Ready | Stage::Sending => turn.placed().collect(),
         Stage::Choosing | Stage::Failed => Vec::new(),
@@ -3103,25 +3227,37 @@ fn show_taken(
     for (entity, at, mut material, was) in &mut pieces {
         let top = cells.get(&at.cell).map_or(0, |s| s.len().saturating_sub(1));
         let now = at.layer == top && taken.contains(&at.cell.as_str());
-        if now == was {
+        if !now && !was {
             continue;
         }
         let kind = kit.piece(&at.piece.piece);
         let colour = &at.piece.color;
+        // Its colour may change while it is taken (a disc turned back over as the preview
+        // changes): it stays see-through in that one.
         let wanted = if now {
-            commands.entity(entity).insert(Taken);
             kind.ghost
                 .clone()
                 .or_else(|| kit.ghosts.get(colour).cloned())
                 .unwrap_or_else(|| kit.ghost.clone())
         } else {
-            commands.entity(entity).remove::<Taken>();
             kind.material
                 .clone()
                 .or_else(|| kit.materials.get(colour).cloned())
                 .unwrap_or_default()
         };
-        material.0 = wanted;
+        if now && !was {
+            commands.entity(entity).insert(Taken);
+        } else if !now {
+            commands.entity(entity).remove::<Taken>();
+        }
+        // A piece of two sides wears its upper side's own once dressed (`dress_sides`).
+        let dressed = kind.sides.as_ref().map(|s| {
+            let parts = if now { &s.ghost } else { &s.solid };
+            crate::sides::halves(parts, s.turned.get(colour).copied().unwrap_or(false)).0
+        });
+        if material.0 != wanted && dressed.as_ref() != Some(&material.0) {
+            material.0 = wanted;
+        }
     }
 }
 
@@ -6822,6 +6958,9 @@ piece = "ring"
                 p.y >= BOARD_HEIGHT - 1e-4,
                 "on the board, not the table: {p}"
             );
+            // It lands on its dot cheered, as a win is.
+            let mut q = app.world_mut().query_filtered::<&Route, With<InTray>>();
+            assert_eq!(q.single(app.world()).unwrap().lands, Cue::Win);
         }
 
         #[test]
@@ -6840,6 +6979,21 @@ piece = "ring"
             let mut q = app.world_mut().query_filtered::<&FromBowl, With<Held>>();
             let held = q.single(app.world()).expect("a disc held");
             assert_eq!((held.piece.as_str(), held.cell.as_deref()), ("disc", None));
+            // Over the ring it may move, the disc it would leave, see-through in the ring; over
+            // the other seat's, none.
+            let ghosts = |app: &mut App| {
+                let mut q = app.world_mut().query_filtered::<&Name, With<Ghost>>();
+                q.iter(app.world())
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+            };
+            app.world_mut().resource_mut::<Hovering>().0 = Some("a1".into());
+            app.update();
+            assert_eq!(ghosts(&mut app), ["disc to leave on a1"]);
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c3".into());
+            app.update();
+            assert!(ghosts(&mut app).is_empty());
+            app.world_mut().resource_mut::<Hovering>().0 = None;
             // The ring picked up: the disc is put where it stood, the ring held instead.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             watch.turn.as_mut().unwrap().gesture(&Gesture::pos("a1"));
@@ -6883,6 +7037,57 @@ piece = "ring"
             let mut q = app.world_mut().query::<(&FromBowl, Has<Held>)>();
             let (f, held) = q.single(app.world()).unwrap();
             assert!(f.cell.is_none() && held);
+        }
+
+        #[test]
+        fn the_line_pointed_at_is_lit_whole_and_only_it() {
+            let discs: Vec<(String, [(&str, &str); 1])> = ["a1", "a2", "a3", "b1", "b2", "b3"]
+                .iter()
+                .map(|c| (c.to_string(), [("disc", "white")]))
+                .collect();
+            let cells: Vec<(&str, &[(&str, &str)])> =
+                discs.iter().map(|(c, d)| (c.as_str(), &d[..])).collect();
+            let mut app = with_rings_look(&cells);
+            let line = |col: &str| crate::net::api::LegalSelection {
+                notation: format!("row:{col}1-{col}3"),
+                captures: (1..=3).map(|i| format!("{col}{i}")).collect(),
+                ..option(
+                    &[("pos", &format!("{col}1")), ("pos", &format!("{col}3"))],
+                    None,
+                )
+            };
+            app.world_mut().resource_mut::<WatchStatus>().turn =
+                Some(tak_turn(vec![line("a"), line("b")]));
+            app.update();
+            let lit = |app: &mut App| {
+                let mut q = app.world_mut().query_filtered::<&Cell, With<Lit>>();
+                let mut out: Vec<String> = q.iter(app.world()).map(|c| c.id.clone()).collect();
+                out.sort();
+                out
+            };
+            assert!(lit(&mut app).is_empty(), "nothing pointed at, nothing lit");
+            let centre =
+                Layout::new(&grid_table("t-rings", &[]).info.board.positions).centres["b2"]
+                    .with_y(BOARD_HEIGHT);
+            app.world_mut().resource_mut::<Hovering>().0 = Some("b2".into());
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((centre, centre + Vec3::Y));
+            app.update();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<LineAim>()
+                    .0
+                    .as_ref()
+                    .map(|o| o.notation.as_str()),
+                Some("row:b1-b3")
+            );
+            assert_eq!(lit(&mut app), ["b1", "b2", "b3"]);
+            // Over a disc no line takes, nothing.
+            app.world_mut().resource_mut::<Hovering>().0 = Some("c2".into());
+            app.update();
+            app.update();
+            assert_eq!(app.world().resource::<LineAim>().0, None);
+            assert!(lit(&mut app).is_empty());
         }
 
         #[test]
@@ -6938,6 +7143,77 @@ piece = "ring"
             watch.turn.as_mut().unwrap().back();
             app.update();
             assert_eq!(colour_at(&mut app, "a2"), ("black".into(), true));
+        }
+
+        #[test]
+        fn a_disc_turned_over_and_then_taken_stays_turned_and_see_through() {
+            let mut app = with_rings_look(&[
+                ("a1", &[("ring", "white")]),
+                ("a2", &[("disc", "black")]),
+                ("c3", &[("ring", "black")]),
+            ]);
+            let mut jump = option(&[("pos", "a1"), ("pos", "a3")], Some("a1"));
+            jump.to = Some("a3".into());
+            let mut turn = tak_turn(vec![jump]);
+            turn.gesture(&Gesture::pos("a1"));
+            turn.gesture(&Gesture::pos("a3"));
+            let preview = |cells: &[(&str, &[(&str, &str)])]| {
+                let mut p = stacks(2, cells).state;
+                p.ext = rings_removed(0, 0);
+                p
+            };
+            // The jump turns a2 white, and the move goes on: the line a2 is in is removed.
+            let mut line = option(&[("pos", "a2")], None);
+            line.captures = vec!["a2".into()];
+            let answer = |made: &[&str], options, complete, state| crate::net::api::Selections {
+                seat: 1,
+                ply: 4,
+                made: made.iter().map(|m| m.to_string()).collect(),
+                options,
+                complete,
+                may_end: false,
+                state,
+            };
+            turn.answered(answer(
+                &["m"],
+                vec![line],
+                false,
+                Some(preview(&[
+                    ("a1", &[("disc", "white")]),
+                    ("a2", &[("disc", "white")]),
+                    ("a3", &[("ring", "white")]),
+                ])),
+            ));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            assert_eq!(turn.gesture(&Gesture::pos("a2")), crate::play::Outcome::Ask);
+            app.update();
+            // The move is whole: the server previews nothing more. The disc on a2 is still
+            // shown white, as the last preview to have it had it, and see-through, as it goes.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            let turn = watch.turn.as_mut().unwrap();
+            turn.answered(answer(&["m", "m"], vec![], true, None));
+            app.update();
+            app.update();
+            let mut kits = app.world_mut().query::<&Kit>();
+            let ghost = kits.single(app.world()).unwrap().pieces["disc"]
+                .sides
+                .as_ref()
+                .unwrap()
+                .ghost
+                .clone();
+            let mut q = app
+                .world_mut()
+                .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>, Has<Taken>)>();
+            let (at, material, taken) = q
+                .iter(app.world())
+                .find(|(at, ..)| at.cell == "a2")
+                .unwrap();
+            assert_eq!(at.piece.color, "white");
+            assert!(taken);
+            assert!(ghost.contains(&material.0), "dressed see-through");
         }
     }
 
