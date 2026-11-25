@@ -39,6 +39,7 @@ impl Plugin for PlayPlugin {
             .init_resource::<Under>()
             .init_resource::<TableFeel>()
             .init_resource::<SideAim>()
+            .init_resource::<LineAim>()
             .add_observer(on_click)
             .add_observer(on_over)
             .add_observer(on_out)
@@ -654,6 +655,18 @@ impl Turn {
             .filter(|_| building && !self.made.is_empty())
     }
 
+    /// The server's previews while the move is built, the latest first: after the selections
+    /// made (none once the move is whole: the server previews only what it asks next), then
+    /// after each fewer. A piece the move takes away is found in the last that still had it,
+    /// as it stood then (a disc turned over by the move, then removed with its line).
+    pub fn previews(&self) -> Vec<&Position> {
+        if self.stage == Stage::Failed || self.made.is_empty() {
+            return Vec::new();
+        }
+        let earlier = self.before.iter().rev().filter_map(|(_, _, p)| p.as_ref());
+        self.after.iter().chain(earlier).collect()
+    }
+
     /// Whether nothing is chosen yet towards the selection being entered: no click, nothing
     /// in hand or taken up, nothing picked up.
     pub fn untouched(&self) -> bool {
@@ -661,6 +674,31 @@ impl Turn {
             && self.gestures.len() == self.forced
             && self.taken.is_none()
             && self.lifted().is_none()
+    }
+
+    /// The selections that may be chosen now by what they take, when every one still possible
+    /// is: each takes more pieces than it is clicked on, and is clicked only where it takes (a
+    /// line of pieces removed, named by its ends). The player chooses one by pointing at any of
+    /// its pieces (`nearest_line`), and a click there makes all its clicks at once
+    /// (`Turn::enter_all`). Empty otherwise, and once anything is clicked towards the selection.
+    pub fn lines(&self) -> Vec<&LegalSelection> {
+        if !self.untouched() {
+            return Vec::new();
+        }
+        let n = self.gestures.len();
+        let all: Vec<&LegalSelection> = self.matching().collect();
+        let by_taking = |o: &&LegalSelection| {
+            let clicks = &o.gestures[n..];
+            !clicks.is_empty()
+                && o.captures.len() > clicks.len()
+                && clicks
+                    .iter()
+                    .all(|g| g.is_pos() && o.captures.contains(&g.value))
+        };
+        if all.is_empty() || !all.iter().all(by_taking) {
+            return Vec::new();
+        }
+        all
     }
 
     /// The server's answer to the last question.
@@ -791,7 +829,8 @@ impl Turn {
                     self.options = options;
                     self.stage = Stage::Choosing;
                     self.start_selection();
-                    if let Some(s) = undone
+                    // A line chosen whole goes back whole: nothing of it was clicked alone.
+                    if let Some(s) = undone.filter(|_| self.lines().is_empty())
                         && let Some(last) = s.gestures.iter().rposition(Gesture::is_pos)
                     {
                         let before = &s.gestures[..last];
@@ -851,6 +890,10 @@ impl Turn {
         if self.stage != Stage::Choosing {
             return BTreeSet::new();
         }
+        let lines = self.lines();
+        if !lines.is_empty() {
+            return lines.iter().flat_map(|o| o.captures.clone()).collect();
+        }
         let n = self.gestures.len();
         if self.taken_after_click() {
             let choices = self.taken.as_deref().unwrap_or_default();
@@ -898,7 +941,8 @@ impl Turn {
     /// Whether a click on `cell` takes the piece standing there: every selection a click there
     /// would go on to takes it (a pin's target; a capture where the piece lands).
     pub fn takes_at(&self, cell: &str) -> bool {
-        if self.stage != Stage::Choosing {
+        // A line chosen by what it takes is lit as the player's choice, not as a capture.
+        if self.stage != Stage::Choosing || !self.lines().is_empty() {
             return false;
         }
         let n = self.gestures.len();
@@ -1195,6 +1239,40 @@ fn taking<'o>(
     (next.is_pos() && choices.contains(then)).then_some((Some(next), then))
 }
 
+/// Of the lines that may be chosen (`Turn::lines`), the one the pointer points at when it is
+/// over the piece at `at`: of those that take it, the one whose middle is nearest `pointer`, so
+/// that along a longer line the pieces chosen follow the pointer. `centre` is where a position
+/// is on the board.
+pub fn nearest_line<'a>(
+    lines: &[&'a LegalSelection],
+    at: &str,
+    pointer: (f32, f32),
+    centre: impl Fn(&str) -> Option<(f32, f32)>,
+) -> Option<&'a LegalSelection> {
+    let middle = |o: &LegalSelection| {
+        let points: Vec<(f32, f32)> = o.captures.iter().filter_map(|c| centre(c)).collect();
+        let n = points.len().max(1) as f32;
+        let (x, z) = points
+            .iter()
+            .fold((0.0, 0.0), |(x, z), p| (x + p.0, z + p.1));
+        (x / n, z / n)
+    };
+    let far = |o: &LegalSelection| {
+        let (x, z) = middle(o);
+        (x - pointer.0).powi(2) + (z - pointer.1).powi(2)
+    };
+    lines
+        .iter()
+        .filter(|o| o.captures.iter().any(|c| c == at))
+        .min_by(|a, b| far(a).total_cmp(&far(b)))
+        .copied()
+}
+
+/// The line a click on the board would choose (`Turn::lines`), the one the pointer points at
+/// (`nearest_line`), with its pieces lit; the board says.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct LineAim(pub Option<LegalSelection>);
+
 /// The position the pointer is over, if it is one on the board.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Hovering(pub Option<String>);
@@ -1339,7 +1417,7 @@ fn on_click(
         Query<&TakeUp>,
         Query<&TakeToPlace>,
     ),
-    (net, aim): (Res<Net>, Res<SideAim>),
+    (net, aim, line): (Res<Net>, Res<SideAim>, Res<LineAim>),
     mut watch: ResMut<WatchStatus>,
 ) {
     if click.button != PointerButton::Primary {
@@ -1347,7 +1425,15 @@ fn on_click(
     }
     // Clicks bubble up to the board; only the cell or piece itself is a position. A bowl's
     // choice is the bowl's, whether the bowl or the stones in it were clicked.
-    if let Ok(spot) = spots.get(click.entity) {
+    if let Ok(spot) = spots.get(click.entity)
+        && let Some(chosen) = &line.0
+        && chosen.captures.contains(&spot.0)
+    {
+        // A line pointed at is chosen whole, by all its clicks.
+        let n = watch.turn.as_ref().map_or(0, |t| t.gestures.len());
+        let clicks = chosen.gestures.get(n..).unwrap_or_default().to_vec();
+        enter_all(&net, &mut watch, &clicks);
+    } else if let Ok(spot) = spots.get(click.entity) {
         // With something taken up, a click on the board puts it where it is aimed.
         let taken = watch.turn.as_ref().is_some_and(|t| t.taken().is_some());
         match (&aim.choice, taken) {
@@ -2518,6 +2604,69 @@ mod tests {
         assert_eq!(t.preview().and_then(Position::impulse_words), Some(words));
         assert_eq!(t.submit(), None);
         assert_eq!(t.notation(), "j7-e7");
+    }
+
+    #[test]
+    fn a_line_chosen_by_what_it_takes_is_pointed_at_along_its_length_and_chosen_whole() {
+        // Six discs in a line, a1 to a6, of which five are removed: a1–a5 or a2–a6, each named
+        // by its ends and taking all five.
+        let line = |a: usize, b: usize| LegalSelection {
+            captures: (a..=b).map(|i| format!("a{i}")).collect(),
+            ..sel(
+                &format!("row:a{a}-a{b}"),
+                None,
+                &[("pos", &format!("a{a}")), ("pos", &format!("a{b}"))],
+            )
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![line(1, 5), line(2, 6)]));
+        let lines = t.lines();
+        assert_eq!(lines.len(), 2);
+        // Every disc of either is pointed at, not only their ends.
+        let targets: Vec<String> = (1..=6).map(|i| format!("a{i}")).collect();
+        assert_eq!(t.targets(), targets.iter().cloned().collect());
+        assert!(!t.takes_at("a3"), "lit as a choice, not as a capture");
+        // Along the line, the five whose middle is nearest the pointer: past the middle of a3
+        // and a4, the second.
+        let centre = |c: &str| Some((c[1..].parse::<f32>().ok()?, 0.0));
+        let at = |cell: &str, x: f32| {
+            nearest_line(&lines, cell, (x, 0.0), centre).map(|o| o.notation.clone())
+        };
+        assert_eq!(at("a1", 1.0).as_deref(), Some("row:a1-a5"));
+        assert_eq!(at("a3", 3.2).as_deref(), Some("row:a1-a5"));
+        assert_eq!(at("a3", 3.6).as_deref(), Some("row:a2-a6"));
+        assert_eq!(
+            at("a6", 3.0).as_deref(),
+            Some("row:a2-a6"),
+            "only one takes a6"
+        );
+        assert_eq!(at("b1", 1.0), None, "a disc no line takes");
+        // A click chooses the line pointed at, by all its clicks at once.
+        assert_eq!(t.enter_all(&line(2, 6).gestures), Outcome::Ask);
+        assert_eq!(t.notation(), "row:a2-a6");
+        // Back, it goes whole: the lines are pointed at again, nothing half clicked.
+        assert!(t.back());
+        assert!(t.untouched());
+        assert_eq!(t.lines().len(), 2);
+        // Once an end is clicked alone, the lines are chosen by clicks as before.
+        t.gesture(&g("pos", "a2"));
+        assert!(t.lines().is_empty());
+    }
+
+    #[test]
+    fn a_move_clicked_where_it_does_not_take_is_no_line() {
+        // A jump is clicked where it starts and lands, not on what it takes.
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![jump(&[("c3", "capture", "b2")])]));
+        assert!(t.lines().is_empty());
+        // Nor a pin, clicked on the one piece it takes.
+        let pin = |at: &str| LegalSelection {
+            captures: vec![at.into()],
+            ..sel(&format!("pin:{at}"), None, &[("pos", at)])
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(4, vec![pin("d4"), pin("e4")]));
+        assert!(t.lines().is_empty());
     }
 
     fn answer(ply: u64, options: Vec<LegalSelection>) -> Selections {

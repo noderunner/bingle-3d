@@ -281,7 +281,7 @@ A game's own rules and its players' words keep their terms.
   dot on the board's margin at its right hand for each point (`marks`; the view's counter and
   its `max`), each taking one of its pieces of the look's kind as they leave the board.
   `board::fill_trays` carries them there (`hand::Route`: a wait, straight up, across, and a
-  sound of their own as they land).
+  sound of their own as they land: a point scored on a dot is cheered as a win is).
 - `src/assets.rs`: every file of `assets/` (but the fonts), compiled in and loaded as
   `embedded://<path>`; a test checks the list against the folder. The private folder's files
   (`read_private`) are read at start-up and found by the same paths (`all`), never in place
@@ -304,7 +304,7 @@ A game's own rules and its players' words keep their terms.
   (`[sounds]`), parts of its model in materials of their own (`parts`: an engraving's paint,
   every seat's alike; `board::dress_parts`), the piece a move of it leaves where it started
   (`leaves`: a disc dropped in a ring that moves on, held under the pointer until the ring is
-  picked up; the server does not say), a wider margin (`[board] margin`), a chessboard's two
+  picked up, and shown see-through in a ring the pointer is over; the server does not say), a wider margin (`[board] margin`), a chessboard's two
   materials (`[board] squares`), its inlaid
   border (`[board] border`), a material for the cells of a region the board names
   (`[board.regions]`: Fist's keep), and the piece
@@ -400,7 +400,12 @@ A game's own rules and its players' words keep their terms.
   once, put together by the player in an order of their own; `preview` the position after the
   selections made, as the server's answer has it (`Selections.state`): what its view asks next
   is the panel's words, what it stamps is stamped, and a piece of two sides it turns over is
-  shown turned, until the move is played or taken back); its systems turn clicks on a `Spot` (a board cell or a
+  shown turned, until the move is played or taken back, and one it then takes away as the
+  last preview to have it had it: `previews`; `lines` the selections chosen by what they take,
+  each clicked only where it takes and taking more (a line of discs removed, named by its
+  ends): the one through the piece under the pointer whose middle is nearest it is aimed at
+  (`nearest_line`, `LineAim`, set by `board::line_aim`), its pieces lit, and a click there
+  makes all its clicks at once); its systems turn clicks on a `Spot` (a board cell or a
   piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh
@@ -413,7 +418,8 @@ A game's own rules and its players' words keep their terms.
   (`Effect::Glow`), a line of light traced round the outline and short streaks rising from it,
   drawn by a shader of our own (`src/highlight/cell_glow.wesl`, compiled in as
   `embedded://shaders/cell_glow.wesl`; Bevy 0.20's shaders are WESL), its light added to the
-  picture; a point gets a ring small enough to read as a dot. A lit position's `Tone` (the
+  picture; a point gets a ring small enough to read as a dot, or, with a piece on it, a ring
+  round the piece at its top (`board::point_outline`). A lit position's `Tone` (the
   board's to say) is plain, or red where a click takes the piece standing there
   (`Turn::takes_at`, from API 1.10's `captures`: Fist's pin). What the move being built takes
   (`Turn::taking`: a pin chosen, a jump's pieces captured) is see-through until the move is
