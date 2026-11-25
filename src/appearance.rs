@@ -25,6 +25,10 @@
 //! - `tints.<key>`: how a position the view tints with a key of the game's legend is drawn
 //!   (`tints.rs`): a `piece` of this file laid on it (a tile), or a `stamp` of a material
 //!   printed on it. A key without one is not drawn;
+//! - `supply`: how what each seat has left to place lies beside the board (`lie`: on its
+//!   `edge`, the default for a flat piece, or `flat`, its face up to be seen), and, for a game
+//!   whose view counts it rather than its reserves, the view's `counter` and the choice that
+//!   `take`s one (`supply.rs`);
 //! - `stock.counts`: the view's count of each kind of piece both seats have still to place (a
 //!   draft's tiles), shown beside the board.
 //! - `move_tiles`: the view's move cards, each a tile of wood beside the board with the squares
@@ -69,8 +73,8 @@ pub struct Appearance {
     /// The trays a seat keeps what it captures in (`trays.rs`), when the game counts that.
     #[serde(default)]
     pub trays: TrayLook,
-    /// The pieces a seat has left to place, when the view counts them rather than the reserves
-    /// (`supply.rs`).
+    /// How the pieces a seat has left to place lie, and where they are counted when the view
+    /// counts them rather than the reserves (`supply.rs`).
     pub supply: Option<SupplyLook>,
     /// How the walls the view says stand between positions are drawn, and placed (`fences.rs`).
     pub fences: Option<FenceLook>,
@@ -193,13 +197,34 @@ pub struct BowlLook {
     pub size: Option<f32>,
 }
 
-/// A seat's pieces left to place, counted in the view (a game whose rules are written in Go):
-/// the counter that says how many, and the choice (an action's id) that places one.
+/// A seat's pieces left to place: how they lie beside the board, and, when the view counts
+/// them (a game whose rules are written in Go), the counter that says how many and the choice
+/// (an action's id) that places one, both or neither.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SupplyLook {
-    pub counter: String,
-    pub take: String,
+    pub counter: Option<String>,
+    pub take: Option<String>,
+    #[serde(default)]
+    pub lie: Lie,
+}
+
+impl SupplyLook {
+    /// The view's counter and the choice that takes one, when the view counts the pieces.
+    pub fn counted(&self) -> Option<(&str, &str)> {
+        Some((self.counter.as_deref()?, self.take.as_deref()?))
+    }
+}
+
+/// How a flat piece lies in a seat's supply (`supply::Stance`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Lie {
+    /// On its edge, its faces along the line: a low wall, taking little room.
+    #[default]
+    Edge,
+    /// Face up, as it lies on the board, so what is on its face is seen.
+    Flat,
 }
 
 /// The walls the view says stand between positions, drawn as fences: the model and material of
@@ -403,6 +428,11 @@ impl Appearance {
     /// not have.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if let Some(supply) = &self.supply
+            && supply.counter.is_some() != supply.take.is_some()
+        {
+            out.push("supply: a counter and the choice that takes one, or neither".into());
+        }
         for (word, seat) in &self.seats {
             for name in [&seat.pieces, &seat.goal].into_iter().flatten() {
                 if !self.materials.contains_key(name) {
@@ -904,6 +934,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.problems().len(), 5, "{:?}", a.problems());
+    }
+
+    #[test]
+    fn a_supply_may_lie_flat_and_be_counted_in_the_view() {
+        let flat = Appearance::parse("games = [\"g\"]\n[supply]\nlie = \"flat\"").unwrap();
+        let supply = flat.supply.as_ref().unwrap();
+        assert_eq!((supply.lie, supply.counted()), (Lie::Flat, None));
+        assert!(flat.problems().is_empty(), "{:?}", flat.problems());
+        let counted =
+            Appearance::parse("games = [\"g\"]\n[supply]\ncounter = \"stock\"\ntake = \"add\"")
+                .unwrap();
+        let supply = counted.supply.as_ref().unwrap();
+        assert_eq!(supply.lie, Lie::Edge, "on its edge unless the look says");
+        assert_eq!(supply.counted(), Some(("stock", "add")));
+        let half = Appearance::parse("games = [\"g\"]\n[supply]\ncounter = \"stock\"").unwrap();
+        assert_eq!(half.problems().len(), 1, "{:?}", half.problems());
+        assert!(Appearance::parse("games = [\"g\"]\n[supply]\nlie = \"askew\"").is_err());
     }
 
     #[test]

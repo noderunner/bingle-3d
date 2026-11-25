@@ -34,6 +34,7 @@ use std::time::Duration;
 use bevy::ecs::system::SystemParam;
 use bevy::gltf::GltfAssetLabel;
 use bevy::picking::Pickable;
+use bevy::picking::mesh_picking::ray_cast::SimplifiedMesh;
 use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
@@ -414,6 +415,10 @@ struct PieceKit {
     /// Its model's parts in materials of their own (an inlay), each its mesh and its material,
     /// solid and see-through: `mesh` is then its first part.
     parts: Vec<PartKit>,
+    /// A box of its model's size, which a click is found on in place of the model itself
+    /// (`SimplifiedMesh`): Bevy's ray cast passes through a model's smallest triangles (an
+    /// engraving's, in metres), so a tile lying face up could not be clicked on its face.
+    hit: Handle<Mesh>,
 }
 
 /// A part of a piece's model in a material of its own, whoever's piece it is.
@@ -841,7 +846,11 @@ impl Tools<'_> {
         let ghost = own.as_ref().map(|spec| self.see_through(spec));
         let sides = look.and_then(|l| self.sides_kit(l));
         let parts = look.map(|l| self.parts_kit(l)).unwrap_or_default();
+        let half = Vec3::new(0.013, STONE_THICKNESS / 2.0, 0.013);
+        let (lo, hi) = assets::model_bounds(model).unwrap_or((-half, half));
+        let hit = self.meshes.add(Cuboid::from_corners(lo, hi));
         PieceKit {
+            hit,
             ghost,
             sides,
             parts,
@@ -1900,7 +1909,10 @@ fn build_board(
             .collect();
     // A game whose view counts each seat's pieces left to place, as its look says.
     if kinds.is_empty()
-        && let Some(said) = tools.look.and_then(|l| l.supply.as_ref())
+        && let Some((counter, take)) = tools
+            .look
+            .and_then(|l| l.supply.as_ref())
+            .and_then(|s| s.counted())
         && let Some(piece) = table.info.pieces.first()
     {
         // Room for what each seat has left and what it has on the board, the most of any.
@@ -1910,11 +1922,7 @@ fn build_board(
             .seats
             .iter()
             .map(|s| {
-                let left = table
-                    .state
-                    .state
-                    .view_counter(s.seat, &said.counter)
-                    .unwrap_or(0);
+                let left = table.state.state.view_counter(s.seat, counter).unwrap_or(0);
                 let on = cells
                     .values()
                     .flatten()
@@ -1927,19 +1935,24 @@ fn build_board(
         if start > 0 {
             kinds.push((
                 crate::supply::Pool {
-                    id: said.counter.clone(),
+                    id: counter.to_string(),
                     piece: piece.id.clone(),
                     start,
                 },
-                Some(said.counter.clone()),
+                Some(counter.to_string()),
                 Gesture {
                     kind: "action".into(),
-                    value: said.take.clone(),
+                    value: take.to_string(),
                 },
             ));
         }
     }
     if !kinds.is_empty() {
+        let lie = tools
+            .look
+            .and_then(|l| l.supply.as_ref())
+            .map(|s| s.lie)
+            .unwrap_or_default();
         let stances: Vec<(crate::supply::Stance, usize)> = kinds
             .iter()
             .map(|(k, ..)| {
@@ -1950,7 +1963,7 @@ fn build_board(
                 let half = Vec3::new(0.013, STONE_THICKNESS / 2.0, 0.013);
                 let (low, high) = assets::model_bounds(model).unwrap_or((-half, half));
                 (
-                    crate::supply::Stance::of(low, high, pitch / PITCH),
+                    crate::supply::Stance::of(low, high, pitch / PITCH, lie),
                     k.start as usize,
                 )
             })
@@ -3255,7 +3268,11 @@ fn show_supply(
                     ChildOf(root),
                 ));
                 if colour == yours {
-                    piece.insert((Pickable::default(), Choice(pool.take.clone())));
+                    piece.insert((
+                        Pickable::default(),
+                        Choice(pool.take.clone()),
+                        SimplifiedMesh(kind.hit.clone()),
+                    ));
                 }
             }
         }
@@ -5288,6 +5305,27 @@ wood = "contrast"
             let mut q = app.world_mut().query::<(&InSupply, &Transform)>();
             for (piece, t) in q.iter(app.world()) {
                 assert!(t.translation.x.abs() > 0.06, "{piece:?} {}", t.translation);
+            }
+            use bevy::camera::primitives::MeshAabb;
+            // The player's own are clicked on a box of their model's size, not on the model's
+            // own triangles, which a ray passes through where they are smallest.
+            let flat = assets::model_bounds("models/tak/flat.glb").unwrap();
+            let mut q = app
+                .world_mut()
+                .query::<(&InSupply, Option<&SimplifiedMesh>)>();
+            let boxes: Vec<(String, String, Option<Handle<Mesh>>)> = q
+                .iter(app.world())
+                .map(|(s, m)| (s.colour.clone(), s.pool.clone(), m.map(|m| m.0.clone())))
+                .collect();
+            for (colour, pool, hit) in &boxes {
+                assert_eq!(hit.is_some(), colour == "white", "{colour} {pool}");
+                if let (Some(hit), "stone") = (hit, pool.as_str()) {
+                    let meshes = app.world().resource::<Assets<Mesh>>();
+                    let aabb = meshes.get(hit).unwrap().get_aabb().unwrap();
+                    let (lo, hi) = (aabb.min(), aabb.max());
+                    assert!(Vec3::from(lo).distance(flat.0) < 1e-6, "{lo:?}");
+                    assert!(Vec3::from(hi).distance(flat.1) < 1e-6, "{hi:?}");
+                }
             }
 
             // A flat stone taken: one fewer in the line, the stone in hand over its place; the
