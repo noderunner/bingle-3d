@@ -183,6 +183,8 @@ files![
     "textures/stone/black_slate_albedo.jpg",
     "textures/stone/jasper_albedo.jpg",
     "textures/stone/lapis_albedo.jpg",
+    "textures/stone/marble_black_albedo.jpg",
+    "textures/stone/marble_white_albedo.jpg",
     "textures/stone/shell_albedo.jpg",
     "textures/stone/slate_albedo.jpg",
     "textures/stone/tiger_eye_albedo.jpg",

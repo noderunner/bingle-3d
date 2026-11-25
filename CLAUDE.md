@@ -313,7 +313,9 @@ A game's own rules and its players' words keep their terms.
   seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
   (`[sounds]`), parts of its model in materials of their own (`parts`: an engraving's paint,
-  every seat's alike; `board::dress_parts`), the piece a move of it leaves where it started
+  every seat's alike; or a seat's own for a part, `seats.<word>.parts`: a ring's trim, gold on
+  one seat's and silver on another's; a part given neither is of the piece's own material;
+  `board::dress_parts`), the piece a move of it leaves where it started
   (`leaves`: a disc dropped in a ring that moves on, held under the pointer until the ring is
   picked up, and shown see-through in a ring the pointer is over; the server does not say), a wider margin (`[board] margin`), a chessboard's two
   materials (`[board] squares`), its inlaid
@@ -338,7 +340,7 @@ A game's own rules and its players' words keep their terms.
   (stopgap buttons), and the materials made of it are built again when it changes.
   `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
   and `MaterialSpec`, a material as data (its `wood` may be `board`, the board's, or `contrast`,
-  one that stands out against it: an inlay); a wooden mesh needs texture coordinates in metres
+  one that stands out against it: an inlay; `metallic` makes it a metal); a wooden mesh needs texture coordinates in metres
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
   (`goal_strips`): the rim there is stained, and the cells shaded, in its colour; a goal every
@@ -418,7 +420,7 @@ A game's own rules and its players' words keep their terms.
   recorded. `--no-audio-devices` leaves Bevy's audio out, so no speaker is opened.
 - `src/props.rs`: a playing card, a die, and a two-sided disc and its ring, as the pipeline
   makes them: a model's parts by name (a card's `face`, `back` and `edge`; a disc's `light` and
-  `dark`), a card turned over, a die turned to show a number, a disc showing either side,
+  `dark`; a ring's `piece` and `trim`), a card turned over, a die turned to show a number, a disc showing either side,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
   rank's label (`standard_face`; the usual 52, and `1`, `11`, `12` and `13` for a deck
   numbered to thirteen, are the pipeline's, `card_faces.py`).

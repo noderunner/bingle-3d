@@ -264,9 +264,13 @@ def fendo():
     shot("fendo-close", (-0.01, -0.12, 0.08), (-0.01, 0.01, 0.03), lens=85)
 
 
-# The generic looks of a two-sided disc's sides, as in `src/look.rs`; the rings here wear them too.
+# The generic looks of a two-sided disc's sides, as in `src/look.rs`; the rings here wear them
+# too, a light one trimmed with gold and a dark one with silver.
 DISC_LIGHT = {"tint": [0.90, 0.88, 0.82], "roughness": 0.3, "clearcoat": 0.4, "clearcoat_roughness": 0.12}
 DISC_DARK = {"tint": [0.045, 0.045, 0.05], "roughness": 0.3, "clearcoat": 0.4, "clearcoat_roughness": 0.12}
+TRIM_GOLD = {"tint": [1.0, 0.86, 0.57], "metallic": 0.85, "roughness": 0.25}
+TRIM_SILVER = {"tint": [0.98, 0.97, 0.95], "metallic": 0.85, "roughness": 0.25}
+TRIMS = {"light": "gold", "dark": "silver"}
 
 
 def discs_and_rings():
@@ -275,7 +279,7 @@ def discs_and_rings():
     import discs
 
     stage(board=(0.24, 0.18))
-    for name, spec in (("light", DISC_LIGHT), ("dark", DISC_DARK)):
+    for name, spec in (("light", DISC_LIGHT), ("dark", DISC_DARK), ("gold", TRIM_GOLD), ("silver", TRIM_SILVER)):
         matlib.build(name, spec)
     rng = random.Random(5)
 
@@ -287,7 +291,12 @@ def discs_and_rings():
 
     def ring(x, y, material):
         obj, tall = discs.ring()
-        stand(obj, tall, material, x, y, yaw=rng.uniform(0, 6.28))
+        # Its two parts, each slot given its material in place: clearing the slots, as `stand`
+        # does, would make the ring one part.
+        obj.data.materials[0] = bpy.data.materials[material]
+        obj.data.materials[1] = bpy.data.materials[TRIMS[material]]
+        obj.location = (x, y, BOARD_TOP + tall / 2)
+        obj.rotation_euler = (0, 0, rng.uniform(0, 6.28))
 
     # Points of a lattice of equilateral triangles: a row's points half a step aside of the next.
     def at(col, row):

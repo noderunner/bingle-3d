@@ -104,6 +104,9 @@ pub struct MaterialSpec {
     pub roughness: Option<f32>,
     /// Bevy's reflectance: 0.5 is most things; less for a surface that reflects little.
     pub reflectance: Option<f32>,
+    /// How much of it is metal (0 to 1): a metal has no colour but what it reflects, tinted its
+    /// own, so a polished one shows the room. Not for one with `arm`, whose texture says.
+    pub metallic: Option<f32>,
     /// A clear coat over it: how much, and how rough. Polish.
     pub clearcoat: Option<f32>,
     pub clearcoat_roughness: Option<f32>,
@@ -176,6 +179,7 @@ impl MaterialSpec {
             base_color: Color::srgb(tint[0], tint[1], tint[2]),
             perceptual_roughness: self.roughness.unwrap_or(0.5),
             reflectance: self.reflectance.unwrap_or(0.5),
+            metallic: self.metallic.unwrap_or(0.0),
             clearcoat: self.clearcoat.unwrap_or(0.0),
             clearcoat_perceptual_roughness: self.clearcoat_roughness.unwrap_or(0.5),
             diffuse_transmission: self.translucency.unwrap_or(0.0),
@@ -399,6 +403,25 @@ pub fn disc_dark() -> MaterialSpec {
     MaterialSpec {
         tint: Some([0.045, 0.045, 0.05]),
         ..disc_light()
+    }
+}
+
+/// The trim of a light ring: polished gold. A metal's tint is what it reflects; a little
+/// short of all metal, so that it keeps some colour of its own where it reflects a dim room.
+pub fn trim_gold() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([1.0, 0.86, 0.57]),
+        metallic: Some(0.85),
+        roughness: Some(0.25),
+        ..default()
+    }
+}
+
+/// The trim of a dark ring: polished silver.
+pub fn trim_silver() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.98, 0.97, 0.95]),
+        ..trim_gold()
     }
 }
 

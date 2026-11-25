@@ -929,6 +929,17 @@ this repository may not hold (decision 2). This repository names none of them, h
   board: the ring and disc models (#48), each seat's side of a marker up and a marker turned
   over where it lies (`sides.rs`), and the view's tints stamped round what stands there. It is
   watched and played from the generic code, with no change to it.
+- **Its pieces cut from marble** (2026-11-25): the disc and the ring are flat on top with sharp
+  edges, as cut from a slab (Reversi's larger disc stays a turned counter), and the ring has
+  a second part, `trim`, a band round each edge of its top. Two polished marbles, white and
+  black, are the pipeline's (`minerals.py`), each seamless so that a piece mapped in metres
+  is cut from it at its real size. A material may be a metal (`metallic`), and **a seat's
+  look may give a part of its pieces' models a material of its own** (`seats.<word>.parts`):
+  the look trims one seat's rings with polished gold and the other's with polished silver. A
+  part that neither the piece's look nor its seat's names is drawn in the piece's own
+  material, so a model that gains a part is whole under a look written before it had one.
+  Every piece of one kind is cut from the same place in the marble (a model has one mapping),
+  told apart only by the way each is turned.
 - Not built for it, and generic when they are: what a selection turns over, shown before the
   move is sent (the server says only what it takes, `captures`: a Bingle issue); a count of
   the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup

@@ -11,7 +11,6 @@
 use std::path::{Path, PathBuf};
 
 use bevy::asset::RenderAssetUsages;
-use bevy::gltf::GltfAssetLabel;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
 
@@ -63,6 +62,9 @@ pub struct Shown {
     /// For a piece of two sides: its model's parts with their materials, in the model's order,
     /// and whether it lies turned over (`material` is then the side up's).
     pub sides: Option<(Vec<(String, MaterialSpec)>, bool)>,
+    /// Its model's parts after the first that are given a material of their own, by the
+    /// piece's look or the seat's (`Appearance::part_material`); any other is of `material`.
+    pub parts: Vec<(String, MaterialSpec)>,
 }
 
 /// Every piece model the appearances name, once in each material it is given: each
@@ -86,11 +88,23 @@ pub fn pieces(all: &Appearances) -> Vec<Shown> {
                 {
                     continue;
                 }
+                let parts = match &sides {
+                    Some(_) => Vec::new(),
+                    None => assets::model_parts(&piece.model)
+                        .into_iter()
+                        .skip(1)
+                        .filter_map(|part| {
+                            let spec = look.part_material(piece, word, &part)?.clone();
+                            Some((part, spec))
+                        })
+                        .collect(),
+                };
                 out.push(Shown {
                     model: piece.model.clone(),
                     material: material.clone(),
                     stands: piece.stands,
                     sides,
+                    parts,
                 });
             }
         }
@@ -182,39 +196,48 @@ fn lay_out(
             commands.entity(whole).insert(ChildOf(root));
             continue;
         }
-        commands.spawn((
-            Name::new(shown.model.clone()),
-            Mesh3d(
-                server.load(
-                    GltfAssetLabel::Primitive {
-                        mesh: 0,
-                        primitive: 0,
-                    }
-                    .from_asset(assets::path(&shown.model)),
-                ),
-            ),
-            MeshMaterial3d(materials.add(shown.material.build(&server))),
-            Transform::from_xyz(spot.x, -low, spot.y).with_rotation(Quat::from_rotation_y(turn)),
-            ChildOf(root),
-        ));
+        // Every part of its model: those given a material of their own in it, the rest in
+        // the piece's.
+        let whole_of = materials.add(shown.material.build(&server));
+        let names = assets::model_parts(&shown.model);
+        let parts: Vec<(&str, Handle<StandardMaterial>)> = names
+            .iter()
+            .map(|name| {
+                let own = shown.parts.iter().find(|(part, _)| part == name);
+                let material = match own {
+                    Some((_, spec)) => materials.add(spec.build(&server)),
+                    None => whole_of.clone(),
+                };
+                (name.as_str(), material)
+            })
+            .collect();
+        let whole = props::spawn(&mut commands, &server, &shown.model, &parts, at);
+        commands
+            .entity(whole)
+            .insert((Name::new(shown.model.clone()), ChildOf(root)));
     }
 
     // The discs and rings, in their generic looks: a ring of each with a disc lying in it
-    // showing its own side, discs showing either side, and the rings alone.
+    // showing its own side, discs showing either side, and the rings alone. A light ring's
+    // trim is gold, a dark one's silver.
     let light = materials.add(look::disc_light().build(&server));
     let dark = materials.add(look::disc_dark().build(&server));
+    let gold = materials.add(look::trim_gold().build(&server));
+    let silver = materials.add(look::trim_silver().build(&server));
     let disc = [("light", light.clone()), ("dark", dark.clone())];
     let row = discs_and_rings();
     for (i, (ring, shows)) in row.iter().enumerate() {
         let x = (i as f32 - (row.len() as f32 - 1.0) / 2.0) * (props::RING_SIZE.x + 0.01);
         if let Some(light_ring) = ring {
-            commands.spawn((
-                Name::new(props::RING),
-                Mesh3d(props::part(&server, props::RING, 0)),
-                MeshMaterial3d(if *light_ring { &light } else { &dark }.clone()),
-                Transform::from_xyz(x, props::RING_SIZE.z / 2.0, rings_at),
-                ChildOf(root),
-            ));
+            let (piece, trim) = if *light_ring {
+                (&light, &gold)
+            } else {
+                (&dark, &silver)
+            };
+            let parts = [("piece", piece.clone()), ("trim", trim.clone())];
+            let at = Transform::from_xyz(x, props::RING_SIZE.z / 2.0, rings_at);
+            let whole = props::spawn(&mut commands, &server, props::RING, &parts, at);
+            commands.entity(whole).insert(ChildOf(root));
         }
         if let Some(light_up) = shows {
             let at = Transform::from_xyz(x, props::DISC_SIZE.y / 2.0, rings_at).with_rotation(

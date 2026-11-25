@@ -534,8 +534,8 @@ struct PieceKit {
     ghost: Option<Handle<StandardMaterial>>,
     /// Its two sides, for a piece of two sides (`sides.rs`): `mesh` is then its upper half.
     sides: Option<SidesKit>,
-    /// Its model's parts in materials of their own (an inlay), each its mesh and its material,
-    /// solid and see-through: `mesh` is then its first part.
+    /// Its model's parts after the first (an inlay, a trim), each its mesh and what it is made
+    /// of: `mesh` is then its first part. None for a piece of two sides.
     parts: Vec<PartKit>,
     /// A box of its model's size, which a click is found on in place of the model itself
     /// (`SimplifiedMesh`): Bevy's ray cast passes through a model's smallest triangles (an
@@ -543,12 +543,38 @@ struct PieceKit {
     hit: Handle<Mesh>,
 }
 
-/// A part of a piece's model in a material of its own, whoever's piece it is.
+/// A part of a piece's model after its first: its mesh, the material its look gives it
+/// whoever's piece it is, and the one each seat's look gives it, by colour word. A part given
+/// neither is of the piece's own material.
 #[derive(Debug, Clone)]
 struct PartKit {
     mesh: Handle<Mesh>,
+    own: Option<PartMaterial>,
+    seats: HashMap<String, PartMaterial>,
+}
+
+/// What a part is made of, and the same see-through.
+#[derive(Debug, Clone)]
+struct PartMaterial {
     solid: Handle<StandardMaterial>,
     ghost: Handle<StandardMaterial>,
+}
+
+impl PartKit {
+    /// The material of this part on a piece wearing `piece`, which is the colour word's
+    /// (`Kit::dress`), see-through or not, if it is any seat's.
+    fn material(
+        &self,
+        piece: &Handle<StandardMaterial>,
+        seat: Option<&(String, bool)>,
+    ) -> Handle<StandardMaterial> {
+        let theirs = seat.and_then(|(word, _)| self.seats.get(word));
+        match self.own.as_ref().or(theirs) {
+            Some(made) if seat.is_some_and(|(_, see_through)| *see_through) => made.ghost.clone(),
+            Some(made) => made.solid.clone(),
+            None => piece.clone(),
+        }
+    }
 }
 
 /// A piece with parts of their own, dressed (`dress_parts`): the children drawing them.
@@ -1039,20 +1065,32 @@ impl Tools<'_> {
         })
     }
 
-    /// A piece's parts in materials of their own, if its look gives them: each its model's part
-    /// of that name (`Appearance::problems` says what is wrong with them).
+    /// A piece's model's parts after its first, each with the material its look gives it
+    /// (`parts`) and those the seats' looks do (`seats.<word>.parts`), which
+    /// `Appearance::problems` checks. None for a piece of two sides, whose second part is its
+    /// other side.
     fn parts_kit(&mut self, look: &PieceLook) -> Vec<PartKit> {
+        if !look.sides.is_empty() {
+            return Vec::new();
+        }
         let parts = assets::model_parts(&look.model);
         let mut out = Vec::new();
         for (index, part) in parts.iter().enumerate().skip(1) {
-            let Some(spec) = look
+            let own = look
                 .parts
                 .get(part)
                 .and_then(|name| self.look?.materials.get(name))
                 .cloned()
-            else {
-                continue;
-            };
+                .map(|spec| self.part_material(&spec));
+            let theirs: Vec<(String, MaterialSpec)> = self
+                .look
+                .into_iter()
+                .flat_map(|l| &l.seats)
+                .filter_map(|(word, seat)| {
+                    let spec = self.look?.materials.get(seat.parts.get(part)?)?;
+                    Some((word.clone(), spec.clone()))
+                })
+                .collect();
             out.push(PartKit {
                 mesh: self.server.load(
                     GltfAssetLabel::Primitive {
@@ -1061,11 +1099,21 @@ impl Tools<'_> {
                     }
                     .from_asset(assets::path(&look.model)),
                 ),
-                solid: self.material(&spec),
-                ghost: self.see_through(&spec),
+                own,
+                seats: theirs
+                    .into_iter()
+                    .map(|(word, spec)| (word, self.part_material(&spec)))
+                    .collect(),
             });
         }
         out
+    }
+
+    fn part_material(&mut self, spec: &MaterialSpec) -> PartMaterial {
+        PartMaterial {
+            solid: self.material(spec),
+            ghost: self.see_through(spec),
+        }
     }
 
     /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
@@ -4379,10 +4427,11 @@ fn dress_sides(
     }
 }
 
-/// Dresses each piece with parts of their own, wherever it was made: a piece is made, like any
-/// other, as its model's first part, and here it is given a child for each of its other parts in
-/// its own material, see-through when the piece is. Again whenever the piece's material is
-/// changed (made see-through, or solid again).
+/// Dresses each piece whose model has more parts than one, wherever it was made: a piece is
+/// made, like any other, as its model's first part, and here it is given a child for each of
+/// its other parts, in the material the piece's look gives that part, or its seat's look, or
+/// else the piece's own; see-through when the piece is. Again whenever the piece's material is
+/// changed (made see-through, or solid again, or another seat's).
 #[allow(clippy::type_complexity)]
 fn dress_parts(
     mut commands: Commands,
@@ -4413,17 +4462,8 @@ fn dress_parts(
         let Some(kind) = with_parts.iter().find(|k| k.mesh == mesh.0) else {
             continue;
         };
-        let see_through = kit
-            .dress
-            .get(&material.0.id())
-            .is_some_and(|(_, see_through)| *see_through);
-        let pick = |part: &PartKit| {
-            MeshMaterial3d(if see_through {
-                part.ghost.clone()
-            } else {
-                part.solid.clone()
-            })
-        };
+        let seat = kit.dress.get(&material.0.id());
+        let pick = |part: &PartKit| MeshMaterial3d(part.material(&material.0, seat));
         match dressed {
             Some(Parts(children)) => {
                 for (child, part) in children.iter().zip(&kind.parts) {
@@ -7006,6 +7046,54 @@ tint = [0.1, 0.2, 0.6]
                 .base_color
                 .to_srgba();
             assert!(ink.blue > ink.red && ink.alpha == 1.0, "{ink:?}");
+        }
+
+        #[test]
+        fn a_part_a_seat_gives_a_material_is_that_seats_and_any_other_is_of_the_pieces_own() {
+            let mut app = app();
+            let look = Appearance::parse(
+                r#"
+games = ["t-table"]
+
+[pieces.die]
+model = "models/die.glb"
+stands = "fitted"
+
+[seats.white]
+parts = { pips = "gilt" }
+
+[materials.gilt]
+tint = [1.0, 0.8, 0.4]
+metallic = 1.0
+"#,
+            )
+            .unwrap();
+            assert!(look.problems().is_empty(), "{:?}", look.problems());
+            app.insert_resource(Appearances(vec![look]));
+            let cells: &[(&str, &[(&str, &str)])] =
+                &[("a1", &[("die", "white")]), ("c3", &[("die", "black")])];
+            app.world_mut().resource_mut::<WatchStatus>().table =
+                Some(grid_table("t-table", cells));
+            app.update();
+            app.update();
+            let shown = drawn(&mut app);
+            let (white, black) = (&shown[&("a1".into(), 0)], &shown[&("c3".into(), 0)]);
+            let part = |piece: Entity| {
+                let children = &app.world().get::<Parts>(piece).expect("dressed").0;
+                assert_eq!(children.len(), 1);
+                app.world()
+                    .get::<MeshMaterial3d<StandardMaterial>>(children[0])
+                    .unwrap()
+                    .0
+                    .clone()
+            };
+            let (white_part, black_part) = (part(white.4), part(black.4));
+            assert_ne!(white_part, white.3, "the seat's own for the part");
+            let materials = app.world().resource::<Assets<StandardMaterial>>();
+            let gilt = materials.get(&white_part).unwrap();
+            assert_eq!(gilt.metallic, 1.0);
+            assert_eq!(gilt.base_color.alpha(), 1.0);
+            assert_eq!(black_part, black.3, "nothing said: as the piece itself");
         }
 
         #[test]
