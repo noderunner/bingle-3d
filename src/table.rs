@@ -309,6 +309,7 @@ mod tests {
                 board: Board {
                     kind: "hex".into(),
                     positions: vec![],
+                    boards: vec![],
                     regions: Default::default(),
                 },
                 actions: vec![],

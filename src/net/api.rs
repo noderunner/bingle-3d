@@ -14,11 +14,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// 1.2 the regions each seat must connect (`goals`), 1.4 the lobby's calls (`start`, `seat`,
 /// `leave`, `remove`, `bots`) to the schema, 1.5 the sign-in that answers with a session
 /// token, for a client that is not a browser, 1.6 voice chat's calls and events, 1.8 the
-/// games built from the server's private overlay marked `private`, and 1.10 the positions a
-/// legal selection takes pieces from (`captures`).
+/// games built from the server's private overlay marked `private`, 1.10 the positions a
+/// legal selection takes pieces from (`captures`), and 1.14 the boards of a game played on
+/// several side by side (`Board::boards`: Alice chess).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 10,
+    minor: 14,
     patch: 0,
 };
 
@@ -683,6 +684,18 @@ pub struct Board {
     /// Named sets of positions, such as a board's edges.
     #[serde(default, deserialize_with = "null_as_default")]
     pub regions: BTreeMap<String, Vec<String>>,
+    /// For a game played on several boards side by side (Alice chess), each board's positions,
+    /// left to right; empty for one board. The rules see one board, and the positions keep their
+    /// coordinates (board B's columns run on from board A's); each is drawn as a board of its own.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub boards: Vec<BoardPart>,
+}
+
+/// One of the boards a game is played on.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct BoardPart {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub positions: Vec<String>,
 }
 
 /// One position, at its layout coordinates: one unit between neighbours, y growing downwards.
@@ -1471,8 +1484,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.10.0")), Compatible);
-        assert_eq!(compatibility(Some("1.11.2")), Compatible);
+        assert_eq!(compatibility(Some("1.14.0")), Compatible);
+        assert_eq!(compatibility(Some("1.15.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.13.0")),
+            ServerTooOld(Some("1.13.0".into())),
+            "1.13 does not say which positions are on which of several boards"
+        );
         assert_eq!(
             compatibility(Some("1.9.2")),
             ServerTooOld(Some("1.9.2".into())),
@@ -1577,7 +1595,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.10.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.14.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")

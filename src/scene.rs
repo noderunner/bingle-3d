@@ -548,6 +548,7 @@ mod tests {
                 board: Board {
                     kind: "grid".into(),
                     positions: vec![],
+                    boards: vec![],
                     regions: Default::default(),
                 },
                 actions: vec![],
