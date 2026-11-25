@@ -785,6 +785,33 @@ mod tests {
     }
 
     #[test]
+    fn chess_and_its_variants_are_chessmen_on_a_chessboard() {
+        let all = Appearances::built_in();
+        for id in [
+            "chess",
+            "chess-960",
+            "chess-crazyhouse",
+            "chess-antichess",
+            "chess-atomic",
+            "chess-alice",
+        ] {
+            let a = all
+                .for_game(id)
+                .unwrap_or_else(|| panic!("{id} has a look"));
+            assert!(a.board.squares.is_some(), "{id}'s board is checkered");
+            for piece in ["pawn", "knight", "bishop", "rook", "queen", "king"] {
+                let model = &a.pieces.get(piece).expect(piece).model;
+                assert_eq!(
+                    model,
+                    &format!("models/chess/{piece}.glb"),
+                    "{id}'s {piece}"
+                );
+            }
+            assert!(a.tints.contains_key("check"), "{id} marks a king in check");
+        }
+    }
+
+    #[test]
     fn a_game_finds_its_appearance_by_id() {
         let all = Appearances::built_in();
         let hex = all.for_game("hex-11").expect("Hex has one");
