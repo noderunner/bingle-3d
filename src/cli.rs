@@ -58,6 +58,8 @@ Options:
   --vr-refresh HZ    in a headset, ask for this display rate (72, 90, 120...), where
                      its runtime lets an application choose (config.toml's
                      vr_refresh_rate keeps it)
+  --frame-times      log how long a frame takes, and each pass of its drawing on the
+                     processor and on the graphics card, every second
   --frames N         quit after N frames (for scripts and CI)
   --screenshot PATH  save a PNG of the window at the last frame, then quit
                      (at frame 60 unless --frames says otherwise)
@@ -120,6 +122,8 @@ pub struct Options {
     pub max_fps: Option<u32>,
     /// `--vr-refresh`: the headset's display rate to ask for, in place of the config's.
     pub vr_refresh_rate: Option<u32>,
+    /// `--frame-times`: log the frame's time and each drawing pass's.
+    pub frame_times: bool,
     pub help: bool,
 }
 
@@ -192,6 +196,7 @@ impl Options {
                 "--windowed" => opts.fullscreen = Some(false),
                 "--no-bloom" => opts.no_bloom = true,
                 "--legal-moves" => opts.legal_moves = true,
+                "--frame-times" => opts.frame_times = true,
                 "--showcase" => opts.showcase = true,
                 "--card-face" => opts.card_face = Some(PathBuf::from(value("a picture's file")?)),
                 "--card-back" => opts.card_back = Some(PathBuf::from(value("a picture's file")?)),
@@ -296,6 +301,12 @@ mod tests {
             Some(PathBuf::from("looks"))
         );
         assert!(parse(&["--private-dir"]).is_err());
+    }
+
+    #[test]
+    fn frame_times_are_asked_for() {
+        assert!(!parse(&[]).unwrap().frame_times);
+        assert!(parse(&["--frame-times"]).unwrap().frame_times);
     }
 
     #[test]

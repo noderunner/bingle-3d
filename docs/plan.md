@@ -1145,3 +1145,25 @@ Proposed 2026-11-23, for the maintainer to settle (the fullscreen pull request):
     Resolutions larger than the monitor are not offered. A run limited by `--frames` or
     `--screenshot` stays a 1280×720 window (`--fullscreen` to override), so a script's
     picture is the same everywhere; a headset leaves the window alone.
+
+Proposed 2026-11-25, for the maintainer to settle (the upload memory's pull request):
+
+15. **Uploads wait in system memory, never in a small window into the card's.** On the
+    maintainer's 2080 Ti the client drew 10 frames a second on the desktop, at any resolution,
+    with 4 ms of the card's work in a frame. wgpu's allocator puts the staging buffers every
+    upload goes through in memory that is on the card and mapped for the processor: on a card
+    without a resizable BAR, a window of 256 MB (a heap of 246 MB) the whole desktop shares.
+    It is taken 64 MB at a time, then 128; the textures loaded at start fill the first block,
+    the second takes the window past its budget (196 MB, 50 of them other programs'), and from
+    then on a write to it runs at about 18 MB a second: a 256 KB buffer took 28 ms to make,
+    against 0.08 ms. A frame uploads a megabyte or so (the lights' clusters, the interface's
+    vertices), so it took 100 ms. Three runs in four went that way; under gamescope, and in a
+    run whose first block was enough, the same build drew 60. The allocator falls back to
+    ordinary memory when the card refuses a block, so the client asks for blocks of 256 MB,
+    which that window can never hold (`src/gpu_memory.rs`, wgpu's `MemoryHints::Manual`): the
+    same buffer then takes 0.03 ms, and eight runs in eight drew 60 at 3440×1440. A card whose
+    whole memory is mapped keeps its uploads there. The cost is 256 MB of system memory taken
+    in one piece at the first upload, where wgpu's own choice starts at 64. A headset's device
+    is made by the OpenXR plugin with wgpu's defaults: not changed, and to be watched there.
+    `--frame-times` logs a frame's time and each drawing pass's, which is how this was found
+    (the passes were fast; the time was in Bevy's own systems writing buffers).

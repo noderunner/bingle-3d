@@ -485,6 +485,12 @@ A game's own rules and its players' words keep their terms.
   `XR_RUNTIME_JSON` pointing at a manifest of a runtime that is not there, it only tries the
   fallback.
 - `src/run_limit.rs`: `--frames` and `--screenshot`.
+- `src/gpu_memory.rs`: what the renderer's allocator is asked (wgpu's `MemoryHints`): blocks
+  too large for the 256 MB window a card without a resizable BAR maps for the processor, so
+  uploads wait in system memory. In that window, once it is crowded, a write runs hundreds of
+  times slower and the client draws 10 frames a second (plan, decision 15). **When the client
+  is slow, run it with `--frame-times` on the maintainer's desktop before changing the
+  scene**: under gamescope the same build may be fast.
 - `src/frame_pace.rs`: the most frames a second the window draws (60 by default; `max_fps` in
   `config.toml`, `--max-fps`): each frame ends waiting for the next to be due. Not in a headset,
   whose runtime paces it to the headset's display: there `vr_refresh_rate` (`--vr-refresh`) is
