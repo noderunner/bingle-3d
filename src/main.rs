@@ -27,6 +27,7 @@ mod fonts;
 mod frame_pace;
 mod friends;
 mod game_panel;
+mod gpu_memory;
 mod hand;
 mod highlight;
 mod hud;
@@ -116,15 +117,18 @@ fn main() -> AppExit {
     }
 
     let mut app = App::new();
-    let plugins = DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Bingle".into(),
-            // As `display.rs` puts it, once the config is read.
-            resolution: WindowResolution::new(display::WINDOWED.0, display::WINDOWED.1),
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Bingle".into(),
+                // As `display.rs` puts it, once the config is read.
+                resolution: WindowResolution::new(display::WINDOWED.0, display::WINDOWED.1),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    });
+        })
+        // Uploads wait in system memory, never in a small window into the card's.
+        .set(gpu_memory::render_plugin());
     // Bevy's audio opens the speaker as it starts: not in a run that keeps the devices off.
     let plugins = if opts.no_audio_devices {
         plugins.disable::<bevy::audio::AudioPlugin>()
@@ -264,6 +268,15 @@ fn main() -> AppExit {
             card_face: opts.card_face.clone(),
             card_back: opts.card_back.clone(),
         });
+    }
+    // What a frame costs, for finding what is slow: the frame's time, and each pass of its
+    // drawing as the processor and the graphics card took it.
+    if opts.frame_times {
+        app.add_plugins((
+            bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
+            bevy::render::diagnostic::RenderDiagnosticsPlugin,
+            bevy::diagnostic::LogDiagnosticsPlugin::default(),
+        ));
     }
     if let Some(limit) = run_limit::RunLimit::from_options(&opts) {
         app.add_plugins(run_limit::RunLimitPlugin(limit));

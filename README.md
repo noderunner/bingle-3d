@@ -212,6 +212,10 @@ The window draws at most 60 frames a second, which a board game does not need mo
 GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
 and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.
 
+`--frame-times` logs, every second, how long a frame takes and how long each pass of its drawing
+took on the processor and on the graphics card: the first thing to look at when the client is
+slow.
+
 In a headset that limit is off: the VR runtime paces the frames to the headset's display, not the
 PC's monitor, even when the picture is streamed to it. `vr_refresh_rate` in `config.toml` (or
 `--vr-refresh 90` for a run) asks the headset for one of its own rates (72, 90, 120…, the nearest
