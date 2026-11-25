@@ -6,7 +6,11 @@
 //!
 //! The handle and the code are Bevy's own text inputs. Bevy cannot hide what is typed in one yet,
 //! so the password has a field of its own ([`PasswordField`]): it shows a dot for each character,
-//! takes typing, Backspace and pasting (which password managers need), and has no cursor to move.
+//! takes typing, Backspace and pasting (which password managers need), and has no cursor to move
+//! (one blinks after the dots while it has the keyboard, as Bevy's blinks in the others).
+//!
+//! Every field's edge is lit while the pointer is over it, and more while it has the keyboard
+//! ([`edge`]).
 //! The password is never logged (`Form`'s `Debug` leaves it out), and is cleared once sent.
 
 use bevy::clipboard::{Clipboard, ClipboardRead};
@@ -16,8 +20,9 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::{AutoFocus, FocusCause, FocusedInput, InputFocus};
 use bevy::picking::Pickable;
 use bevy::picking::events::PointerPress;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::text::EditableText;
+use bevy::text::{EditableText, TextCursorStyle};
 use bevy::ui_widgets::TextInput;
 
 use crate::browser::{Action, button, buttons, colours, line};
@@ -31,7 +36,7 @@ impl Plugin for SignInPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Pasting>().add_systems(
             Update,
-            (keep_typed, paste_password, show_dots, outline_focus),
+            (keep_typed, paste_password, show_dots, outline_fields),
         );
     }
 }
@@ -289,6 +294,7 @@ pub fn fields(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, first: 
             let mut password = area.spawn((
                 PasswordField,
                 Field,
+                Hovered::default(),
                 field_node(),
                 BackgroundColor(colours::FIELD),
                 BorderColor::all(colours::FIELD_EDGE),
@@ -352,12 +358,35 @@ pub(crate) fn text_field(f: &UiFonts, text: &str) -> impl Bundle {
         Field,
         TextInput,
         EditableText::new(text),
+        cursor_style(),
+        Hovered::default(),
         f.regular(15.0),
         TextColor(colours::TEXT),
         field_node(),
         BackgroundColor(colours::FIELD),
         BorderColor::all(colours::FIELD_EDGE),
     )
+}
+
+/// The cursor Bevy draws in a field, the text's colour (its default is a dark slate, unseen on
+/// the dark fields), and what is selected.
+fn cursor_style() -> TextCursorStyle {
+    TextCursorStyle {
+        color: colours::TEXT,
+        selection_color: colours::SELECTION,
+        unfocused_selection_color: Color::NONE,
+        ..default()
+    }
+}
+
+/// How long a cursor is shown, then hidden: half of Bevy's `cursor_blink_period`, so the
+/// password's blinks as the other fields' do.
+const BLINK: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether a cursor that started blinking `since` ago is shown now: at once, then every other
+/// [`BLINK`].
+fn caret_shown(since: std::time::Duration) -> bool {
+    (since.as_millis() / BLINK.as_millis()).is_multiple_of(2)
 }
 
 fn dots(n: usize) -> String {
@@ -477,19 +506,36 @@ fn keep_typed(mut signing: ResMut<Signing>, fields: TypedFields) {
     }
 }
 
+/// When the password's cursor last started blinking: as the field took the keyboard, or as a
+/// key changed what is in it, so that it is seen while typing.
+#[derive(Default)]
+struct Blink {
+    since: std::time::Duration,
+    focused: bool,
+    len: usize,
+}
+
 fn show_dots(
     signing: Res<Signing>,
     focus: Res<InputFocus>,
+    time: Res<Time<Real>>,
+    mut blink: Local<Blink>,
     fields: Query<Entity, With<PasswordField>>,
     mut shown_in: Query<&mut Text, With<Dots>>,
 ) {
     let Some(form) = &signing.form else { return };
     let focused = fields.iter().any(|e| focus.get() == Some(e));
-    let shown = format!(
-        "{}{}",
-        dots(form.password_len()),
-        if focused { "|" } else { "" }
-    );
+    let len = form.password_len();
+    let now = time.elapsed();
+    if focused != blink.focused || len != blink.len {
+        *blink = Blink {
+            since: now,
+            focused,
+            len,
+        };
+    }
+    let caret = focused && caret_shown(now - blink.since);
+    let shown = format!("{}{}", dots(len), if caret { "|" } else { "" });
     for mut text in &mut shown_in {
         if text.0 != shown {
             text.0 = shown.clone();
@@ -497,16 +543,27 @@ fn show_dots(
     }
 }
 
-fn outline_focus(
+/// A field's edge: lit while it has the keyboard, less while the pointer is over it. Only the
+/// edge: the field itself stays as it is.
+fn edge(focused: bool, hovered: bool) -> Color {
+    if focused {
+        colours::FIELD_FOCUS
+    } else if hovered {
+        colours::FIELD_HOVER
+    } else {
+        colours::FIELD_EDGE
+    }
+}
+
+fn outline_fields(
     focus: Res<InputFocus>,
-    mut fields: Query<(Entity, &mut BorderColor), With<Field>>,
+    mut fields: Query<(Entity, Option<&Hovered>, &mut BorderColor), With<Field>>,
 ) {
-    for (entity, mut border) in &mut fields {
-        let colour = if focus.get() == Some(entity) {
-            colours::FIELD_FOCUS
-        } else {
-            colours::FIELD_EDGE
-        };
+    for (entity, hovered, mut border) in &mut fields {
+        let colour = edge(
+            focus.get() == Some(entity),
+            hovered.is_some_and(|h| h.get()),
+        );
         if border.top != colour {
             *border = BorderColor::all(colour);
         }
@@ -697,5 +754,75 @@ mod tests {
             Some(SignIn::Done(ana))
         );
         assert_eq!(signing.form, None, "signed in, the form closes");
+    }
+
+    #[test]
+    fn a_cursor_shows_at_once_then_blinks() {
+        let at = |ms| caret_shown(std::time::Duration::from_millis(ms));
+        assert!(
+            at(0),
+            "seen as soon as the field has the keyboard, or a key is typed"
+        );
+        assert!(at(499));
+        assert!(!at(500));
+        assert!(!at(999));
+        assert!(at(1000));
+    }
+
+    #[test]
+    fn the_cursor_is_seen_on_a_dark_field() {
+        let style = cursor_style();
+        assert_ne!(style.color, TextCursorStyle::default().color);
+        assert_eq!(style.color, colours::TEXT);
+    }
+
+    #[test]
+    fn a_fields_edge_is_lit_by_the_pointer_and_more_by_the_keyboard() {
+        assert_eq!(edge(false, false), colours::FIELD_EDGE);
+        assert_eq!(edge(false, true), colours::FIELD_HOVER);
+        assert_eq!(edge(true, false), colours::FIELD_FOCUS);
+        assert_eq!(edge(true, true), colours::FIELD_FOCUS);
+    }
+
+    /// Only the edge changes as the pointer comes over a field, then as it takes the keyboard.
+    #[test]
+    fn a_field_under_the_pointer_has_its_edge_lit_and_its_fill_left_alone() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<InputFocus>()
+            .add_systems(Update, outline_fields);
+        let field = app
+            .world_mut()
+            .spawn((
+                Field,
+                Hovered::default(),
+                BackgroundColor(colours::FIELD),
+                BorderColor::all(colours::FIELD_EDGE),
+            ))
+            .id();
+        let looks = |app: &App| {
+            let e = app.world().entity(field);
+            (
+                e.get::<BorderColor>().unwrap().top,
+                e.get::<BackgroundColor>().unwrap().0,
+            )
+        };
+        app.update();
+        assert_eq!(looks(&app), (colours::FIELD_EDGE, colours::FIELD));
+
+        app.world_mut().entity_mut(field).insert(Hovered(true));
+        app.update();
+        assert_eq!(looks(&app), (colours::FIELD_HOVER, colours::FIELD));
+
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(field, FocusCause::Pressed);
+        app.update();
+        assert_eq!(looks(&app), (colours::FIELD_FOCUS, colours::FIELD));
+
+        app.world_mut().entity_mut(field).insert(Hovered(false));
+        app.world_mut().resource_mut::<InputFocus>().clear();
+        app.update();
+        assert_eq!(looks(&app), (colours::FIELD_EDGE, colours::FIELD));
     }
 }
