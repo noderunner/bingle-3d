@@ -1502,7 +1502,7 @@ pub(crate) mod tests {
         assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.10.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.14.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1540,7 +1540,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.10.0");
+        assert_eq!(probe.api_version, "1.14.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1585,7 +1585,7 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.10.0");
+        assert_eq!(snap.api_version, "1.14.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");

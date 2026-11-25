@@ -1584,6 +1584,7 @@ mod tests {
                 board: Board {
                     kind: "hex".into(),
                     positions: vec![],
+                    boards: vec![],
                     regions: Default::default(),
                 },
                 actions: vec![],
@@ -1726,7 +1727,7 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.10.0".into(),
+                api_version: "1.14.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
                 account: None,

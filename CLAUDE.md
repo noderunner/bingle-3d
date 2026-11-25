@@ -319,7 +319,9 @@ A game's own rules and its players' words keep their terms.
   stack raised by the model's height (`assets::model_span` reads both from the file, so nothing
   else says how tall a model is). The board is one slab
   (`src/slab.rs`: its outline, rounded rim, grid lines, and the shading of a goal's cells,
-  geometry with no systems) with the cells cut into it, or, for a game whose appearance says
+  geometry with no systems) with the cells cut into it (a slab for each board of a game on
+  several side by side, the API's `boards`: Alice chess's two, set apart by `Layout::of`, all
+  else keeping clear of the whole), or, for a game whose appearance says
   `on = "points"` (`Surface`), lines cut into it and the pieces on their crossings, or for
   `on = "table"` no board at all: the cells unseen on the table, raised to the top of what
   stands on them (`raise_cells`), the camera and the supply kept to the middle (`table_frame`); `BoardWood` is its wood, chosen by `src/wood_choice.rs`
@@ -411,8 +413,9 @@ A game's own rules and its players' words keep their terms.
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
-- `src/coordinates.rs`: the board's coordinates along its edges, toggled with C, from position
-  names that are letters then a number (`edge_labels`, no Bevy); none for any other naming.
+- `src/coordinates.rs`: the board's coordinates along its edges (each board's own, for a game
+  on several), toggled with C, from position names that are letters then a number
+  (`edge_labels`, no Bevy); none for any other naming.
   Engraved in the board's margin, from the glyph atlas the pipeline renders (`engraving.py`;
   its order and grid are in both places).
 - `src/highlight.rs`: how a lit position looks, which the board does not know: today a glow

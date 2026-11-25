@@ -262,31 +262,124 @@ pub struct Layout {
     pub pitch: f32,
     /// Each position's centre on the table plane (y = 0), the board centred on the origin.
     pub centres: HashMap<String, Vec3>,
-    /// The width (X) and depth (Z) its cells cover.
+    /// The width (X) and depth (Z) its cells cover, with the space between its boards.
     pub size: Vec2,
+    /// The positions of each board it is (`parts`): one for most games, two for Alice chess's.
+    pub parts: Vec<Vec<String>>,
+}
+
+/// Empty layout units between the cells of two boards side by side: room for the margin of each
+/// and a strip of table between them.
+const BOARDS_APART: f32 = 3.0;
+
+/// The positions of each board a game is played on, in the order the server lists them: the
+/// API's `boards` for a game on several side by side (Alice chess), with any position none of
+/// them has as one more; or all of them, as one board.
+pub fn parts(board: &Board) -> Vec<Vec<BoardPosition>> {
+    if board.boards.len() < 2 {
+        return vec![board.positions.clone()];
+    }
+    let by_id: HashMap<&str, &BoardPosition> =
+        board.positions.iter().map(|p| (p.id.as_str(), p)).collect();
+    let mut out: Vec<Vec<BoardPosition>> = board
+        .boards
+        .iter()
+        .map(|b| {
+            b.positions
+                .iter()
+                .filter_map(|id| by_id.get(id.as_str()).map(|p| (*p).clone()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|part| !part.is_empty())
+        .collect();
+    let listed: std::collections::HashSet<&str> = board
+        .boards
+        .iter()
+        .flat_map(|b| b.positions.iter().map(String::as_str))
+        .collect();
+    let rest: Vec<BoardPosition> = board
+        .positions
+        .iter()
+        .filter(|p| !listed.contains(p.id.as_str()))
+        .cloned()
+        .collect();
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
+}
+
+/// The least and greatest layout coordinates of `positions`.
+fn bounds(positions: &[BoardPosition]) -> (Vec2, Vec2) {
+    positions.iter().fold(
+        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+        |(lo, hi), p| {
+            let v = Vec2::new(p.x, p.y);
+            (lo.min(v), hi.max(v))
+        },
+    )
 }
 
 impl Layout {
+    /// A board's positions laid out on the table, each of its boards (`parts`) set apart from
+    /// the next by `BOARDS_APART`, and the size of a cell that of the largest board alone: two
+    /// boards side by side are each as big as one would be.
+    pub fn of(board: &Board) -> Self {
+        if board.boards.len() < 2 {
+            return Layout::new(&board.positions);
+        }
+        let parts = parts(board);
+        let boxes: Vec<(Vec2, Vec2)> = parts.iter().map(|p| bounds(p)).collect();
+        let mut moved = Vec::with_capacity(board.positions.len());
+        let mut largest: f32 = 0.0;
+        for (part, (lo, hi)) in parts.iter().zip(&boxes) {
+            // Moved on by the space between boards once for each board wholly before it, along
+            // the way they are side by side.
+            let before = |axis: fn(Vec2) -> f32| {
+                boxes
+                    .iter()
+                    .filter(|(_, other_hi)| axis(*other_hi) < axis(*lo) - 0.5)
+                    .count() as f32
+            };
+            let shift = Vec2::new(before(|v| v.x), before(|v| v.y)) * BOARDS_APART;
+            largest = largest.max((*hi - *lo + 1.0).max_element());
+            moved.extend(part.iter().map(|p| BoardPosition {
+                x: p.x + shift.x,
+                y: p.y + shift.y,
+                ..p.clone()
+            }));
+        }
+        let mut layout = Layout::spread(&moved, largest);
+        layout.parts = parts
+            .iter()
+            .map(|part| part.iter().map(|p| p.id.clone()).collect())
+            .collect();
+        layout
+    }
+
     /// Lays a board's positions out on the table: layout x to the right (+X), layout y (which
-    /// grows downwards) towards the player (+Z), so the top of the board is the far side.
+    /// grows downwards) towards the player (+Z), so the top of the board is the far side. One
+    /// board, as the positions are; `Layout::of` sets a game's boards apart.
     pub fn new(positions: &[BoardPosition]) -> Self {
-        let (min, max) = positions.iter().fold(
-            (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-            |(lo, hi), p| {
-                let v = Vec2::new(p.x, p.y);
-                (lo.min(v), hi.max(v))
-            },
-        );
+        let (min, max) = bounds(positions);
+        let mut layout = Layout::spread(positions, (max - min + 1.0).max_element());
+        layout.parts = vec![positions.iter().map(|p| p.id.clone()).collect()];
+        layout
+    }
+
+    /// `positions` on the table, centred on the origin, a cell as large as fits a board `span`
+    /// units across in `MAX_SIZE`.
+    fn spread(positions: &[BoardPosition], span: f32) -> Self {
         if positions.is_empty() {
             return Layout {
                 pitch: PITCH,
                 centres: HashMap::new(),
                 size: Vec2::ZERO,
+                parts: Vec::new(),
             };
         }
-        // One unit more than the span: the cells at the edges are a whole cell wide.
-        let span = max - min + 1.0;
-        let pitch = PITCH.min(MAX_SIZE / span.max_element());
+        let (min, max) = bounds(positions);
+        let pitch = PITCH.min(MAX_SIZE / span);
         let middle = (min + max) / 2.0;
         let centres = positions
             .iter()
@@ -298,7 +391,9 @@ impl Layout {
         Layout {
             pitch,
             centres,
-            size: span * pitch,
+            // One unit more than the span: the cells at the edges are a whole cell wide.
+            size: (max - min + 1.0) * pitch,
+            parts: Vec::new(),
         }
     }
 }
@@ -1043,7 +1138,7 @@ fn sync_board(
         for (old, ..) in &roots {
             commands.entity(old).despawn();
         }
-        let layout = Layout::new(&table.info.board.positions);
+        let layout = Layout::of(&table.info.board);
         let Drawing {
             meshes,
             materials,
@@ -1093,7 +1188,7 @@ fn sync_board(
         return;
     };
 
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let shown: Vec<(Entity, &PieceAt)> = pieces.iter().map(|(e, at, ..)| (e, at)).collect();
     // Where the move just played was shown put down already: what arrives there is not dropped.
     let put: Vec<&str> = pieces
@@ -1572,15 +1667,30 @@ fn build_board(
         .map(|c| Vec2::new(c.x, c.z))
         .collect();
     let corners = slab::cell_corners(shape, pitch);
-    let playing = match surface {
+    // Where play is on a board of these positions' cells or points.
+    let playing_of = |centres: &[Vec2]| match surface {
         Surface::Cells(_) | Surface::Table(_) => slab::hull(
             &centres
                 .iter()
                 .flat_map(|c| corners.iter().map(move |k| *c + *k))
                 .collect::<Vec<_>>(),
         ),
-        Surface::Points => slab::hull(&centres),
+        Surface::Points => slab::hull(centres),
     };
+    // Each board's own centres: one board for most games, two side by side for Alice chess's.
+    let boards: Vec<Vec<Vec2>> = layout
+        .parts
+        .iter()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| layout.centres.get(id))
+                .map(|c| Vec2::new(c.x, c.z))
+                .collect()
+        })
+        .collect();
+    // All of them together: what stands round the board (bowls, supply, trays) and the camera
+    // keep clear of the whole, the space between boards too.
+    let playing = playing_of(&centres);
     let margin = surface.margin(tools.look);
     let outline = match surface {
         Surface::Cells(_) | Surface::Points => slab::grown(&playing, pitch * margin, 6),
@@ -1599,13 +1709,21 @@ fn build_board(
     };
     let strips = goal_strips(&table.info, layout, shape);
     let on_table = matches!(surface, Surface::Table(_));
-    if outline.len() >= 3 && !on_table {
+    // A slab of wood for each board, with its own margin and rounded rim.
+    let slabs: Vec<Vec<(Vec2, Vec2)>> = match boards.len() {
+        0 | 1 => vec![outline.clone()],
+        _ => boards
+            .iter()
+            .map(|b| slab::grown(&playing_of(b), pitch * margin, 6))
+            .collect(),
+    };
+    for outline in slabs.iter().filter(|o| o.len() >= 3 && !on_table) {
         commands.spawn((
             Name::new("Board"),
             Mesh3d(
                 tools
                     .meshes
-                    .add(look::world_uvs(slab::top(&outline, &rim), Vec3::ZERO)),
+                    .add(look::world_uvs(slab::top(outline, &rim), Vec3::ZERO)),
             ),
             MeshMaterial3d(wood.clone()),
             ChildOf(root),
@@ -1614,7 +1732,7 @@ fn build_board(
         let mut by_owner: BTreeMap<Option<Option<u32>>, Vec<usize>> = BTreeMap::new();
         for i in 0..outline.len() {
             by_owner
-                .entry(rim_owner(&outline, i, &strips))
+                .entry(rim_owner(outline, i, &strips))
                 .or_default()
                 .push(i);
         }
@@ -1629,7 +1747,7 @@ fn build_board(
             commands.spawn((
                 Name::new("Board's edge"),
                 Mesh3d(tools.meshes.add(look::world_uvs(
-                    slab::side(&outline, &rim, &edges),
+                    slab::side(outline, &rim, &edges),
                     Vec3::ZERO,
                 ))),
                 MeshMaterial3d(material),
@@ -1665,9 +1783,15 @@ fn build_board(
                     let specs = names.map(|n| look.materials.get(&n).cloned());
                     specs.map(|spec| Some(tools.material(&spec?)))
                 });
-            let turns = squares
+            // Each board's from its own corner.
+            let turns: HashMap<String, usize> = squares
                 .as_ref()
-                .map(|_| by_turns(&table.info.board.positions))
+                .map(|_| {
+                    parts(&table.info.board)
+                        .iter()
+                        .flat_map(|part| by_turns(part))
+                        .collect()
+                })
                 .unwrap_or_default();
             // A region's cells in their own material, if the game's look gives the region one.
             let regions: HashMap<&str, Handle<StandardMaterial>> = tools
@@ -1718,23 +1842,22 @@ fn build_board(
                 .and_then(|l| l.materials.get(l.board.border.as_ref()?))
                 .cloned();
             if let Some(spec) = border {
-                let points: Vec<Vec2> = centres
-                    .iter()
-                    .flat_map(|c| corners.iter().map(move |k| *c + *k))
-                    .collect();
-                let band = slab::band(
-                    &slab::hull(&points),
-                    pitch * BORDER.0,
-                    pitch * BORDER.1,
-                    BOARD_HEIGHT + 0.0002,
-                );
                 let material = tools.material(&spec);
-                commands.spawn((
-                    Name::new("Border"),
-                    Mesh3d(tools.meshes.add(look::world_uvs(band, Vec3::ZERO))),
-                    MeshMaterial3d(material),
-                    ChildOf(root),
-                ));
+                // Round each board's cells.
+                for cells in &boards {
+                    let band = slab::band(
+                        &playing_of(cells),
+                        pitch * BORDER.0,
+                        pitch * BORDER.1,
+                        BOARD_HEIGHT + 0.0002,
+                    );
+                    commands.spawn((
+                        Name::new("Border"),
+                        Mesh3d(tools.meshes.add(look::world_uvs(band, Vec3::ZERO))),
+                        MeshMaterial3d(material.clone()),
+                        ChildOf(root),
+                    ));
+                }
             }
         }
         Surface::Table(_) => {
@@ -2736,7 +2859,7 @@ fn line_aim(
         let kit = roots.single().ok()?;
         let (hit, eye) = pointer.0?;
         let on = crate::hand::on_surface(hit, eye, kit.surface);
-        let layout = Layout::new(&table.info.board.positions);
+        let layout = Layout::of(&table.info.board);
         let centre = |c: &str| layout.centres.get(c).map(|v| (v.x, v.z));
         crate::play::nearest_line(&lines, at, (on.x, on.z), centre).cloned()
     })();
@@ -2811,7 +2934,7 @@ fn show_turn(
         }
     }
 
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let cells = &table.state.state.cells;
     let tints = table.state.state.tints();
     // The position as the move being built leaves it, so what it puts down stands on what will be
@@ -3343,7 +3466,7 @@ fn bowl_stones(
     };
     let yours = table.yours().map_or("", |s| s.color.as_str());
     let placing = placing_colour(table);
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let cells = &table.state.state.cells;
     let had_hand = left.iter().any(|(_, f)| f.source == HAND);
     let mut take = |found: &dyn Fn(&FromBowl) -> bool| -> Option<(Entity, FromBowl)> {
@@ -3680,7 +3803,7 @@ fn show_tints(
     if kit.tints.is_empty() && kit.stock.is_none() {
         return;
     }
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let tints = table.state.state.tints();
     // What the view stamps is what it points out, the preview's while a move is built (a line
     // the move makes, to be removed next); what it lays is the board's own (terrain),
@@ -3952,7 +4075,7 @@ fn show_fences(
     let Some(fence) = kit.fences.as_ref() else {
         return;
     };
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let turn = watch.turn.as_ref();
     // A game just opened shows its walls as they stand, without dropping each in.
     let opened = *room != table.room_code;
@@ -4094,7 +4217,7 @@ fn fence_aim(
         let kit = roots.single().ok()?;
         let taken = turn.taken()?;
         let cell = turn.gestures.iter().rev().find(|g| g.is_pos())?;
-        let layout = Layout::new(&table.info.board.positions);
+        let layout = Layout::of(&table.info.board);
         Some(
             taken
                 .into_iter()
@@ -4378,7 +4501,7 @@ fn drop_pieces(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::api::Goal;
+    use crate::net::api::{BoardPart, Goal};
 
     fn pos(id: &str, x: f32, y: f32) -> BoardPosition {
         BoardPosition {
@@ -4579,7 +4702,7 @@ mod tests {
 
     mod systems {
         use super::*;
-        use crate::net::api::{Event, Game, GameState, Position, SeatDef};
+        use crate::net::api::{BoardPart, Event, Game, GameState, Position, SeatDef};
         use crate::net::session::Opened;
 
         fn app() -> App {
@@ -4630,6 +4753,7 @@ mod tests {
                     board: Board {
                         kind: "hex".into(),
                         positions: hex3(),
+                        boards: vec![],
                         regions: Default::default(),
                     },
                     actions: vec![],
@@ -6601,6 +6725,67 @@ wood = "contrast"
             assert!(!borders.iter(app.world()).any(|n| n.as_str() == "Border"));
         }
 
+        /// Two boards of 3×3 side by side, as the API gives Alice chess's two of 8×8: board A
+        /// files a to c, board B d to f.
+        fn two_boards(id: &str) -> Table {
+            let mut t = grid_table(id, &[]);
+            t.info.board.positions = (0..18)
+                .map(|i| {
+                    let (x, y) = (i % 6, i / 6);
+                    let id = format!("{}{}", (b'a' + x as u8) as char, 3 - y);
+                    pos(&id, x as f32, y as f32)
+                })
+                .collect();
+            t.info.board.boards = ["abc", "def"]
+                .map(|files| BoardPart {
+                    positions: t
+                        .info
+                        .board
+                        .positions
+                        .iter()
+                        .filter(|p| files.contains(&p.id[..1]))
+                        .map(|p| p.id.clone())
+                        .collect(),
+                })
+                .to_vec();
+            t
+        }
+
+        #[test]
+        fn a_game_on_two_boards_has_two_boards_apart() {
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(two_boards("chess-alice"));
+            app.update();
+            let mut q = app.world_mut().query::<&Name>();
+            let names: Vec<String> = q.iter(app.world()).map(|n| n.to_string()).collect();
+            let count = |name: &str| names.iter().filter(|n| *n == name).count();
+            assert_eq!(count("Board"), 2, "a slab for each board");
+            assert_eq!(count("Border"), 2, "an inlay round each board");
+            let mut q = app
+                .world_mut()
+                .query::<(&Cell, &Transform, &MeshMaterial3d<StandardMaterial>)>();
+            let cells: HashMap<String, (Vec3, Handle<StandardMaterial>)> = q
+                .iter(app.world())
+                .map(|(c, t, m)| (c.id.clone(), (t.translation, m.0.clone())))
+                .collect();
+            // A cell apart on each board, and the space between the boards.
+            let step = cells["b1"].0.x - cells["a1"].0.x;
+            assert!((step - PITCH).abs() < 1e-5, "{step}");
+            let across = cells["d1"].0.x - cells["c1"].0.x;
+            assert!(
+                (across - (1.0 + BOARDS_APART) * PITCH).abs() < 1e-5,
+                "{across}"
+            );
+            // Each board's near left corner is dark, though board A is three squares wide.
+            assert_eq!(cells["a1"].1, cells["d1"].1);
+            assert_ne!(cells["b1"].1, cells["d1"].1);
+            // What stands round the board keeps clear of both.
+            let outline = &app.world().resource::<BoardOutline>().0;
+            let xs = outline.iter().map(|p| p.x);
+            let (lo, hi) = xs.fold((f32::MAX, f32::MIN), |(l, h), x| (l.min(x), h.max(x)));
+            assert!(lo < cells["a1"].0.x && hi > cells["f1"].0.x, "{lo} {hi}");
+        }
+
         fn pieces(app: &mut App) -> Vec<(String, bool)> {
             let mut q = app.world_mut().query::<(&PieceAt, Option<&Dropping>)>();
             let mut out: Vec<_> = q
@@ -7247,6 +7432,7 @@ piece = "ring"
             board: Board {
                 kind: "hex".into(),
                 positions: hex3(),
+                boards: vec![],
                 regions: regions
                     .iter()
                     .map(|(n, cells)| (n.to_string(), cells.map(String::from).to_vec()))
@@ -7391,11 +7577,82 @@ piece = "ring"
         assert!(Layout::new(&[]).centres.is_empty());
     }
 
+    /// A board of `files` (letters from `a`) and `ranks`, its files from layout x `from`, as one
+    /// of a game's boards.
+    fn files(from: usize, files: usize, ranks: usize) -> Vec<BoardPosition> {
+        (0..files * ranks)
+            .map(|i| {
+                let (x, y) = (from + i % files, i / files);
+                pos(
+                    &format!("{}{}", (b'a' + x as u8) as char, ranks - y),
+                    x as f32,
+                    y as f32,
+                )
+            })
+            .collect()
+    }
+
+    fn board_of(boards: &[&[BoardPosition]]) -> Board {
+        Board {
+            kind: "grid".into(),
+            positions: boards.iter().flat_map(|b| b.iter().cloned()).collect(),
+            boards: boards
+                .iter()
+                .map(|b| BoardPart {
+                    positions: b.iter().map(|p| p.id.clone()).collect(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn boards_side_by_side_are_laid_apart_each_as_large_as_one_alone() {
+        // Two boards of 12 files: together 24 would be made smaller to fit, each alone is not.
+        let (a, b) = (files(0, 12, 8), files(12, 12, 8));
+        let layout = Layout::of(&board_of(&[&a, &b]));
+        assert_eq!(layout.pitch, Layout::new(&a).pitch);
+        assert!(layout.pitch > Layout::new(&[a.clone(), b.clone()].concat()).pitch);
+        assert_eq!(layout.parts.len(), 2);
+        assert_eq!(layout.parts[1].len(), 96);
+        let gap = layout.centres["m1"].x - layout.centres["l1"].x;
+        assert!(
+            (gap - (1.0 + BOARDS_APART) * layout.pitch).abs() < 1e-5,
+            "{gap}"
+        );
+        // Centred on the origin, the space between them too.
+        assert!((layout.centres["a1"].x + layout.centres["x1"].x).abs() < 1e-5);
+        let width = (24.0 + BOARDS_APART) * layout.pitch;
+        assert!((layout.size.x - width).abs() < 1e-5, "{}", layout.size.x);
+
+        // One board, or none listed, is laid out as its positions are.
+        let one = Layout::of(&Board {
+            boards: vec![],
+            ..board_of(&[&a, &b])
+        });
+        assert_eq!(one, Layout::new(&[a.clone(), b.clone()].concat()));
+        assert_eq!(one.parts.len(), 1);
+    }
+
+    #[test]
+    fn a_position_on_no_board_listed_is_a_board_of_its_own() {
+        let (a, b) = (files(0, 2, 2), files(2, 2, 2));
+        let mut board = board_of(&[&a, &b]);
+        board.positions.push(pos("z9", 9.0, 0.0));
+        let parts = parts(&board);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(
+            parts[2].iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            ["z9"]
+        );
+    }
+
     #[test]
     fn the_cell_shape_comes_from_the_board_kind() {
         let board = |kind: &str| Board {
             kind: kind.into(),
             positions: vec![],
+            boards: vec![],
             regions: Default::default(),
         };
         assert_eq!(CellShape::of(&board("hex")), CellShape::Hexagon);

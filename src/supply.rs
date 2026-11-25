@@ -173,6 +173,7 @@ mod tests {
             board: crate::net::api::Board {
                 kind: "grid".into(),
                 positions: vec![],
+                boards: vec![],
                 regions: Default::default(),
             },
             actions: vec![],

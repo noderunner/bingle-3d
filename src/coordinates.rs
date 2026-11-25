@@ -5,7 +5,8 @@
 //! left and right ends, and each column's letters beyond its far and near ends where those are
 //! on the board's first and last rows (a hexagonal board's columns also end on its slanted
 //! sides, where the rows' numbers are). A board named any other
-//! way shows none: the client does not guess.
+//! way shows none: the client does not guess. A game on several boards (Alice chess) has each
+//! board's along its own edges.
 //!
 //! They are engraved in the board's margin: glyphs of the client's font, made by the asset
 //! pipeline (`assets-src/blender/engraving.py`) as an atlas of the cut's colour and its walls'
@@ -201,7 +202,11 @@ fn sync_labels(
         commands.entity(root).despawn();
     }
     let Some(table) = &watch.table else { return };
-    let labels = edge_labels(&table.info.board.positions);
+    // Along each board's own edges, for a game on several (Alice chess).
+    let labels: Vec<EdgeLabel> = crate::board::parts(&table.info.board)
+        .iter()
+        .flat_map(|part| edge_labels(part))
+        .collect();
     if labels.is_empty() {
         return;
     }
@@ -210,7 +215,7 @@ fn sync_labels(
     if matches!(surface, Surface::Table(_)) {
         return;
     }
-    let layout = Layout::new(&table.info.board.positions);
+    let layout = Layout::of(&table.info.board);
     let material = materials.add(engraving(&server));
     let size = layout.pitch * GLYPH_SIZE;
     let mut shapes: Vec<Option<Handle<Mesh>>> = vec![None; GLYPHS.len()];

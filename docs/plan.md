@@ -54,7 +54,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.10.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.14.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
@@ -476,7 +476,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   confirming click captures is plain: a pin once chosen, and each piece a jump captures once
   the player says so rather than sparing it. Both come from what each legal selection captures,
   which the server says from API 1.10 (bingle#269; `Turn::takes_at`, `Turn::taking`), so the
-  client reads no game's rules for them; it needs a server of 1.10 or newer. A region the
+  client reads no game's rules for them; it needs a server of 1.10 or newer (1.14 since Alice
+  chess's boards were drawn apart: below). A region the
   board names may have its cells in a material of the look's (`[board.regions]`): Fist's keep
   is in a chessboard's dark squares. A chessboard's
   squares are lit in their own wood, stained amber and glowing: glow alone barely shows on pale
@@ -657,8 +658,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     of its side given a carved head's thickness. Pale and near-black wood. Chess and its
     variants (Chess960, Crazyhouse, Antichess, Atomic, Alice: `chess.toml`) are played with the
     whole set on Amazons' chessboard of walnut and maple squares, a king in check stamped red on
-    its square (the view's `check` tint); Alice's two boards are one board 16 squares wide, with
-    nothing yet between them. Breakthrough (pawns), Amazons (queens on a checkered board, and a red checker for an
+    its square (the view's `check` tint). Alice's two boards are two boards side by side, each
+    its own slab, inlay and coordinates, a cell's width and a little table between them: the
+    server lists each board's positions from API 1.14 (`boards`, bingle's ADR 0148), and
+    `Layout::of` sets them apart, each as large as one board alone. A game on several boards
+    needs nothing of its own in the client. Breakthrough (pawns), Amazons (queens on a checkered board, and a red checker for an
     arrow), Brandubh (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of
     green copper) are played with them.
   - **Checkers**: a wooden draughtsman with a milled edge, stained red or black; a king is two.
