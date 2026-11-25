@@ -374,6 +374,7 @@ mod tests {
                 opening: None,
                 reserves: Default::default(),
                 cards: None,
+                engine: String::new(),
             },
             vec![BotInfo {
                 id: "mcts".into(),

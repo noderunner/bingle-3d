@@ -1,9 +1,11 @@
 """The faces of the usual deck of playing cards: spades, hearts, diamonds and clubs, each from the
-ace to the king, as pictures for the card's face (`playing_cards.py`).
+ace to the king, as pictures for the card's face (`playing_cards.py`); and those a deck numbered
+from 1 to 13 has in their place, the 1 and the 11, 12 and 13 of each suit.
 
-- `textures/cards/faces/<suit>_<rank>_albedo.png`, 52 of them (`spades_a`, `hearts_10`,
-  `clubs_k`): 640 × 896, which is 5 to 7, the card's paper all over with the face printed on it
-  in one ink, red or black, and on a court card gold and a tinted panel besides.
+- `textures/cards/faces/<suit>_<rank>_albedo.png`, 68 of them, the usual deck's 52 (`spades_a`,
+  `hearts_10`, `clubs_k`) and the numbered deck's 16 (`spades_1`, `hearts_13`): 640 × 896, which
+  is 5 to 7, the card's paper all over with the face printed on it in one ink, red or black, and
+  on a court card gold and a tinted panel besides.
 
 Each is drawn here, with no picture to start from. A suit is an outline of curves; a rank is
 lettered in Fira Sans SemiBold, the client's own font, which Blender sets and turns into
@@ -14,7 +16,10 @@ bytes come out every time.
 
 A face is laid out in millimetres about the card's middle, x to the right and y up: the rank and
 its suit in two opposite corners, and between them the suit as many times as the rank counts, in
-the places cards have always had them, those below the middle upside down.
+the places cards have always had them, those below the middle upside down. A 1 is an ace but for
+its corners. An 11, a 12 and a 13 are number cards, not courts, but their suits are not counted
+out: twelve differ from thirteen by one among many, which nobody reads across a table. Each has
+its figure instead, large, between two suits where a two has its own.
 
 No game names these files: the client finds one by a suit's symbol and a rank's label, as the
 server gives them (`props::standard_face`)."""
@@ -37,6 +42,8 @@ FONT = os.path.join(common.ASSETS, "fonts", "FiraSans-SemiBold.ttf")
 
 SUITS = ["spades", "hearts", "diamonds", "clubs"]
 RANKS = ["a", "2", "3", "4", "5", "6", "7", "8", "9", "10", "j", "q", "k"]
+# What a deck numbered from 1 to 13 has where the usual one has its ace and its court cards.
+NUMBERED = ["1", "11", "12", "13"]
 # Fira's J hangs below the line the other letters stand on, into the suit under it.
 HANGS = {"j"}
 
@@ -78,9 +85,14 @@ PLACES = {
         (L, -THIRD), (R, -THIRD), (C, -2 * THIRD), (L, -ROW), (R, -ROW),
     ],
 }  # fmt: skip
-# An ace's one suit; the ace of spades is the deck's largest, as it always is.
+# An ace's one suit; the ace of spades is the deck's largest, as it always is. A 1 is the same.
 ACE = 27.0
 ACE_OF_SPADES = 33.0
+ONES = {"a", "1"}
+# A rank above ten: its figure's height, in the card's middle between two suits where a two has
+# its own.
+FIGURE = 26.0
+FIGURED = ["11", "12", "13"]
 # A court card: its frame's half size, the corners' radius and its lines' width.
 FRAME = (19.2, 31.6)
 FRAME_CORNER = 2.4
@@ -309,19 +321,20 @@ def placed(shape, at, size, upside_down=False):
     return [part * k + np.array(at) for part in shape]
 
 
-def lettering():
+def lettering(ranks, corner=True):
     """Each rank's letters as triangles, one unit to a capital's height, standing on y = 0 about
     x = 0. Blender sets the text; a figure of two digits is set closer and narrower, to go in a
-    corner."""
-    font = bpy.data.fonts.load(FONT)
+    corner, or as the font has it, for a card's middle."""
+    font = bpy.data.fonts.load(FONT, check_existing=True)
     out = {}
-    for rank in RANKS + ["H"]:
+    for rank in ranks + ["H"]:
+        narrow = corner and len(rank) > 1
         text = bpy.data.curves.new(f"rank {rank}", type="FONT")
         text.body = rank.upper()
         text.font = font
         text.size = 1.0
         text.resolution_u = 24
-        text.space_character = 0.82 if len(rank) > 1 else 1.0
+        text.space_character = 0.82 if narrow else 1.0
         obj = bpy.data.objects.new(f"rank {rank}", text)
         bpy.context.scene.collection.objects.link(obj)
         bpy.context.view_layer.update()
@@ -334,7 +347,7 @@ def lettering():
         area = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
         triangles[area < 0] = triangles[area < 0][:, ::-1]
         triangles = triangles[np.abs(area) > 1e-12]
-        if len(rank) > 1:
+        if narrow:
             triangles[..., 0] *= 0.82
         if rank in HANGS:
             # Made to stand on the line, and as much shorter as that takes: its stem keeps
@@ -348,8 +361,8 @@ def lettering():
     return {rank: triangles / cap for rank, triangles in out.items()}
 
 
-def face(suit, rank, letters):
-    """One card's face, as sRGB values."""
+def face(suit, rank, letters, figures):
+    """One card's face, as sRGB values: `letters` for its corners, `figures` for its middle."""
     sheet = Sheet()
     shape, colour = SHAPES[suit], INKS[suit]
     if rank in WEARS:
@@ -364,11 +377,13 @@ def face(suit, rank, letters):
         for part in placed(shape, at, INDEX_SUIT, turn < 0):
             sheet.fill(ink, [part])
 
-    if rank == "a":
+    if rank in ONES:
         size = ACE_OF_SPADES if suit == "spades" else ACE
         for part in placed(shape, (0.0, 0.0), size):
             sheet.fill(ink, [part])
-    for x, y in PLACES.get(rank, []):
+    if rank in FIGURED:
+        sheet.fill(ink, list(figures[rank] * FIGURE - (0.0, FIGURE / 2)))
+    for x, y in PLACES["2"] if rank in FIGURED else PLACES.get(rank, []):
         for part in placed(shape, (x, y), PIP, y < 0):
             sheet.fill(ink, [part])
     return sheet.pixels()
@@ -403,20 +418,22 @@ def name(suit, rank):
 
 def run():
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    letters = lettering()
+    letters = lettering(RANKS + NUMBERED)
+    figures = lettering(FIGURED, corner=False)
     faces = {}
+    ranks = RANKS + NUMBERED
     for suit in SUITS:
-        for rank in RANKS:
-            faces[suit, rank] = face(suit, rank, letters)
+        for rank in ranks:
+            faces[suit, rank] = face(suit, rank, letters, figures)
             common.write_png(common.output("textures", "cards", "faces", name(suit, rank)), faces[suit, rank])
-    # The whole deck on one sheet, a suit to a row, to look at.
+    # Every face on one sheet, a suit to a row, to look at.
     os.makedirs(common.PREVIEWS, exist_ok=True)
     small = {key: common.resize_to(pixels.astype(np.float32), SIZE[0] // 2, SIZE[1] // 2) for key, pixels in faces.items()}
     gap = 12
     w, h = SIZE[0] // 2 + gap, SIZE[1] // 2 + gap
-    sheet = np.full((len(SUITS) * h + gap, len(RANKS) * w + gap, 3), 0.25, np.float32)
+    sheet = np.full((len(SUITS) * h + gap, len(ranks) * w + gap, 3), 0.25, np.float32)
     for row, suit in enumerate(SUITS):
-        for column, rank in enumerate(RANKS):
+        for column, rank in enumerate(ranks):
             y, x = gap + row * h, gap + column * w
             sheet[y : y + h - gap, x : x + w - gap] = small[suit, rank]
     common.write_png(os.path.join(common.PREVIEWS, "card-faces.png"), sheet)

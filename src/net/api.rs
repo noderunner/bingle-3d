@@ -525,6 +525,19 @@ pub struct GameInfo {
     /// position names its cards by id only). None for a game with no cards.
     #[serde(default)]
     pub cards: Option<Cards>,
+    /// How its rules are kept: `ruleset` for rules written in Go, which may keep secrets from a
+    /// seat (a hand of cards): the server then shows everybody a public view of the position,
+    /// and a seat's own to whoever holds it (`Session::state`).
+    #[serde(default)]
+    pub engine: String,
+}
+
+impl GameInfo {
+    /// Whether a position may hold what only one seat sees, so that a client playing a seat
+    /// reads it as that seat.
+    pub fn may_keep_secrets(&self) -> bool {
+        self.engine == "ruleset"
+    }
 }
 
 /// What a card game's cards are (`GameInfo.cards`). Only what the client draws from: not the
@@ -1129,6 +1142,27 @@ impl Position {
             .map(|n| n.min(u32::MAX as u64) as u32)
     }
 
+    /// Seat `seat`'s counter `id` in the view as it is shown: its label and its number, which
+    /// may be below nothing (a score).
+    pub fn view_count<'a>(&'a self, seat: u32, id: &'a str) -> Option<(&'a str, i64)> {
+        let counter = self.ext["view"]["seats"][seat.to_string()]["counters"]
+            .as_array()?
+            .iter()
+            .find(|c| c["id"] == id)?;
+        Some((
+            counter["label"].as_str().unwrap_or(id),
+            counter["value"].as_i64()?,
+        ))
+    }
+
+    /// What the view calls a choice that has no label of its own in the game's definition (a
+    /// team to pick, by its members' names), by the choice's value.
+    pub fn choice_words(&self, value: &str) -> Option<&str> {
+        self.ext["view"]["labels"][value]
+            .as_str()
+            .filter(|words| !words.trim().is_empty())
+    }
+
     /// The most seat `seat`'s counter `id` in the view may reach, if it says (the rings a win
     /// wants removed).
     pub fn view_counter_max(&self, seat: u32, id: &str) -> Option<u32> {
@@ -1216,6 +1250,33 @@ impl Position {
                     }
                 };
                 Some((name, cards))
+            })
+            .collect()
+    }
+
+    /// What the view's table says of each card of a zone, by the zone's name as
+    /// [`Position::card_zones`] has it: who played it, for a trick (a seat's label, and a
+    /// mark when it took the trick).
+    pub fn card_captions(&self) -> BTreeMap<String, Vec<String>> {
+        let Some(table) = self.ext["view"]["table"].as_array() else {
+            return BTreeMap::new();
+        };
+        table
+            .iter()
+            .filter_map(|z| {
+                let id = z["id"].as_str()?;
+                let name = match z["owner"].as_u64().filter(|o| *o > 0) {
+                    Some(owner) => format!("{id}:{owner}"),
+                    None => id.to_string(),
+                };
+                let captions = z["captions"].as_array()?;
+                Some((
+                    name,
+                    captions
+                        .iter()
+                        .map(|c| c.as_str().unwrap_or_default().to_string())
+                        .collect(),
+                ))
             })
             .collect()
     }
@@ -2142,5 +2203,40 @@ mod tests {
         assert_eq!(after.cells["e7"][0].piece, "ring");
         assert_eq!(after.impulse_words(), Some("Choose a line to remove."));
         assert_eq!(after.tints()["f7"], "row");
+    }
+
+    #[test]
+    fn the_view_says_who_played_each_card_what_each_seat_counts_and_what_a_choice_is_called() {
+        let read = |text: &str| serde_json::from_str::<Position>(text).unwrap();
+        let p = read(
+            r#"{"cells":{},"ext":{"view":{
+                "table":[{"id":"trick","count":2,"cards":[{"id":"a","up":true},{"id":"b","up":true}],
+                          "captions":["Fox","Owl ★"]},
+                         {"id":"hand","owner":2,"count":1,"cards":[{"id":"c"}]}],
+                "seats":{"2":{"counters":[{"id":"score","label":"Points","value":-4},
+                                          {"id":"tricks","label":"Tricks","value":3}]}},
+                "labels":{"side-2":"Team with Owl","side-3":" "}}}}"#,
+        );
+        let captions = p.card_captions();
+        assert_eq!(captions["trick"], ["Fox", "Owl ★"]);
+        assert!(
+            !captions.contains_key("hand:2"),
+            "none for a zone that has none"
+        );
+        // A card of a hand is known by its id though it does not lie face up.
+        let hand = &p.card_zones()["hand:2"];
+        assert!(!hand[0].id.is_empty() && !hand[0].shown());
+        assert_eq!(
+            p.view_count(2, "score"),
+            Some(("Points", -4)),
+            "below nothing"
+        );
+        assert_eq!(p.view_count(2, "tricks"), Some(("Tricks", 3)));
+        assert_eq!(p.view_count(2, "taken"), None);
+        assert_eq!(p.view_count(1, "score"), None);
+        assert_eq!(p.choice_words("side-2"), Some("Team with Owl"));
+        assert_eq!(p.choice_words("side-3"), None, "blank");
+        assert_eq!(p.choice_words("side-4"), None);
+        assert!(read(r#"{"cells":{}}"#).card_captions().is_empty());
     }
 }

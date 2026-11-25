@@ -16,6 +16,12 @@
 //! or Backspace puts them back. A click on the stock draws, turns the waste over or deals,
 //! whichever the game offers.
 //!
+//! A game of several seats is laid round the table by its look (`Layout::seated`), seen from
+//! the seat this client plays: its own hand fanned in front of it, the others' standing in the
+//! air, a trick in the middle with each card towards who played it (the zone's captions), and
+//! a click on a card of the hand that may be played (they stand a little out of the fan, and
+//! the one under the pointer further) makes its choice (`[cards] play`).
+//!
 //! Cards go where the position puts them by the hand's own carrying (`hand::Carry::Put`): over
 //! the table and down, one after another when several go at once (a row dealt, a run off the
 //! table), and a card turned up on its way when it was face down where it came from.
@@ -31,12 +37,12 @@ use bevy::prelude::*;
 use crate::appearance::{Appearance, Appearances, CardsLook};
 use crate::assets;
 use crate::board::BoardBuilt;
-use crate::card_layout::Layout;
+use crate::card_layout::{self, Layout, Placed};
 use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
-use crate::net::api::{CardOnTable, Cards, GameInfo, Gesture, LegalSelection};
+use crate::net::api::{CardOnTable, Cards, GameInfo, Gesture, LegalSelection, Position};
 use crate::net::{Net, WatchStatus};
 use crate::patience::{self, Click};
 use crate::play::{self, Stage, Turn};
@@ -73,6 +79,7 @@ impl Plugin for CardTablePlugin {
                             .or_eager(resource_changed::<Together>),
                     ),
                     follow_hand,
+                    stand_out,
                 )
                     .chain()
                     .before(Hands),
@@ -81,7 +88,7 @@ impl Plugin for CardTablePlugin {
 }
 
 /// The cloth the cards lie on: how thick, and how far it reaches beyond the piles.
-const CLOTH: f32 = 0.002;
+pub const CLOTH: f32 = 0.002;
 const CLOTH_MARGIN: f32 = 0.035;
 /// A pile's place, printed on the cloth, a little larger than a card.
 const PLACE: f32 = 0.0002;
@@ -105,6 +112,48 @@ const CORNER: f32 = 0.0032;
 /// How high a card chosen with others hovers over its pile, and how much it bobs.
 const CHOSEN_LIFT: f32 = 0.012;
 const CHOSEN_BOB: f32 = 0.6;
+/// How far a card of a hand that may be played stands out of the fan, towards its top, when
+/// not every card may be; and how much further the one under the pointer.
+const PLAYABLE_OUT: f32 = 0.009;
+const POINTED_OUT: f32 = 0.014;
+/// How much of a round table the camera frames at first, and where it looks, against the
+/// cloth's width: left of the middle, so the table is clear of the panel, and towards the
+/// player.
+const SEATED_VIEW: f32 = 0.7;
+const SEATED_LOOK: Vec2 = Vec2::new(-0.1, 0.1);
+/// How many sides the outline of a round cloth has, for what is held to keep within.
+const ROUND: usize = 24;
+
+/// The place among the game's seats of the one the table is seen from: the seat this client
+/// plays, else the first.
+pub fn viewer(table: &Table) -> usize {
+    table
+        .yours()
+        .and_then(|mine| table.info.seats.iter().position(|s| s.seat == mine.seat))
+        .unwrap_or(0)
+}
+
+/// The seat a card's caption names, by the label the game gives it: the caption may say more
+/// after it (a mark on the card that took a trick).
+pub fn caption_seat(info: &GameInfo, caption: &str) -> Option<usize> {
+    info.seats
+        .iter()
+        .filter(|s| !s.label.is_empty() && caption.starts_with(&s.label))
+        // The longest label that fits: one seat's may begin another's.
+        .max_by_key(|s| s.label.len())
+        .and_then(|found| info.seats.iter().position(|s| s.seat == found.seat))
+}
+
+/// The choice a click on a card makes in a game whose look gives one (`play`), if it is one
+/// of `choices`: the look's choice, then the card's kind.
+pub fn card_choice(look: &CardsLook, card: &str, choices: &[Gesture]) -> Option<Gesture> {
+    let kind = card.split('#').next().unwrap_or(card);
+    let value = format!("{}{kind}", look.play.as_deref()?);
+    choices
+        .iter()
+        .find(|g| g.kind == "action" && g.value == value)
+        .cloned()
+}
 
 /// Whether a game's cards are laid on the table in place of its board: it has cards, and is a
 /// patience or has a look that lays them out.
@@ -216,6 +265,9 @@ struct CardRoot {
     looks: Looks,
     /// How the game's look lays it out, when it does (not a patience).
     by_look: Option<CardsLook>,
+    /// The seat the table is seen from, its place among the game's, when it is laid round
+    /// its seats.
+    viewer: usize,
 }
 
 /// A card: what the position calls it (its id, or its zone and place for one face down), where
@@ -227,6 +279,8 @@ struct CardAt {
     /// 1 for the top card of its pile.
     from_top: usize,
     shown: bool,
+    /// The client knows which card it is, whichever way up it lies: its key is its id.
+    known: bool,
 }
 
 /// What the pointer over this is over: a pile, by its zone (on its cards and its place).
@@ -363,11 +417,68 @@ fn card_corners() -> Vec<Vec2> {
     out
 }
 
-/// Each pile's cards, bottom first, by zone: the position's, for the piles the layout has.
-fn piles(table: &Table, layout: &Layout) -> BTreeMap<String, Vec<CardOnTable>> {
-    let mut all = table.state.state.card_zones();
+/// Each pile's cards, bottom first, by zone: the position's, for the piles the layout has. A
+/// pile its look shows only while another is empty has none while that one has cards, and a
+/// card it does show is left out of where else the position has it (a trick taken stays where
+/// it was played until the next is led).
+fn piles(
+    position: &Position,
+    layout: &Layout,
+    look: Option<&CardsLook>,
+) -> BTreeMap<String, Vec<CardOnTable>> {
+    let mut all = position.card_zones();
     all.retain(|zone, _| layout.piles.contains_key(zone));
+    let Some(look) = look else {
+        return all;
+    };
+    let waits = |zone: &str| look.pile(zone).and_then(|p| p.unless.clone());
+    let hidden: Vec<String> = all
+        .keys()
+        .filter(|zone| waits(zone).is_some_and(|o| all.get(&o).is_some_and(|c| !c.is_empty())))
+        .cloned()
+        .collect();
+    for zone in hidden {
+        all.insert(zone, Vec::new());
+    }
+    let kept: HashSet<String> = all
+        .iter()
+        .filter(|(zone, _)| waits(zone).is_some())
+        .flat_map(|(_, cards)| cards.iter().map(|c| c.id.clone()))
+        .filter(|id| !id.is_empty())
+        .collect();
+    if !kept.is_empty() {
+        for (zone, cards) in all.iter_mut() {
+            if waits(zone).is_none() {
+                cards.retain(|c| !kept.contains(&c.id));
+            }
+        }
+    }
     all
+}
+
+/// How the side of the seat that played each card of `zone` is turned, as far as the view's
+/// captions say who did, for a table seen from `viewer`.
+fn towards(
+    table: &Table,
+    captions: &BTreeMap<String, Vec<String>>,
+    viewer: usize,
+    zone: &str,
+) -> Vec<Option<f32>> {
+    let seats = table.info.seats.len();
+    captions
+        .get(zone)
+        .map(|all| {
+            all.iter()
+                .map(|caption| {
+                    let i = caption_seat(&table.info, caption)?;
+                    Some(card_layout::seat_turn(
+                        (i + seats - viewer % seats) % seats,
+                        seats,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Which way up each card of a pile lies.
@@ -375,10 +486,10 @@ fn ups(cards: &[CardOnTable]) -> Vec<bool> {
     cards.iter().map(|c| c.up).collect()
 }
 
-/// What a card is called in the scene: its id, or for one whose face is not seen, its zone and
-/// place (which changes when it is turned up, so it is drawn again with its face).
+/// What a card is called in the scene: its id, or for one the client may not know, its zone
+/// and place (which changes when it is turned up, so it is drawn again with its face).
 fn key(zone: &str, index: usize, card: &CardOnTable) -> String {
-    if card.shown() {
+    if !card.id.is_empty() {
         card.id.clone()
     } else {
         format!("{zone}#{index}")
@@ -442,9 +553,11 @@ fn sync_cards(
         }
         return;
     };
+    let by_look = look(table).and_then(|l| l.cards.as_ref());
+    let seen_from = by_look.filter(|l| l.seated()).map_or(0, |_| viewer(table));
     let current = roots
         .iter_mut()
-        .find(|(_, r)| r.room_code == table.room_code);
+        .find(|(_, r)| r.room_code == table.room_code && r.viewer == seen_from);
     let Some((root, mut shown)) = current else {
         for (old, _) in &roots {
             commands.entity(old).despawn();
@@ -463,7 +576,9 @@ fn sync_cards(
     let root_data = &mut *shown;
     let layout = root_data.layout.clone();
     let info_cards = table.info.cards.as_ref();
-    let piles = piles(table, &layout);
+    let position = watch.shown().unwrap_or(&table.state.state);
+    let piles = piles(position, &layout, root_data.by_look.as_ref());
+    let captions = position.card_captions();
     let turn = watch.turn.as_ref();
     let held = in_hand(turn);
     let put = put_down(turn).zip(put_on.0.clone());
@@ -524,7 +639,8 @@ fn sync_cards(
     let mut lifting = false;
     for (zone, pile) in &order {
         let up = ups(pile);
-        let rests = layout.lie(zone, &up, BASE);
+        let rests =
+            layout.lie_towards(zone, &up, &towards(table, &captions, seen_from, zone), BASE);
         let lifted = held
             .as_ref()
             .filter(|(z, _)| z == zone)
@@ -547,6 +663,7 @@ fn sync_cards(
                 zone: zone.to_string(),
                 from_top: pile.len() - i,
                 shown: card.shown(),
+                known: !card.id.is_empty(),
             };
             let in_hand = lifted
                 .as_ref()
@@ -674,8 +791,14 @@ fn place_fresh(
     materials: &mut Assets<StandardMaterial>,
 ) {
     let layout = data.layout.clone();
-    for (zone, pile) in &piles(table, &layout) {
-        let rests = layout.lie(zone, &ups(pile), BASE);
+    let captions = table.state.state.card_captions();
+    for (zone, pile) in &piles(&table.state.state, &layout, data.by_look.as_ref()) {
+        let rests = layout.lie_towards(
+            zone,
+            &ups(pile),
+            &towards(table, &captions, data.viewer, zone),
+            BASE,
+        );
         for (i, card) in pile.iter().enumerate() {
             let whole = spawn_card(
                 commands,
@@ -693,6 +816,7 @@ fn place_fresh(
                     zone: zone.clone(),
                     from_top: pile.len() - i,
                     shown: card.shown(),
+                    known: !card.id.is_empty(),
                 },
                 PileOf(zone.clone()),
                 Rest(rests[i]),
@@ -713,7 +837,29 @@ fn build(
     materials: &mut Assets<StandardMaterial>,
     built: &mut MessageWriter<BoardBuilt>,
 ) -> (Entity, CardRoot) {
+    let seen_from = by_look
+        .as_ref()
+        .filter(|l| l.seated())
+        .map_or(0, |_| viewer(table));
     let layout = match &by_look {
+        Some(look) if look.seated() => {
+            let placed: Vec<Placed> = look
+                .piles
+                .iter()
+                .map(|(zone, p)| Placed {
+                    zone: zone.clone(),
+                    at: Vec2::from_array(p.seat.unwrap_or(p.at)),
+                    spread: p.spread,
+                    each_seat: p.seat.is_some(),
+                })
+                .collect();
+            let seats: Vec<u32> = table.info.seats.iter().map(|s| s.seat).collect();
+            let mut layout = Layout::seated(&placed, &seats, seen_from, table.yours().is_some());
+            if let Some(radius) = look.radius {
+                layout.size = layout.size.max(Vec2::splat(2.0 * radius));
+            }
+            layout
+        }
         Some(look) => Layout::placed(
             look.piles
                 .iter()
@@ -732,6 +878,15 @@ fn build(
         ))
         .id();
     let cloth_size = layout.size + Vec2::splat(2.0 * CLOTH_MARGIN);
+    let cloth_mesh = if layout.round {
+        meshes.add(
+            Cylinder::new(cloth_size.x / 2.0, CLOTH)
+                .mesh()
+                .resolution(96),
+        )
+    } else {
+        meshes.add(Cuboid::new(cloth_size.x, CLOTH, cloth_size.y))
+    };
     let cloth = materials.add(
         MaterialSpec {
             tint: Some([0.045, 0.11, 0.08]),
@@ -745,7 +900,7 @@ fn build(
         Cloth,
         Surface,
         Pickable::default(),
-        Mesh3d(meshes.add(Cuboid::new(cloth_size.x, CLOTH, cloth_size.y))),
+        Mesh3d(cloth_mesh),
         MeshMaterial3d(cloth),
         Transform::from_xyz(0.0, CLOTH / 2.0, 0.0),
         ChildOf(root),
@@ -763,7 +918,7 @@ fn build(
         PLACE,
         CARD_SIZE.y + 2.0 * PLACE_MARGIN,
     ));
-    for (zone, pile) in &layout.piles {
+    for (zone, pile) in layout.piles.iter().filter(|(_, p)| p.place) {
         commands.spawn((
             Name::new(format!("Place {zone}")),
             Place,
@@ -792,18 +947,34 @@ fn build(
         ChildOf(root),
     ));
     let half = cloth_size / 2.0;
-    commands.insert_resource(BoardEdge(vec![
-        Vec2::new(-half.x, -half.y),
-        Vec2::new(-half.x, half.y),
-        Vec2::new(half.x, half.y),
-        Vec2::new(half.x, -half.y),
-    ]));
+    let edge = if layout.round {
+        (0..ROUND)
+            .map(|i| Vec2::from_angle(std::f32::consts::TAU * i as f32 / ROUND as f32) * half.x)
+            .collect()
+    } else {
+        vec![
+            Vec2::new(-half.x, -half.y),
+            Vec2::new(-half.x, half.y),
+            Vec2::new(half.x, half.y),
+            Vec2::new(half.x, -half.y),
+        ]
+    };
+    commands.insert_resource(BoardEdge(edge));
     // Framed as dealt, with room for the columns to grow by half their reach: a long one
     // reaches beyond the picture rather than every deal being seen from afar.
     let unused = layout.room / 2.0;
-    built.write(BoardBuilt {
-        size: cloth_size - Vec2::Y * unused,
-        middle: Vec2::Y * -unused / 2.0,
+    built.write(if layout.round {
+        // Seen from the player's own seat: nearer their hand than the far side, and clear of
+        // the game's panel at the left.
+        BoardBuilt {
+            size: cloth_size * SEATED_VIEW,
+            middle: cloth_size * SEATED_LOOK,
+        }
+    } else {
+        BoardBuilt {
+            size: cloth_size - Vec2::Y * unused,
+            middle: Vec2::Y * -unused / 2.0,
+        }
     });
     let looks = Looks::new(server, materials);
     (
@@ -813,6 +984,7 @@ fn build(
             layout,
             looks,
             by_look,
+            viewer: seen_from,
         },
     )
 }
@@ -829,10 +1001,12 @@ fn spawn_card(
     card: &CardOnTable,
     at: Transform,
 ) -> Entity {
-    let face = if card.shown() {
+    // A card the client may not know shows its back from both sides: a hand standing in the
+    // air is seen from its seat's side too.
+    let face = if !card.id.is_empty() {
         looks.face(cards, &card.id, server, materials)
     } else {
-        looks.paper.clone()
+        looks.back.clone()
     };
     let by_part = [
         ("face", face),
@@ -925,7 +1099,8 @@ fn show_aim(
         (Some(_), Some(turn)) => turn.choices(),
         _ => Vec::new(),
     };
-    let piles = piles(table, &shown.layout);
+    let position = watch.shown().unwrap_or(&table.state.state);
+    let piles = piles(position, &shown.layout, shown.by_look.as_ref());
     let home = held.as_ref().and_then(|h| home_of(table, h));
     let targets: Vec<&str> = match (&shown.by_look, turn) {
         // Laid by its look: the piles whose choice plays what is chosen, once something is.
@@ -1052,10 +1227,14 @@ fn on_click(
     if click.button != PointerButton::Primary {
         return;
     }
-    let (zone, from_top) = if let Ok(card) = cards.get(click.entity) {
-        (card.zone.clone(), card.shown.then_some(card.from_top))
+    let (zone, from_top, known) = if let Ok(card) = cards.get(click.entity) {
+        (
+            card.zone.clone(),
+            card.shown.then_some(card.from_top),
+            card.known.then(|| card.key.clone()),
+        )
     } else if let Ok(pile) = places.get(click.entity) {
-        (pile.0.clone(), None)
+        (pile.0.clone(), None, None)
     } else if cloths.contains(click.entity) {
         // The bare cloth: what is in hand goes back, and what is chosen is let go.
         if in_hand(watch.turn.as_ref()).is_some() {
@@ -1078,6 +1257,14 @@ fn on_click(
         .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code))
         .and_then(|r| r.by_look.as_ref());
     if let Some(look) = by_look {
+        // A card of the hand, played by the click.
+        let played = known
+            .as_deref()
+            .and_then(|card| card_choice(look, card, &turn.choices()));
+        if let Some(choice) = played {
+            play::gesture(&net, &mut watch, &choice);
+            return;
+        }
         match look_click(look, &zone, &together.at(seq), &turn.options) {
             LookClick::Choose(chosen) => *together = Together { seq, chosen },
             LookClick::Play(gestures) => {
@@ -1119,11 +1306,15 @@ fn feel(
     turn: Option<&Turn>,
     by_look: Option<&CardsLook>,
     chosen: &BTreeSet<String>,
+    known: Option<&str>,
 ) -> Feel {
     let Some(turn) = turn.filter(|t| t.stage == Stage::Choosing) else {
         return Feel::Open;
     };
     if let Some(look) = by_look {
+        if known.is_some_and(|card| card_choice(look, card, &turn.choices()).is_some()) {
+            return Feel::Point;
+        }
         return match look_click(look, zone, chosen, &turn.options) {
             LookClick::Nothing => Feel::Open,
             LookClick::Choose(_) | LookClick::Play(_) => Feel::Point,
@@ -1146,11 +1337,15 @@ fn sense(
     (watch, together): (Res<WatchStatus>, Res<Together>),
     mut table: ResMut<TableFeel>,
 ) {
-    let Some((zone, from_top)) = under.chain.iter().find_map(|e| {
+    let Some((zone, from_top, known)) = under.chain.iter().find_map(|e| {
         if let Ok(card) = cards.get(*e) {
-            Some((card.zone.as_str(), card.shown.then_some(card.from_top)))
+            Some((
+                card.zone.as_str(),
+                card.shown.then_some(card.from_top),
+                card.known.then_some(card.key.as_str()),
+            ))
         } else {
-            places.get(*e).ok().map(|p| (p.0.as_str(), None))
+            places.get(*e).ok().map(|p| (p.0.as_str(), None, None))
         }
     }) else {
         return;
@@ -1167,7 +1362,65 @@ fn sense(
         watch.turn.as_ref(),
         by_look,
         &together.at(seq),
+        known,
     )));
+}
+
+/// In a game whose look has a click on a card play it: the cards that may be played stand a
+/// little out of their fan while not all may be, and the one under the pointer further. A
+/// card's parts are moved, not the card, which stays where it rests.
+fn stand_out(
+    time: Res<Time>,
+    under: Res<Under>,
+    watch: Res<WatchStatus>,
+    roots: Query<&CardRoot>,
+    cards: Query<(Entity, &CardAt, &Parts)>,
+    mut parts: Query<&mut Transform, Without<CardAt>>,
+) {
+    let Some(look) = watch
+        .table
+        .as_ref()
+        .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code))
+        .and_then(|r| r.by_look.as_ref())
+        .filter(|l| l.play.is_some())
+    else {
+        return;
+    };
+    let choices = watch
+        .turn
+        .as_ref()
+        .filter(|t| t.stage == Stage::Choosing)
+        .map(Turn::choices)
+        .unwrap_or_default();
+    let may = |at: &CardAt| at.known && card_choice(look, &at.key, &choices).is_some();
+    // The zones where some card may be played and another may not.
+    let mixed: HashSet<&str> = cards
+        .iter()
+        .filter(|(_, at, _)| at.known && !may(at))
+        .map(|(_, at, _)| at.zone.as_str())
+        .collect();
+    let pointed = under.chain.iter().find(|e| cards.contains(**e)).copied();
+    let ease = 1.0 - (-18.0 * time.delta_secs()).exp();
+    for (entity, at, card_parts) in &cards {
+        let mut out = 0.0;
+        if may(at) {
+            if mixed.contains(at.zone.as_str()) {
+                out += PLAYABLE_OUT;
+            }
+            if pointed == Some(entity) {
+                out += POINTED_OUT;
+            }
+        }
+        for part in &card_parts.0 {
+            if let Ok(mut t) = parts.get_mut(*part) {
+                // A card's top is its far side as it lies: towards -z.
+                let wanted = -out;
+                if (t.translation.z - wanted).abs() > 1e-5 {
+                    t.translation.z += (wanted - t.translation.z) * ease;
+                }
+            }
+        }
+    }
 }
 
 /// Backspace lets go of what is chosen together, as it takes back what is in hand.
@@ -1298,18 +1551,30 @@ mod tests {
         }];
         turn.stage = Stage::Choosing;
         let none = BTreeSet::new();
-        assert_eq!(feel("t1", Some(1), Some(&turn), None, &none), Feel::Grab);
-        assert_eq!(feel("t3", Some(1), Some(&turn), None, &none), Feel::Open);
         assert_eq!(
-            feel("t1", Some(1), None, None, &none),
+            feel("t1", Some(1), Some(&turn), None, &none, None),
+            Feel::Grab
+        );
+        assert_eq!(
+            feel("t3", Some(1), Some(&turn), None, &none, None),
+            Feel::Open
+        );
+        assert_eq!(
+            feel("t1", Some(1), None, None, &none, None),
             Feel::Open,
             "not ours"
         );
         // Lifted: the foundation it goes to is pointed at, and so is where it came from (a
         // click there puts it back).
         turn.gestures = vec![act("from-t1-1")];
-        assert_eq!(feel("f1", None, Some(&turn), None, &none), Feel::Point);
-        assert_eq!(feel("t1", Some(1), Some(&turn), None, &none), Feel::Point);
+        assert_eq!(
+            feel("f1", None, Some(&turn), None, &none, None),
+            Feel::Point
+        );
+        assert_eq!(
+            feel("t1", Some(1), Some(&turn), None, &none, None),
+            Feel::Point
+        );
     }
 
     #[test]
@@ -1631,5 +1896,211 @@ mod tests {
         let down = CardOnTable::default();
         assert_eq!(key("t3", 4, &up), "hearts-A");
         assert_eq!(key("t3", 2, &down), "t3#2");
+    }
+
+    /// A game of three seats laid round the table by its look: a hand each, a trick, the
+    /// trick before it, and what each seat captured.
+    const SEATED: &str = r#"
+        games = ["tricks"]
+        [cards]
+        play = "card-"
+        [cards.piles.hand]
+        seat = [0.0, 0.4]
+        spread = "held"
+        [cards.piles.taken]
+        seat = [0.2, 0.3]
+        spread = "row"
+        [cards.piles.trick]
+        spread = "played"
+        [cards.piles.before]
+        spread = "played"
+        unless = "trick"
+    "#;
+
+    fn seated_look() -> Appearance {
+        Appearance::parse(SEATED).unwrap()
+    }
+
+    /// That game as the server describes it to whoever holds its second seat, with the view's
+    /// table `zones`.
+    fn tricks(seq: u64, zones: serde_json::Value) -> Table {
+        let mut table = table(seq, json!({}));
+        table.info.id = "tricks".into();
+        table.info.actions[0].kind = "move".into();
+        table.info.seats = serde_json::from_value(json!([
+            {"seat": 1, "color": "red", "label": "Fox"},
+            {"seat": 2, "color": "blue", "label": "Owl"},
+            {"seat": 3, "color": "green", "label": "Owlet"}
+        ]))
+        .unwrap();
+        table.game.seats = serde_json::from_value(json!([
+            {"seat": 1, "color": "red", "name": "Ana"},
+            {"seat": 2, "color": "blue", "name": "Ben", "yours": true},
+            {"seat": 3, "color": "green", "name": "Cy"}
+        ]))
+        .unwrap();
+        table.state.state.ext = json!({"view": {"table": zones}});
+        table
+    }
+
+    fn mid_trick() -> serde_json::Value {
+        json!([
+            {"id": "hand", "owner": 1, "count": 2, "cards": [{}, {}]},
+            {"id": "hand", "owner": 2, "count": 2,
+             "cards": [{"id": "hearts-A"}, {"id": "spades-2"}]},
+            {"id": "hand", "owner": 3, "count": 1, "cards": [{}]},
+            {"id": "trick", "count": 1, "cards": [{"id": "spades-K", "up": true}],
+             "captions": ["Owlet"]},
+            {"id": "before", "count": 1, "cards": [{"id": "spades-K#1", "up": true}],
+             "captions": ["Fox ★"]}
+        ])
+    }
+
+    #[test]
+    fn a_caption_names_its_seat_by_the_seats_label_whatever_follows_it() {
+        let table = tricks(1, json!([]));
+        assert_eq!(caption_seat(&table.info, "Fox"), Some(0));
+        assert_eq!(caption_seat(&table.info, "Owl ★"), Some(1));
+        assert_eq!(
+            caption_seat(&table.info, "Owlet"),
+            Some(2),
+            "the longest that fits"
+        );
+        assert_eq!(caption_seat(&table.info, "Hare"), None);
+        assert_eq!(viewer(&table), 1, "seen from the seat this client plays");
+    }
+
+    #[test]
+    fn a_click_on_a_card_makes_the_looks_choice_for_its_kind_when_the_move_may() {
+        let cards = seated_look().cards.unwrap();
+        let choices = [act("card-hearts-A"), act("side-2")];
+        assert_eq!(
+            card_choice(&cards, "hearts-A#2", &choices),
+            Some(act("card-hearts-A")),
+            "whichever of its copies it is"
+        );
+        assert_eq!(card_choice(&cards, "spades-2", &choices), None);
+        assert_eq!(
+            card_choice(&look().cards.unwrap(), "hearts-A", &choices),
+            None
+        );
+    }
+
+    #[test]
+    fn the_trick_before_is_shown_until_the_next_is_led_and_its_cards_nowhere_else() {
+        let look = seated_look().cards.unwrap();
+        let layout = Layout::seated(
+            &[
+                ("hand", true),
+                ("taken", true),
+                ("trick", false),
+                ("before", false),
+            ]
+            .map(|(zone, each_seat)| Placed {
+                zone: zone.into(),
+                at: Vec2::ZERO,
+                spread: card_layout::Spread::Squared,
+                each_seat,
+            }),
+            &[1, 2, 3],
+            1,
+            true,
+        );
+        // A trick just taken: it lies where it was played, the card captured with it.
+        let taken = tricks(
+            2,
+            json!([
+                {"id": "trick", "count": 0},
+                {"id": "before", "count": 2,
+                 "cards": [{"id": "spades-K", "up": true}, {"id": "hearts-A", "up": true}]},
+                {"id": "taken", "owner": 3, "count": 1, "cards": [{"id": "hearts-A", "up": true}]}
+            ]),
+        );
+        let lying = piles(&taken.state.state, &layout, Some(&look));
+        assert_eq!(lying["before"].len(), 2);
+        assert!(lying["taken:3"].is_empty(), "not drawn twice");
+        // The next is led: the one before is gone, and the captured card is its captor's.
+        let led = tricks(
+            3,
+            json!([
+                {"id": "trick", "count": 1, "cards": [{"id": "spades-2", "up": true}]},
+                {"id": "before", "count": 2,
+                 "cards": [{"id": "spades-K", "up": true}, {"id": "hearts-A", "up": true}]},
+                {"id": "taken", "owner": 3, "count": 1, "cards": [{"id": "hearts-A", "up": true}]}
+            ]),
+        );
+        let lying = piles(&led.state.state, &layout, Some(&look));
+        assert!(lying["before"].is_empty());
+        assert_eq!(lying["taken:3"].len(), 1);
+        assert_eq!(lying["trick"].len(), 1);
+    }
+
+    #[test]
+    fn a_game_of_several_seats_is_laid_round_the_table_and_a_card_of_the_hand_is_played_by_a_click()
+    {
+        let mut app = app();
+        app.insert_resource(Appearances(vec![seated_look()]));
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.options = vec![play_of(&["card-spades-2"])];
+        turn.stage = Stage::Choosing;
+        watch(&mut app, tricks(1, mid_trick()), Some(turn));
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&CardAt>().iter(world).count(), 6);
+        assert_eq!(world.query::<&Place>().iter(world).count(), 0, "no places");
+        // The player's own cards are known though they do not lie face up, and are theirs to
+        // read: tilted up to the player's side.
+        let ace = card(&mut app, "hearts-A");
+        let two = card(&mut app, "spades-2");
+        let at = app.world().get::<CardAt>(ace).unwrap().clone();
+        assert!(at.known && !at.shown && at.zone == "hand:2");
+        let face = app.world().get::<Transform>(ace).unwrap().rotation * Vec3::Y;
+        assert!(face.y > 0.5 && face.z > 0.3, "{face}");
+        // Another seat's stand in the air, and the trick's card lies towards who played it:
+        // the third seat, on the player's left.
+        let theirs = card(&mut app, "hand:1#0");
+        let t = app.world().get::<Transform>(theirs).unwrap();
+        assert!((t.rotation * Vec3::NEG_Z).y > 0.99, "upright");
+        assert!(t.translation.y > 0.05);
+        let king = card(&mut app, "spades-K");
+        let k = app.world().get::<Transform>(king).unwrap().translation;
+        assert!(k.x < -0.03 && k.x.abs() < 0.1, "towards the left: {k}");
+        // The trick before it waits for the trick to be empty.
+        let world = app.world_mut();
+        let before = world
+            .query::<&CardAt>()
+            .iter(world)
+            .filter(|c| c.zone == "before")
+            .count();
+        assert_eq!(before, 0);
+
+        // The card that may be played stands out of the fan, the other does not.
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            app.update();
+        }
+        let out = |app: &App, card: Entity| {
+            let part = app.world().get::<Parts>(card).unwrap().0[0];
+            -app.world().get::<Transform>(part).unwrap().translation.z
+        };
+        assert!(out(&app, two) > PLAYABLE_OUT * 0.5, "{}", out(&app, two));
+        assert!(out(&app, ace).abs() < 1e-6);
+        let none = BTreeSet::new();
+        let turn = app.world().resource::<WatchStatus>().turn.clone();
+        let cards = seated_look().cards.unwrap();
+        let feel_of = |key: &str| {
+            feel(
+                "hand:2",
+                None,
+                turn.as_ref(),
+                Some(&cards),
+                &none,
+                Some(key),
+            )
+        };
+        assert_eq!(feel_of("spades-2"), Feel::Point);
+        assert_eq!(feel_of("hearts-A"), Feel::Open);
     }
 }

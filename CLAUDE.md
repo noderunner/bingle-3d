@@ -160,10 +160,16 @@ A game's own rules and its players' words keep their terms.
   timeout, so it stays one thread. `session.rs` makes the calls and turns every failure into a
   `Problem` worded for the player; `api.rs` holds the API's types and the version check;
   `server_url.rs` the address rule (plain HTTP only to loopback); `tls.rs` the certificate check
-  and the connector ureq uses.
+  and the connector ureq uses. **A game that may keep secrets from a seat**
+  (`GameInfo::may_keep_secrets`: a hand of cards) is sent to everybody as a public view, on
+  the socket too: a client that holds a seat reads the position again as that seat
+  (`Session::state` with the player's name) before an event reaches the table (`own_view`).
+  `WatchStatus::shown` is the position to draw what lies on the table from: the game's, or
+  the server's preview of the move being built.
 - `src/table.rs`: the watched game as the server last reported it. Every event carries the whole
   position, so it replaces what is known; `move_seq` decides what is stale and what is a gap
-  (reload).
+  (reload). Of several seats this client holds (a game against oneself), `yours` is the one on
+  impulse.
 - `src/config.rs`: `config.toml` and `keys.toml` (guest keys, and the session token of an account
   signed in). Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
@@ -177,7 +183,9 @@ A game's own rules and its players' words keep their terms.
   view says (`Position::impulse_words`), else generic hints, as also once the player has
   chosen something (`hint`). A choice the view says is drawn on the table
   (`Position::panel_actions`: a patience's cards) is no button. A game whose look names a
-  score sheet in the view (`[cards] sheet`) has it drawn there, a box for each frame.
+  score sheet in the view (`[cards] sheet`) has it drawn there, a box for each frame; one
+  whose look names counters of the view (`[panel] counters`) has them under each seat's
+  name; a choice is labelled in the view's words where it has them (`Position::choice_words`).
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, settings, logout to the login screen, quit; game options and profile greyed). While it is open, play's keys and the camera
   stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display.
@@ -364,12 +372,20 @@ A game's own rules and its players' words keep their terms.
   goes home to when the view lists the suits (`home`). No Bevy systems in it.
   `src/card_layout.rs`: where a card game's piles lie and each card of a pile (`Layout`:
   squared, fanned, or down towards the player); a patience's from its vocabulary, any other
-  game's where its look puts them (`Layout::placed`).
+  game's where its look puts them (`Layout::placed`), and a game of several seats' round the
+  table (`Layout::seated`): a zone each seat has in front of its seat, on the seat's own
+  terms (`seat_turn`, `from_seat`: the viewer's seat on the player's side, play going left),
+  a hand `Held` (the viewer's fanned up to them, another's standing in the air, its back to
+  the table), a trick `Played` (each card towards who played it) and a `Row`.
   `src/card_table.rs`: a card game's cards on a cloth in place of its board (the board stands
   aside: `sync_board`), for a patience or a game whose look has `[cards]` (`on_table`), from
   the position's card zones (`Position::card_zones`: a declared game's own, else the view's
   `table`) and the faces of the usual deck (`props::standard_face`). A game laid by its look
-  plays by the choice its look gives each pile (`look_click`): those made `together` (a
+  plays by the choice its look gives each pile (`look_click`), or, round a table of several seats, by a click on a card of the
+  player's hand (`[cards] play`, `card_choice`: the cards that may be played stand out of the
+  fan, `stand_out`), the trick's cards laid towards who played them by the view's captions
+  (`caption_seat`), a pile shown `unless` another has cards (`piles`), seen from the seat
+  this client plays (`viewer`). Choices made `together` (a
   rack's pins) are chosen in any order, kept by the client (`Together`) and hover; the piles
   that would play exactly them (the balls) glow, and a click there sends the move's gestures
   in the server's order (`throw`, `Turn::enter_all`). In a patience, a click on a card a move starts with lifts it and
@@ -378,6 +394,17 @@ A game's own rules and its players' words keep their terms.
   pointer shows them see-through where they would land, and a click there plays the move at
   once (`Turn::clicks_only`). Cards go where the position puts them by `hand::Carry::Put`,
   one after another, turned over on the way when they were face down where they came from.
+- `src/choice_grid.rs`: the view's board of choices (lines of boxes), for a game whose look
+  has `[grid]`: a board of wood on the table, a tile for each box with the look's picture for
+  it; a click on a box makes its choice (`play::Choice`), a box a seat crossed has that seat's
+  small marker on it (carried there from the seat's own), a box out of the game is covered,
+  the one left on a line is rimmed. `read` and `places` have no Bevy in them.
+- `src/seat_markers.rs`: a piece that stands for each seat in front of it, for a game whose
+  look has `[markers]` (`Marker`, dressed by `dress` wherever one is put): of its side's
+  material once the view puts seats on sides, the look's `seat_part` in its seat's colour, a
+  ring round the one the view names. Clicks on them make the choices that name seats (a team
+  picked by its members: `choices`, `click`, no Bevy in them; those chosen so far are
+  `Picked`, kept by the client).
 - `src/sounds.rs`: the sounds a seat makes as it plays (a piece picked up, set down or
   captured, the move sent, the game won or lost), the same for every game (`Cue::default_file`) unless its
   appearance gives others (`[sounds]`). `cues` and `ended`
@@ -388,7 +415,8 @@ A game's own rules and its players' words keep their terms.
   makes them: a model's parts by name (a card's `face`, `back` and `edge`; a disc's `light` and
   `dark`), a card turned over, a die turned to show a number, a disc showing either side,
   and the picture on the face of a card of the usual deck, found by its suit's symbol and its
-  rank's label (`standard_face`; the 52 are the pipeline's, `card_faces.py`).
+  rank's label (`standard_face`; the usual 52, and `1`, `11`, `12` and `13` for a deck
+  numbered to thirteen, are the pipeline's, `card_faces.py`).
   A patience's cards are drawn with them (`card_table.rs`); no game's dice, discs or rings yet. `src/showcase.rs`: `--showcase`, every
   piece model the appearance files name, with discs and rings, cards and dice, laid out to look at; it names no
   game either.

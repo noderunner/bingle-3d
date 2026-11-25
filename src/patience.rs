@@ -228,38 +228,21 @@ pub fn layout<'z>(zones: impl IntoIterator<Item = (&'z str, usize)>) -> Layout {
         } else {
             Spread::Squared
         };
-        piles.insert(
-            zone.to_string(),
-            Pile {
-                at: Vec2::new(x(i), top),
-                spread,
-            },
-        );
+        piles.insert(zone.to_string(), Pile::flat(Vec2::new(x(i), top), spread));
     }
     for (i, zone) in right.iter().enumerate() {
         let at = Vec2::new(x(places - right.len() + i), top);
-        piles.insert(
-            zone.to_string(),
-            Pile {
-                at,
-                spread: Spread::Squared,
-            },
-        );
+        piles.insert(zone.to_string(), Pile::flat(at, Spread::Squared));
     }
     for (i, zone) in columns.iter().enumerate() {
         let at = Vec2::new(x(i), below);
-        piles.insert(
-            zone.to_string(),
-            Pile {
-                at,
-                spread: Spread::Down,
-            },
-        );
+        piles.insert(zone.to_string(), Pile::flat(at, Spread::Down));
     }
     Layout {
         piles,
         size: Vec2::new(width, depth),
         room: REACH,
+        round: false,
     }
 }
 

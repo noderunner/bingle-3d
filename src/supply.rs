@@ -190,6 +190,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v))
                 .into(),
             cards: None,
+            engine: String::new(),
         }
     }
 

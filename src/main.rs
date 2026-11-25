@@ -12,6 +12,7 @@ mod call;
 mod camera;
 mod card_layout;
 mod card_table;
+mod choice_grid;
 mod cli;
 mod clock;
 mod config;
@@ -45,6 +46,7 @@ mod props;
 mod ray_pointer;
 mod run_limit;
 mod scene;
+mod seat_markers;
 mod showcase;
 mod sides;
 mod sign_in;
@@ -225,6 +227,10 @@ fn main() -> AppExit {
             (
                 board::BoardPlugin,
                 card_table::CardTablePlugin,
+                (
+                    choice_grid::ChoiceGridPlugin,
+                    seat_markers::SeatMarkersPlugin,
+                ),
                 move_tiles::MoveTilesPlugin,
                 highlight::HighlightPlugin,
             ),

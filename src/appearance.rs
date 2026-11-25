@@ -45,7 +45,19 @@
 //!   centred on the table by itself) and how its cards lie (`spread`), the choice a click on it
 //!   makes (`click`), which choices are made together, several in any order, before the one
 //!   that plays them (`together`: the start of their values), and the view's score sheet to
-//!   show beside the game (`sheet`, by its name in the view).
+//!   show beside the game (`sheet`, by its name in the view). A game of several seats gives
+//!   the zones each seat has (`piles.<zone>.seat`, on the seat's own terms), and is laid round
+//!   the table, seen from the seat this client plays: a hand `held` (the player's fanned up
+//!   to them, the others' standing in the air), a trick `played` (each card towards who
+//!   played it), and the choice a click on a card in hand makes (`play`);
+//! - `grid`: the view's board of choices, lines of boxes, as a board on the table
+//!   (`choice_grid.rs`): where it lies, the picture of each box and line by the view's name
+//!   for it, and the choice a click on a box makes;
+//! - `markers`: a piece that stands for each seat, in front of it (`seat_markers.rs`): the
+//!   piece by the seat's colour word, the materials it is stained when the view puts seats
+//!   on sides, and the choices clicks on them make (a team picked by its members);
+//! - `panel.counters`: the view's counters of each seat shown under its name in the game's
+//!   panel (a score, tricks taken).
 //!
 //! The private folder (plan, decision 2) adds files of its own, for the games of Bingle's
 //! private overlay (ADR 0127), read here as these are; a game the server marks private is
@@ -103,10 +115,94 @@ pub struct Appearance {
     pub cards: Option<CardsLook>,
     /// The view's move cards, drawn as tiles beside the board (`move_tiles.rs`).
     pub move_tiles: Option<MoveTilesLook>,
+    /// The view's board of choices, as a board on the table (`choice_grid.rs`).
+    pub grid: Option<GridLook>,
+    /// A piece that stands for each seat, in front of it (`seat_markers.rs`).
+    pub markers: Option<MarkersLook>,
+    /// What the game's panel shows of each seat.
+    #[serde(default)]
+    pub panel: PanelLook,
     /// Read from the private folder (`assets::read_private`): its games are shown when the
     /// server marks them private.
     #[serde(skip)]
     pub private: bool,
+}
+
+/// The view's board of choices (`ext.view.<view>`: `lines`, each with an `id`, an `icon` and
+/// its `boxes`, each with an `id`, an `icon`, a `state` (`open`, `crossed`, `covered` for one
+/// out of the game, or `chosen`, the one left) and the seat it was crossed `by`), as a board
+/// lying on the table: a tile for each box with its picture on it, a line's own picture at its
+/// head, and on a box a seat crossed that seat's marker, small (`markers`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GridLook {
+    pub view: String,
+    /// The choice a click on an open box makes: this, the line's id, `-`, the box's id.
+    pub choice: String,
+    /// Its middle on the table (x across, z towards the player's side), in metres.
+    pub at: [f32; 2],
+    /// A box's side, in metres (34 mm when not said).
+    #[serde(rename = "box")]
+    pub box_size: Option<f32>,
+    /// The picture of a box or a line, by the view's name for it (its `icon`): a file of the
+    /// client's, square, covering a tile. One with none is a blank tile.
+    #[serde(default)]
+    pub pictures: BTreeMap<String, String>,
+    /// The picture on a box that is out of the game.
+    pub covered: Option<String>,
+    /// What the board is made of, and what rims the box left on a line: materials of this
+    /// file's. The board's wood, and brass, without.
+    pub material: Option<String>,
+    pub rim: Option<String>,
+}
+
+/// A piece that stands for each seat, in front of it, and wherever else the seat is marked (on
+/// a box of the grid it crossed, small).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkersLook {
+    /// The piece of each seat, by the seat's colour word: its id in `pieces`.
+    pub pieces: BTreeMap<String, String>,
+    /// Where a seat's stands, on the seat's own terms: to its right, and from the table's
+    /// middle towards it, in metres.
+    pub seat: [f32; 2],
+    /// How big the one in front of a seat is against its model (1 when not said), and how
+    /// big a small one (0.4 when not said).
+    pub size: Option<f32>,
+    pub small: Option<f32>,
+    /// What a marker's first part is made of: a material of this file's.
+    pub material: String,
+    /// The part of its model drawn in its seat's own material (`seats.<word>.pieces`, or the
+    /// seat's colour as a lacquer).
+    pub seat_part: Option<String>,
+    /// The view's list of the seats on one side (`ext.view.<sides>`), once there are sides:
+    /// the markers of those seats are made of `on`, the others' of `off`, in place of
+    /// `material`, so partners are seen to be.
+    pub sides: Option<String>,
+    pub on: Option<String>,
+    pub off: Option<String>,
+    /// The seat the view names (`ext.view.<ringed>`, a seat's number) has a ring round its
+    /// marker's foot, of this material (`ring`).
+    pub ringed: Option<String>,
+    pub ring: Option<String>,
+    /// The choices clicks on the markers make: the start of their values, which go on with
+    /// the seats they name, joined by `-` (`team-2-3`). A click on a seat's marker chooses
+    /// it, or lets it go; the choice is made once no other names more seats than those
+    /// chosen, or by a click on the player's own marker.
+    #[serde(default)]
+    pub choose: Vec<String>,
+    /// The choice that names no seat, made by a click on the player's own marker with none
+    /// chosen.
+    pub alone: Option<String>,
+}
+
+/// What the game's panel shows of each seat beyond its name: the view's counters of the seat
+/// (`ext.view.seats.<seat>.counters`), by id, in this order, each with the view's label.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PanelLook {
+    #[serde(default)]
+    pub counters: Vec<String>,
 }
 
 /// A card game's table as this file lays it out: its piles, the choices clicks on them make,
@@ -121,19 +217,45 @@ pub struct CardsLook {
     /// The view's score sheet, by its name in the view: frames, each with its marks and, once
     /// scored, its total.
     pub sheet: Option<String>,
+    /// The choice a click on a card the player sees makes: this, then the card's kind (a card
+    /// of their hand played, discarded or passed, whichever the game is asking for).
+    pub play: Option<String>,
+    /// How far the cloth reaches from the table's middle, for a table laid round its seats,
+    /// when that is farther than its piles (room for what else stands on it).
+    pub radius: Option<f32>,
     /// Each zone's pile, by the zone's id.
     pub piles: BTreeMap<String, PileLook>,
 }
 
+impl CardsLook {
+    /// Whether the table is laid round its seats: some pile is each seat's own.
+    pub fn seated(&self) -> bool {
+        self.piles.values().any(|p| p.seat.is_some())
+    }
+
+    /// The pile a zone of the position is drawn as: a seat's own (`hand:2`) by the zone's id.
+    pub fn pile(&self, zone: &str) -> Option<&PileLook> {
+        self.piles.get(zone.split(':').next().unwrap_or(zone))
+    }
+}
+
 /// Where a zone's pile lies (its first card's middle, x and z in metres: any origin, the whole
-/// is centred), how its cards lie, and the choice a click on it makes.
+/// is centred), how its cards lie, and the choice a click on it makes. Or, for a zone each
+/// seat has one of (`seat`), where each lies on its seat's own terms: to the seat's right, and
+/// from the table's middle towards it; the table is then laid round its seats, the middle the
+/// origin of every `at`.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PileLook {
+    #[serde(default)]
     pub at: [f32; 2],
+    pub seat: Option<[f32; 2]>,
     #[serde(default)]
     pub spread: crate::card_layout::Spread,
     pub click: Option<String>,
+    /// Shown only while this other zone is empty (the trick before, until the next is led);
+    /// a card it shows is not also drawn where else the position has it.
+    pub unless: Option<String>,
 }
 
 /// How a position the view tints with one key is drawn: a piece of the file's laid on it (a
@@ -603,6 +725,67 @@ impl Appearance {
             {
                 if !self.materials.contains_key(name) {
                     out.push(format!("move tiles: no material {name}"));
+                }
+            }
+        }
+        if let Some(grid) = &self.grid {
+            for (icon, file) in grid
+                .pictures
+                .iter()
+                .map(|(i, f)| (i.as_str(), f))
+                .chain(grid.covered.iter().map(|f| ("a covered box", f)))
+            {
+                if !assets::exists(file) {
+                    out.push(format!("grid: no picture {file} for {icon}"));
+                }
+            }
+            for name in [&grid.material, &grid.rim].into_iter().flatten() {
+                if !self.materials.contains_key(name) {
+                    out.push(format!("grid: no material {name}"));
+                }
+            }
+            if grid.box_size.is_some_and(|b| !(0.01..=0.1).contains(&b)) {
+                out.push("grid: a box from 0.01 to 0.1".into());
+            }
+        }
+        if let Some(markers) = &self.markers {
+            for (word, id) in &markers.pieces {
+                if !self.pieces.contains_key(id) {
+                    out.push(format!("markers: no piece {id} for {word}"));
+                }
+            }
+            for name in [
+                Some(&markers.material),
+                markers.on.as_ref(),
+                markers.off.as_ref(),
+                markers.ring.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self.materials.contains_key(name) {
+                    out.push(format!("markers: no material {name}"));
+                }
+            }
+            if markers.sides.is_some() && (markers.on.is_none() || markers.off.is_none()) {
+                out.push("markers: sides, and not what each side's are made of".into());
+            }
+            if markers.ringed.is_some() != markers.ring.is_some() {
+                out.push("markers: a ring's seat and its material, or neither".into());
+            }
+            if markers.small.is_some_and(|s| !(0.1..=1.0).contains(&s)) {
+                out.push("markers: a small size from 0.1 to 1".into());
+            }
+            if markers.size.is_some_and(|s| !(0.5..=3.0).contains(&s)) {
+                out.push("markers: a size from 0.5 to 3".into());
+            }
+        }
+        if let Some(cards) = &self.cards {
+            for (zone, pile) in &cards.piles {
+                if let Some(other) = &pile.unless
+                    && !cards.piles.contains_key(other)
+                {
+                    out.push(format!("cards: pile {zone} waits for no pile {other}"));
                 }
             }
         }
@@ -1105,5 +1288,83 @@ mod tests {
             Appearance::parse("games = []\ncolour = 1").is_err(),
             "unknown keys are refused, so a misspelling is not ignored"
         );
+    }
+
+    #[test]
+    fn a_table_of_seats_its_grid_and_its_markers_read_and_what_they_name_is_checked() {
+        let good = r#"
+            games = ["g"]
+            [cards]
+            play = "card-"
+            radius = 0.5
+            [cards.piles.hand]
+            seat = [0.0, 0.4]
+            spread = "held"
+            [cards.piles.trick]
+            spread = "played"
+            [cards.piles.before]
+            spread = "played"
+            unless = "trick"
+            [grid]
+            view = "grid"
+            choice = "cross-"
+            at = [-0.2, 0.0]
+            box = 0.03
+            [grid.pictures]
+            "suit:a" = "textures/cards/faces/hearts_a_albedo.png"
+            [pieces.fox]
+            model = "models/chess/knight.glb"
+            [markers]
+            seat = [-0.2, 0.3]
+            material = "wood"
+            seat_part = "base"
+            sides = "team"
+            on = "pale"
+            off = "dark"
+            ringed = "bonus"
+            ring = "pale"
+            choose = ["side-"]
+            alone = "side-alone"
+            [markers.pieces]
+            red = "fox"
+            [materials.wood]
+            [materials.pale]
+            [materials.dark]
+            [panel]
+            counters = ["score"]
+        "#;
+        let a = Appearance::parse(good).unwrap();
+        assert_eq!(a.problems(), Vec::<String>::new());
+        let cards = a.cards.as_ref().unwrap();
+        assert!(cards.seated());
+        assert_eq!(cards.pile("hand:3").and_then(|p| p.seat), Some([0.0, 0.4]));
+        assert_eq!(
+            cards.pile("before").unwrap().unless.as_deref(),
+            Some("trick")
+        );
+        assert_eq!(a.grid.as_ref().unwrap().box_size, Some(0.03));
+        assert_eq!(a.panel.counters, ["score"]);
+
+        let bad = good
+            .replace("unless = \"trick\"", "unless = \"nothing\"")
+            .replace("hearts_a_albedo", "no_such")
+            .replace("red = \"fox\"", "red = \"owl\"")
+            .replace("off = \"dark\"", "")
+            .replace("ring = \"pale\"", "ring = \"gold\"")
+            .replace("box = 0.03", "box = 3.0");
+        let problems = Appearance::parse(&bad).unwrap().problems().join("; ");
+        for wanted in [
+            "pile before waits for no pile nothing",
+            "no picture textures/cards/faces/no_such.png for suit:a",
+            "no piece owl for red",
+            "sides, and not what each side's are made of",
+            "no material gold",
+            "a box from 0.01 to 0.1",
+        ] {
+            assert!(problems.contains(wanted), "{wanted}: {problems}");
+        }
+        // A game for one seat's look is not laid round a table.
+        let alone = Appearance::parse("games = [\"g\"]\n[cards.piles.a]\nat = [0.0, 0.0]").unwrap();
+        assert!(!alone.cards.unwrap().seated());
     }
 }

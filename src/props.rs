@@ -22,9 +22,10 @@ pub const CARD: &str = "models/card.glb";
 pub const CARD_SIZE: Vec3 = Vec3::new(0.0635, 0.0889, 0.0003);
 
 /// The picture for the face of a card of the usual deck, by its suit's symbol (♠ ♥ ♦ ♣) and
-/// its rank's label (A, 2 to 10, J, Q, K) as the server gives them: one of the pipeline's
-/// (`assets-src/blender/card_faces.py`). None for any other card: the client has no picture
-/// of it.
+/// its rank's label (A, 2 to 10, J, Q, K) as the server gives them, or of a deck numbered from
+/// 1 to 13 in the same suits (1, 11, 12 and 13 where the usual one has A, J, Q and K): one of
+/// the pipeline's (`assets-src/blender/card_faces.py`). None for any other card: the client
+/// has no picture of it.
 pub fn standard_face(suit: &str, rank: &str) -> Option<String> {
     // A symbol may come with the mark that asks for its coloured form.
     let suit = match suit.trim_end_matches('\u{fe0f}') {
@@ -147,13 +148,15 @@ mod tests {
     }
 
     #[test]
-    fn the_usual_deck_has_a_face_for_each_of_its_fifty_two_cards_and_no_other() {
-        let ranks = [
+    fn the_usual_deck_and_one_numbered_to_thirteen_have_a_face_for_each_card_and_no_other() {
+        let usual = [
             "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K",
         ];
+        // What a deck numbered from 1 to 13 has where the usual one has its ace and courts.
+        let numbered = ["1", "11", "12", "13"];
         let mut faces = Vec::new();
         for suit in ["♠", "♥", "♦", "♣"] {
-            for rank in ranks {
+            for rank in usual.into_iter().chain(numbered) {
                 let face = standard_face(suit, rank);
                 assert!(face.is_some(), "{rank} of {suit}");
                 faces.extend(face);
@@ -163,10 +166,10 @@ mod tests {
         let all = assets::FILES
             .iter()
             .filter(|(file, _)| file.starts_with("textures/cards/faces/"));
-        assert_eq!(all.count(), 52);
+        assert_eq!(all.count(), 52 + 16);
         faces.sort();
         faces.dedup();
-        assert_eq!(faces.len(), 52);
+        assert_eq!(faces.len(), 52 + 16);
         assert!(faces.iter().all(|f| crate::textures::is_colour(f)));
 
         assert_eq!(
@@ -174,8 +177,13 @@ mod tests {
             standard_face("♥", "Q"),
             "the symbol's coloured form, and a label as it happens to be written"
         );
-        assert_eq!(standard_face("♥", "1"), None, "an ace is A");
-        assert_eq!(standard_face("♥", "11"), None);
+        assert_ne!(
+            standard_face("♥", "1"),
+            standard_face("♥", "A"),
+            "a 1 has 1 in its corners, an ace A"
+        );
+        assert_eq!(standard_face("♥", "14"), None);
+        assert_eq!(standard_face("♥", "0"), None);
         assert_eq!(standard_face("♥", ""), None);
         assert_eq!(standard_face("hearts", "A"), None, "by symbol, not by id");
         assert_eq!(standard_face("★", "A"), None);

@@ -473,6 +473,10 @@ struct Watching {
     watch: u64,
     room_code: String,
     socket: Socket,
+    /// The seats this client holds, in a game that may keep secrets from a seat: the socket
+    /// carries the position as everybody sees it, so each is read again as the player's own
+    /// (`own_view`).
+    held: Vec<(u32, String)>,
 }
 
 /// The network thread: requests in, replies out, and the watched game's socket read in between.
@@ -535,8 +539,9 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
                 .into_iter()
                 .collect(),
             None => {
-                let mut replies: Vec<Reply> =
-                    read_socket(&session, &mut watching).into_iter().collect();
+                let mut replies: Vec<Reply> = read_socket(&mut session, &mut watching)
+                    .into_iter()
+                    .collect();
                 replies.extend(account.tick(&mut session, Instant::now()));
                 if let Some(link) = voice.as_mut() {
                     replies.extend(link.tick(&mut session, Instant::now()));
@@ -843,6 +848,7 @@ fn handle(
                         watch,
                         room_code: opened.room_code.clone(),
                         socket,
+                        held: session::held(&opened.info, &opened.game.seats),
                     });
                     Reply::Opened {
                         watch,
@@ -854,8 +860,8 @@ fn handle(
         }
         Request::Reload { watch } => {
             let w = watching.as_ref().filter(|w| w.watch == watch)?;
-            let room_code = w.room_code.clone();
-            Some(match session.state(&room_code) {
+            let (room_code, held) = (w.room_code.clone(), w.held.clone());
+            Some(match session.state_seen(&room_code, &held) {
                 Ok(state) => Reply::Reloaded {
                     watch,
                     state: Box::new(state),
@@ -981,16 +987,43 @@ fn connected(result: Result<Snapshot, Problem>) -> Reply {
     }
 }
 
-fn read_socket(session: &Session, watching: &mut Option<Watching>) -> Option<Reply> {
+/// Puts this client's own view of the position in an event that carries everybody's: in a
+/// game that may keep secrets, for the seat it holds (the one on impulse, of several). Left as
+/// it came when the server cannot be asked, or has moved on: the next event says more.
+fn own_view(session: &mut Session, w: &mut Watching, event: &mut Event) {
+    let state = match event {
+        Event::Move { state, .. } => state,
+        Event::State { state, seats, .. } => {
+            if !seats.is_empty() {
+                w.held = session::held_now(&w.held, seats);
+            }
+            state
+        }
+        Event::Joined { .. } | Event::Other(_) => return,
+    };
+    let Some(name) = session::viewer(&w.held, state.impulse_seat) else {
+        return;
+    };
+    match session.state(&w.room_code, Some(name)) {
+        Ok(own) if own.move_seq == state.move_seq => state.state = own.state,
+        Ok(_) => {}
+        Err(problem) => warn!("the seat's own view was not read: {}", problem.message()),
+    }
+}
+
+fn read_socket(session: &mut Session, watching: &mut Option<Watching>) -> Option<Reply> {
     let w = watching.as_mut()?;
     match w.socket.next() {
         Ok(None) => None,
         Ok(Some(text)) => match Event::parse(&text) {
             Ok(Event::Other(_)) => None,
-            Ok(event) => Some(Reply::Event {
-                watch: w.watch,
-                event: Box::new(event),
-            }),
+            Ok(mut event) => {
+                own_view(session, w, &mut event);
+                Some(Reply::Event {
+                    watch: w.watch,
+                    event: Box::new(event),
+                })
+            }
             Err(e) => {
                 warn!("skipped a game event this client cannot read: {e}");
                 None
@@ -1443,6 +1476,19 @@ impl WatchStatus {
     pub fn is_watching(&self) -> bool {
         self.target.is_some()
     }
+
+    /// The position to draw what lies on the table from: the game's, or, while this client
+    /// builds a move of several selections, the server's preview of it after those made (a
+    /// team picked, before the card that ends the impulse is chosen).
+    pub fn shown(&self) -> Option<&api::Position> {
+        let table = self.table.as_ref()?;
+        Some(
+            self.turn
+                .as_ref()
+                .and_then(Turn::preview)
+                .unwrap_or(&table.state.state),
+        )
+    }
 }
 
 /// Starts watching, in place of whatever was watched before.
@@ -1594,6 +1640,7 @@ mod tests {
                 opening: None,
                 reserves: Default::default(),
                 cards: None,
+                engine: String::new(),
             },
             game: Game {
                 game_def_id: "g".into(),
