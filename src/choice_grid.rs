@@ -4,25 +4,35 @@
 //! head. A box a seat crossed has that seat's marker standing on it, small
 //! (`seat_markers::Marker`), carried there from the marker in front of the seat; a box out of
 //! the game is covered; the box left on a line is rimmed. A click on a box makes the look's
-//! choice for it (`play::Choice`: the look's `choice`, the line's id, `-`, the box's id).
+//! choice for it (the look's `choice`, the line's id, `-`, the box's id). A box that may be
+//! crossed is lit while the pointer is over it (all of them, with the legal moves lit), and the
+//! pointer's hand points at it. The pointer over a box, or a line's head, shows a card of
+//! words beside it: what the line decides and what that box means, as the view says
+//! (`label`, `hint`), so a picture need not be guessed at.
 //!
-//! `read` and `places` have no Bevy in them.
+//! `read`, `places` and `words` have no Bevy in them.
 
 use std::collections::HashMap;
 
 use bevy::picking::Pickable;
+use bevy::picking::events::PointerClick;
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use serde_json::Value;
 
 use crate::appearance::{Appearances, GridLook};
 use crate::board::{BoardWood, CellShape, ShowLegalMoves};
+use crate::browser::colours;
 use crate::card_table::CLOTH;
+use crate::cursor::{Feel, Sense, TableFeel, Under};
+use crate::fonts::UiFonts;
 use crate::hand::{Carry, Hands, Rest, Route};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
-use crate::net::WatchStatus;
 use crate::net::api::{Gesture, Position};
-use crate::play::{Choice, Stage};
+use crate::net::{Net, WatchStatus};
+use crate::play::{self, Stage};
 use crate::seat_markers::{self, Marker};
 use crate::table::Table;
 
@@ -33,6 +43,11 @@ impl Plugin for ChoiceGridPlugin {
         app.init_resource::<Appearances>()
             .init_resource::<BoardWood>()
             .init_resource::<ShowLegalMoves>()
+            .init_resource::<Under>()
+            .init_resource::<TableFeel>()
+            .add_observer(on_click)
+            .add_systems(Startup, spawn_card)
+            .add_systems(Update, (sense.in_set(Sense), explain.after(Sense)))
             .add_systems(
                 Update,
                 (
@@ -41,7 +56,8 @@ impl Plugin for ChoiceGridPlugin {
                     ),
                     light.run_if(
                         resource_changed::<WatchStatus>
-                            .or_eager(resource_changed::<ShowLegalMoves>),
+                            .or_eager(resource_changed::<ShowLegalMoves>)
+                            .or_eager(resource_changed::<Under>),
                     ),
                 )
                     .chain()
@@ -78,20 +94,46 @@ pub enum State {
     Chosen,
 }
 
-/// A box of the grid: its id, the view's name for its picture, and how it stands.
+/// A box of the grid: its id, the view's name for its picture, what the view calls it and
+/// says it means, and how it stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridBox {
     pub id: String,
     pub icon: String,
+    pub label: String,
+    pub hint: String,
     pub state: State,
 }
 
-/// A line of the grid.
+/// A line of the grid, with what the view calls it and says it decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
     pub id: String,
     pub icon: String,
+    pub label: String,
+    pub hint: String,
     pub boxes: Vec<GridBox>,
+}
+
+/// What is said of a box when the pointer is over it, or of its line at the line's head
+/// (`index` none): a heading (the line, and the box) and what it means: the box's own hint,
+/// else its line's. None when the view says nothing of it.
+pub fn words(lines: &[Line], line: usize, index: Option<usize>) -> Option<(String, String)> {
+    let of = lines.get(line)?;
+    let (heading, meaning) = match index {
+        None => (of.label.clone(), of.hint.as_str()),
+        Some(i) => {
+            let b = of.boxes.get(i)?;
+            let heading = match (of.label.is_empty(), b.label.is_empty()) {
+                (false, false) => format!("{}: {}", of.label, b.label),
+                (true, _) => b.label.clone(),
+                (_, true) => of.label.clone(),
+            };
+            let meaning = if b.hint.is_empty() { &of.hint } else { &b.hint };
+            (heading, meaning.as_str())
+        }
+    };
+    (!heading.is_empty() || !meaning.is_empty()).then(|| (heading, meaning.to_string()))
 }
 
 /// The view's grid: its lines, in order. Empty when the view has none.
@@ -105,6 +147,8 @@ pub fn read(grid: &Value) -> Vec<Line> {
                 .map(|line| Line {
                     id: words(&line["id"]),
                     icon: words(&line["icon"]),
+                    label: words(&line["label"]),
+                    hint: words(&line["hint"]),
                     boxes: line["boxes"]
                         .as_array()
                         .map(|boxes| {
@@ -113,6 +157,8 @@ pub fn read(grid: &Value) -> Vec<Line> {
                                 .map(|b| GridBox {
                                     id: words(&b["id"]),
                                     icon: words(&b["icon"]),
+                                    label: words(&b["label"]),
+                                    hint: words(&b["hint"]),
                                     state: match (b["state"].as_str(), b["by"].as_u64()) {
                                         (Some("crossed"), Some(by)) => State::Crossed(by as u32),
                                         (Some("covered"), _) => State::Covered,
@@ -175,6 +221,26 @@ struct Tile {
     line: usize,
     index: usize,
 }
+
+/// The tile at a line's head, with the line's own picture.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+struct Head {
+    line: usize,
+}
+
+/// The choice a click on a box's tile makes, when the move may make it.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct Pick(Gesture);
+
+/// The card of words shown beside the pointer, and its two lines.
+#[derive(Component)]
+struct WordsCard;
+
+#[derive(Component)]
+struct Heading;
+
+#[derive(Component)]
+struct Meaning;
 
 /// The rim of a box, seen when it is the one left on its line.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -429,7 +495,8 @@ fn build(
                 MeshMaterial3d(paper.clone()),
                 Transform::from_xyz(at.x, BOARD + TILE / 2.0 * scale, at.y)
                     .with_scale(Vec3::splat(scale)),
-                Pickable::IGNORE,
+                // The pointer finds it: what it means is said beside it.
+                Pickable::default(),
                 ChildOf(root),
             ))
             .id();
@@ -448,7 +515,7 @@ fn build(
         let head = lay(commands, heads[r], HEAD, look.pictures.get(&line.icon));
         commands
             .entity(head)
-            .insert(Name::new(format!("Line {}", line.id)));
+            .insert((Name::new(format!("Line {}", line.id)), Head { line: r }));
         for (c, b) in line.boxes.iter().enumerate() {
             let covered = b.state == State::Covered;
             let file = if covered {
@@ -467,7 +534,7 @@ fn build(
                 ),
             ));
             if !covered {
-                tile.insert((Pickable::default(), Choice(choice(look, &line.id, &b.id))));
+                tile.insert(Pick(choice(look, &line.id, &b.id)));
             }
             commands.spawn((
                 Rim { line: r, index: c },
@@ -487,21 +554,32 @@ fn build(
     root
 }
 
-/// With the legal moves lit, the boxes a click would be taken on are.
+/// The choices the move being built may make now.
+fn legal(watch: &WatchStatus) -> Vec<Gesture> {
+    watch
+        .turn
+        .as_ref()
+        .filter(|t| t.stage == Stage::Choosing)
+        .map(|t| t.choices())
+        .unwrap_or_default()
+}
+
+/// The box that may be crossed is lit while the pointer is over it, and every one of them
+/// with the legal moves lit.
 fn light(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     show: Res<ShowLegalMoves>,
-    tiles: Query<(Entity, &Choice, Has<Lit>), With<Tile>>,
+    under: Res<Under>,
+    tiles: Query<(Entity, &Pick, Has<Lit>), With<Tile>>,
 ) {
-    let choices = watch
-        .turn
-        .as_ref()
-        .filter(|t| show.0 && t.stage == Stage::Choosing)
-        .map(|t| t.choices())
-        .unwrap_or_default();
-    for (entity, choice, lit) in &tiles {
-        match (choices.contains(&choice.0), lit) {
+    let choices = legal(&watch);
+    let pointed = (!under.ui)
+        .then(|| under.chain.iter().find(|e| tiles.contains(**e)).copied())
+        .flatten();
+    for (entity, pick, lit) in &tiles {
+        let wanted = choices.contains(&pick.0) && (show.0 || pointed == Some(entity));
+        match (wanted, lit) {
             (true, false) => {
                 commands.entity(entity).insert(Lit);
             }
@@ -510,6 +588,176 @@ fn light(
             }
             _ => {}
         }
+    }
+}
+
+fn on_click(
+    click: On<PointerClick>,
+    tiles: Query<&Pick, With<Tile>>,
+    net: Res<Net>,
+    mut watch: ResMut<WatchStatus>,
+) {
+    if click.button != PointerButton::Primary {
+        return;
+    }
+    if let Ok(pick) = tiles.get(click.entity)
+        && legal(&watch).contains(&pick.0)
+    {
+        play::gesture(&net, &mut watch, &pick.0);
+    }
+}
+
+/// Says that a click on a box that may be crossed chooses it: the hand points (`cursor.rs`).
+fn sense(
+    under: Res<Under>,
+    tiles: Query<&Pick, With<Tile>>,
+    watch: Res<WatchStatus>,
+    mut table: ResMut<TableFeel>,
+) {
+    let Some(pick) = under.chain.iter().find_map(|e| tiles.get(*e).ok()) else {
+        return;
+    };
+    let feel = if legal(&watch).contains(&pick.0) {
+        Feel::Point
+    } else {
+        Feel::Open
+    };
+    table.set_if_neq(TableFeel(feel));
+}
+
+/// How wide the card of words is, how far from the pointer, and how near the window's edge
+/// it may come, in logical pixels.
+const CARD_WIDTH: f32 = 300.0;
+const CARD_OFF: Vec2 = Vec2::new(22.0, 18.0);
+const CARD_EDGE: f32 = 8.0;
+/// About how tall the card is, for keeping it inside the window when its words are not yet
+/// laid out.
+const CARD_TALL: f32 = 120.0;
+
+/// The card of words, hidden until the pointer is over something the view explains.
+fn spawn_card(mut commands: Commands, fonts: Option<Res<UiFonts>>) {
+    let Some(fonts) = fonts else {
+        return;
+    };
+    commands.spawn((
+        Name::new("Grid words"),
+        WordsCard,
+        crate::login::MainOnly,
+        // Only words: clicks and the wheel go through to the table.
+        Pickable::IGNORE,
+        Node {
+            display: Display::None,
+            position_type: PositionType::Absolute,
+            width: px(CARD_WIDTH),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4),
+            padding: UiRect::axes(px(12), px(10)),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(8)),
+            ..default()
+        },
+        BackgroundColor(colours::PANEL),
+        BorderColor::all(colours::BORDER),
+        GlobalZIndex(40),
+        children![
+            (
+                Heading,
+                Text::new(""),
+                fonts.semibold(15.0),
+                TextColor(colours::TEXT),
+                Pickable::IGNORE,
+            ),
+            (
+                Meaning,
+                Text::new(""),
+                fonts.regular(13.0),
+                TextColor(colours::TEXT),
+                Pickable::IGNORE,
+            ),
+        ],
+    ));
+}
+
+/// Where the card's top left corner goes for a pointer at `pointer` in a window of `window`
+/// logical pixels: below and to the right of the pointer, or on its other side where that
+/// would leave the window.
+pub fn card_at(pointer: Vec2, window: Vec2, tall: f32) -> Vec2 {
+    let fits = |at: f32, size: f32, room: f32| at + size + CARD_EDGE <= room;
+    let x = if fits(pointer.x + CARD_OFF.x, CARD_WIDTH, window.x) {
+        pointer.x + CARD_OFF.x
+    } else {
+        pointer.x - CARD_OFF.x - CARD_WIDTH
+    };
+    let y = if fits(pointer.y + CARD_OFF.y, tall, window.y) {
+        pointer.y + CARD_OFF.y
+    } else {
+        pointer.y - CARD_OFF.y - tall
+    };
+    Vec2::new(x.max(CARD_EDGE), y.max(CARD_EDGE))
+}
+
+/// What words are shown of: a box's tile, or a line's head.
+type Explained = (Option<&'static Tile>, Option<&'static Head>);
+type OnGrid = Or<(With<Tile>, With<Head>)>;
+
+/// Shows the card of words beside the pointer while it is over a box or a line's head the
+/// view says something of.
+#[allow(clippy::too_many_arguments)]
+fn explain(
+    under: Res<Under>,
+    watch: Res<WatchStatus>,
+    appearances: Res<Appearances>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    tiles: Query<Explained, OnGrid>,
+    mut card: Query<(&mut Node, &ComputedNode), With<WordsCard>>,
+    mut heading: Query<&mut Text, (With<Heading>, Without<Meaning>)>,
+    mut meaning: Query<&mut Text, (With<Meaning>, Without<Heading>)>,
+) {
+    let Ok((mut node, laid)) = card.single_mut() else {
+        return;
+    };
+    let said = (!under.ui)
+        .then(|| under.chain.iter().find_map(|e| tiles.get(*e).ok()))
+        .flatten()
+        .and_then(|(tile, head)| {
+            let table = watch.table.as_ref()?;
+            let (_, lines) = grid_of(table, watch.shown()?, &appearances)?;
+            match (tile, head) {
+                (Some(t), _) => words(&lines, t.line, Some(t.index)),
+                (None, Some(h)) => words(&lines, h.line, None),
+                (None, None) => None,
+            }
+        });
+    let pointer = windows
+        .single()
+        .ok()
+        .and_then(|w| Some((w.cursor_position()?, w.size())));
+    let (Some((title, body)), Some((pointer, window))) = (said, pointer) else {
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
+        return;
+    };
+    if let Ok(mut text) = heading.single_mut()
+        && text.0 != title
+    {
+        text.0 = title;
+    }
+    if let Ok(mut text) = meaning.single_mut()
+        && text.0 != body
+    {
+        text.0 = body;
+    }
+    let tall = match laid.size().y * laid.inverse_scale_factor() {
+        t if t > 1.0 => t,
+        _ => CARD_TALL,
+    };
+    let at = card_at(pointer, window, tall);
+    let (left, top) = (px(at.x), px(at.y));
+    if node.display != Display::Flex || node.left != left || node.top != top {
+        node.display = Display::Flex;
+        node.left = left;
+        node.top = top;
     }
 }
 
@@ -668,7 +916,7 @@ mod tests {
         // A tile for each box, and a click on any but the one out of the game makes its choice.
         assert_eq!(world.query::<&Tile>().iter(world).count(), 5);
         let mut choices: Vec<String> = world
-            .query_filtered::<&Choice, With<Tile>>()
+            .query_filtered::<&Pick, With<Tile>>()
             .iter(world)
             .map(|c| c.0.value.clone())
             .collect();
@@ -778,7 +1026,7 @@ mod tests {
         let lit = |app: &mut App| {
             let world = app.world_mut();
             world
-                .query_filtered::<&Choice, (With<Tile>, With<Lit>)>()
+                .query_filtered::<&Pick, (With<Tile>, With<Lit>)>()
                 .iter(world)
                 .map(|c| c.0.value.clone())
                 .collect::<Vec<_>>()
@@ -787,5 +1035,112 @@ mod tests {
         app.world_mut().resource_mut::<ShowLegalMoves>().0 = true;
         app.update();
         assert_eq!(lit(&mut app), ["cross-who-2"]);
+    }
+
+    #[test]
+    fn what_a_box_means_is_said_in_the_views_words_its_own_or_its_lines() {
+        let lines = read(&json!({"lines": [
+            {"id": "who", "label": "First player", "hint": "Who leads.", "boxes": [
+                {"id": "1", "label": "Fox", "hint": "Fox leads."},
+                {"id": "2", "label": "Owl"},
+                {"id": "3"}]},
+            {"id": "bare", "boxes": [{"id": "x"}]}
+        ]}));
+        assert_eq!(lines[0].boxes[0].hint, "Fox leads.");
+        let said = |line, index| words(&lines, line, index);
+        assert_eq!(
+            said(0, Some(0)),
+            Some(("First player: Fox".into(), "Fox leads.".into()))
+        );
+        assert_eq!(
+            said(0, Some(1)),
+            Some(("First player: Owl".into(), "Who leads.".into())),
+            "its line's, with none of its own"
+        );
+        assert_eq!(
+            said(0, Some(2)),
+            Some(("First player".into(), "Who leads.".into()))
+        );
+        assert_eq!(
+            said(0, None),
+            Some(("First player".into(), "Who leads.".into()))
+        );
+        assert_eq!(said(1, Some(0)), None, "nothing is said of it");
+        assert_eq!(said(1, None), None);
+        assert_eq!(said(0, Some(9)), None);
+        assert_eq!(said(7, None), None);
+    }
+
+    #[test]
+    fn the_card_of_words_is_beside_the_pointer_and_stays_in_the_window() {
+        let window = Vec2::new(1280.0, 720.0);
+        assert_eq!(
+            card_at(Vec2::new(400.0, 300.0), window, 90.0),
+            Vec2::new(400.0, 300.0) + CARD_OFF
+        );
+        // Near the right edge it goes to the pointer's left; near the bottom, above it.
+        let right = card_at(Vec2::new(1200.0, 300.0), window, 90.0);
+        assert!((right.x + CARD_WIDTH + CARD_OFF.x - 1200.0).abs() < 1e-3);
+        let low = card_at(Vec2::new(400.0, 700.0), window, 90.0);
+        assert!((low.y + 90.0 + CARD_OFF.y - 700.0).abs() < 1e-3);
+        // And never off the window's top or left.
+        let corner = card_at(Vec2::new(5.0, 5.0), Vec2::new(200.0, 60.0), 90.0);
+        assert_eq!(corner, Vec2::splat(CARD_EDGE));
+    }
+
+    #[test]
+    fn a_box_that_may_be_crossed_is_lit_and_pointed_at_while_the_pointer_is_over_it() {
+        let mut app = app();
+        app.add_plugins(ChoiceGridPlugin);
+        let open = json!({"id": "1", "icon": "seat:1", "state": "open"});
+        let look = GridLook {
+            choice: "cross-".into(),
+            ..Default::default()
+        };
+        let mut turn = crate::play::Turn::new(1);
+        turn.options = vec![crate::net::api::LegalSelection {
+            notation: "x".into(),
+            action: "cross".into(),
+            gestures: vec![choice(&look, "who", "2")],
+            ..Default::default()
+        }];
+        turn.stage = Stage::Choosing;
+        {
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table = Some(table(1, grid(open)));
+            watch.turn = Some(turn);
+        }
+        app.update();
+        app.update();
+        let tile = |app: &mut App, value: &str| {
+            let world = app.world_mut();
+            world
+                .query_filtered::<(Entity, &Pick), With<Tile>>()
+                .iter(world)
+                .find(|(_, p)| p.0.value == value)
+                .unwrap()
+                .0
+        };
+        let (may, may_not) = (tile(&mut app, "cross-who-2"), tile(&mut app, "cross-who-1"));
+        let point = |app: &mut App, at: Entity| {
+            *app.world_mut().resource_mut::<Under>() = Under {
+                chain: vec![at],
+                ui: false,
+            };
+            *app.world_mut().resource_mut::<TableFeel>() = TableFeel::default();
+            app.update();
+            app.update();
+        };
+        point(&mut app, may);
+        assert!(app.world().get::<Lit>(may).is_some());
+        assert_eq!(app.world().resource::<TableFeel>().0, Feel::Point);
+        // One that may not be crossed is neither lit nor pointed at, and the other goes out.
+        point(&mut app, may_not);
+        assert!(app.world().get::<Lit>(may_not).is_none());
+        assert!(app.world().get::<Lit>(may).is_none());
+        assert_eq!(app.world().resource::<TableFeel>().0, Feel::Open);
+        // Every tile is found by the pointer, the lines' heads too: each has words to show.
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Head>().iter(world).count(), 2);
     }
 }

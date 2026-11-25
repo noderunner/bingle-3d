@@ -1022,6 +1022,19 @@ look of its own:
   of each suit beside the usual 52, found the same way (`props::standard_face`).
 - The pictures and the markers' models are the look's own, made by scripts in the overlay
   that use this pipeline's helpers.
+- **After the maintainer's first games (2026-11-25)**:
+  - A player's hand could not be read once the team had been picked. A move event's `seq`
+    counts selections and a state's `move_seq` counts moves, and the client took them for
+    one number: after the first move of two selections (a team, then a card) the seat's own
+    view never matched the event it was read for, and the public view, with the hand face
+    down, was kept. An event's state now says the moves played after it (from its `ply` and
+    `ends_impulse`), and the table follows the socket's count of selections apart
+    (`Table::seq`). A turn is no longer asked again halfway through a move of its own.
+  - A box of the grid that may be crossed is lit while the pointer is over it, and the
+    pointer's hand points at it. The pointer over a box, or a line's head, shows a card of
+    words beside it: what the line decides, and what that box would make the rule, as the
+    view says (`label`, `hint`), so no picture has to be guessed at.
+  - A marker may have several parts in its seat's colour (`seat_parts`: its plinth, its eyes).
 - Not built: a card dragged to the middle; the cards a seat may play lit (they stand out
   instead); a place printed for a pile on a round table; a taken trick carried to its
   winner's pile (it leaves the middle when the next is led, and the pile has grown already);

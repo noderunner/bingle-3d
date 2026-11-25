@@ -5,7 +5,7 @@
 //!
 //! A marker's first part is made of the look's `material`, or, once the view puts the seats on
 //! sides (`sides`, the seats on one of them), of the material of its side, so partners are
-//! seen to be; the part the look names (`seat_part`) is its seat's own colour. The seat the
+//! seen to be; the parts the look names (`seat_parts`) are its seat's own colour. The seat the
 //! view names (`ringed`) has a ring round its marker's foot.
 //!
 //! Clicks on the markers make the choices that name seats (`choose`: a team picked by its
@@ -413,7 +413,7 @@ fn dress(
                 .translated_by(Vec3::Y * (low + high) / 2.0),
         );
         for (index, name) in assets::model_parts(model).iter().enumerate() {
-            let of_seat = look.seat_part.as_ref() == Some(name);
+            let of_seat = look.seat_parts.contains(name);
             let mut part = commands.spawn((
                 MarkerPart,
                 Mesh3d(props::part(&server, model, index)),

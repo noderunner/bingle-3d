@@ -168,8 +168,10 @@ A game's own rules and its players' words keep their terms.
   the server's preview of the move being built.
 - `src/table.rs`: the watched game as the server last reported it. Every event carries the whole
   position, so it replaces what is known; `move_seq` decides what is stale and what is a gap
-  (reload). Of several seats this client holds (a game against oneself), `yours` is the one on
-  impulse.
+  (reload). **A move event's `seq` counts selections, of which a move may be several; a
+  state's `move_seq` counts moves**: the table keeps the first apart (`Table::seq`) to tell a
+  stale event or a gap, and an event's state says the moves played after it. Of several seats
+  this client holds (a game against oneself), `yours` is the one on impulse.
 - `src/config.rs`: `config.toml` and `keys.toml` (guest keys, and the session token of an account
   signed in). Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
@@ -396,12 +398,15 @@ A game's own rules and its players' words keep their terms.
   one after another, turned over on the way when they were face down where they came from.
 - `src/choice_grid.rs`: the view's board of choices (lines of boxes), for a game whose look
   has `[grid]`: a board of wood on the table, a tile for each box with the look's picture for
-  it; a click on a box makes its choice (`play::Choice`), a box a seat crossed has that seat's
-  small marker on it (carried there from the seat's own), a box out of the game is covered,
-  the one left on a line is rimmed. `read` and `places` have no Bevy in them.
+  it; a click on a box makes its choice, a box a seat crossed has that seat's small marker on
+  it (carried there from the seat's own), a box out of the game is covered, the one left on a
+  line is rimmed. A box that may be crossed is lit while the pointer is over it and the hand
+  points at it (`light`, `sense`); the pointer over a box or a line's head shows a card of
+  words beside it, what the view says it means (`explain`: its `label` and `hint`). `read`,
+  `places`, `words` and `card_at` have no Bevy in them.
 - `src/seat_markers.rs`: a piece that stands for each seat in front of it, for a game whose
   look has `[markers]` (`Marker`, dressed by `dress` wherever one is put): of its side's
-  material once the view puts seats on sides, the look's `seat_part` in its seat's colour, a
+  material once the view puts seats on sides, the look's `seat_parts` in its seat's colour, a
   ring round the one the view names. Clicks on them make the choices that name seats (a team
   picked by its members: `choices`, `click`, no Bevy in them; those chosen so far are
   `Picked`, kept by the client).
