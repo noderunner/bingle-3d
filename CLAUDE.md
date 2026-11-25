@@ -348,7 +348,8 @@ A game's own rules and its players' words keep their terms.
   over the window. A small glove of capsules (`pose`, `bones`: no Bevy systems), drawn by a
   camera of its own (`scene::Apart`, so it gets none of the table's light) into an image shown
   at the pointer over every panel: open over nothing, palm down to pick up over what a click
-  picks up, pointing over what a click chooses (a button, here). What a click on the table
+  picks up, pointing over what a click chooses (a button, here); over a field that takes typing
+  it gives way to a text cursor, an I-beam of nodes (`beam_parts`). What a click on the table
   would do is the table's to say: a system in `cursor::Sense` reads `Under` and writes
   `TableFeel` (`play::feel` for the board, `card_table`'s `feel` for cards), deciding as its
   click would. Hidden while anything is held under the pointer (`hand::Held`), but over the interface (never

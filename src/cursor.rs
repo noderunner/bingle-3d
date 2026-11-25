@@ -1,7 +1,9 @@
 //! The pointer's own hand, drawn in place of the system's cursor, which is never shown over the
 //! window: a small glove of capsules, open over nothing, its fingers relaxed to pick up over
 //! what a click picks up (a piece on the board, a bowl's stone, a seat's supply, a card), and
-//! pointing over what a click chooses but does not pick up (a position, a button). It is hidden
+//! pointing over what a click chooses but does not pick up (a position, a button). Over a field
+//! that takes typing it gives way to a text cursor, an I-beam (`beam_parts`), whose middle is
+//! the pointer, as any other program's. It is hidden
 //! while anything is held under the pointer (`hand::Held`), which is the pointer then, wherever
 //! the pointer is but over the interface, where a button still wants it. Not by whether the
 //! pointer is on the board: that changes from one cell to the next, and the hand flickered.
@@ -24,11 +26,13 @@ use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Face, TextureFormat};
 use bevy::render::view::Tonemapping;
+use bevy::text::EditableText;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Button;
 use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::hand::{Held, PointerOnBoard, approach};
+use crate::sign_in::Field;
 
 pub struct CursorPlugin;
 
@@ -74,6 +78,8 @@ pub enum Feel {
     Point,
     /// Picks it up: palm down, the fingers relaxed to take it.
     Grab,
+    /// Typing goes there: a text cursor in place of the hand.
+    Text,
 }
 
 /// What the mouse's pointer is over: the nearest thing hit, then what it is part of, outwards;
@@ -130,6 +136,9 @@ fn find_under(
     }
 }
 
+/// A field that takes typing: Bevy's own, or one of ours (the password's).
+type TakesTyping = Or<(With<EditableText>, With<Field>)>;
+
 /// How the hand feels and where it is. The system's cursor is hidden over the window, always;
 /// the hand is hidden off it, and while anything is held under the pointer, but over the
 /// interface.
@@ -138,6 +147,7 @@ fn decide(
     table: Res<TableFeel>,
     held: Query<(), With<Held>>,
     buttons: Query<Has<InteractionDisabled>, With<Button>>,
+    fields: Query<(), TakesTyping>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut shown: ResMut<HandShown>,
 ) {
@@ -149,11 +159,15 @@ fn decide(
     }
     let holding = !held.is_empty() && !under.ui;
     let feel = if under.ui {
-        let button = under.chain.iter().find_map(|e| buttons.get(*e).ok());
-        if button == Some(false) {
-            Feel::Point
+        if under.chain.iter().any(|e| fields.contains(*e)) {
+            Feel::Text
         } else {
-            Feel::Open
+            let button = under.chain.iter().find_map(|e| buttons.get(*e).ok());
+            if button == Some(false) {
+                Feel::Point
+            } else {
+                Feel::Open
+            }
         }
     } else {
         table.0
@@ -176,6 +190,27 @@ const VIEW: f32 = 3.0;
 const HOT: Vec2 = Vec2::new(0.4, 0.14);
 /// How thick the dark rim round the glove is, in the hand's space.
 const RIM: f32 = 0.085;
+/// The text cursor, in logical pixels: how tall, how wide its serifs, and how thick its
+/// strokes; and its dark rim, as the glove has one.
+const BEAM_HEIGHT: f32 = 18.0;
+const BEAM_SERIF: f32 = 7.0;
+const BEAM_STROKE: f32 = 2.0;
+const BEAM_RIM: f32 = 1.0;
+/// The glove's colour, and its rim's.
+const GLOVE: Color = Color::srgb(0.96, 0.95, 0.92);
+const GLOVE_RIM: Color = Color::srgb(0.04, 0.035, 0.03);
+
+/// The text cursor's parts about the pointer, which is its middle, in logical pixels: the stem
+/// and its two serifs.
+fn beam_parts() -> [Rect; 3] {
+    let end = (BEAM_HEIGHT - BEAM_STROKE) / 2.0;
+    let serif = Vec2::new(BEAM_SERIF, BEAM_STROKE);
+    [
+        Rect::from_center_size(Vec2::ZERO, Vec2::new(BEAM_STROKE, BEAM_HEIGHT)),
+        Rect::from_center_size(Vec2::new(0.0, -end), serif),
+        Rect::from_center_size(Vec2::new(0.0, end), serif),
+    ]
+}
 
 /// A hand's pose: each finger's, index to little, how far it leans towards the thumb and how
 /// far each of its joints is bent towards the palm; the thumb's, how far it is spread from the
@@ -210,8 +245,9 @@ impl Pose {
 /// The pose that shows a feel.
 pub fn pose(feel: Feel) -> Pose {
     match feel {
-        // Fingers straight but easy, a little apart; the thumb out.
-        Feel::Open => Pose {
+        // Fingers straight but easy, a little apart; the thumb out. Hidden over a field, the
+        // hand is open when it comes back.
+        Feel::Open | Feel::Text => Pose {
             fingers: [
                 [0.06, 0.1, 0.1, 0.05],
                 [0.0, 0.12, 0.12, 0.06],
@@ -415,6 +451,10 @@ struct Part(usize);
 #[derive(Component)]
 struct HandImage;
 
+/// The text cursor, shown in the hand's place over a field.
+#[derive(Component)]
+struct TextBeam;
+
 fn spawn_hand(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -468,14 +508,14 @@ fn spawn_hand(
     ));
 
     let glove = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.95, 0.92),
+        base_color: GLOVE,
         perceptual_roughness: 0.6,
         reflectance: 0.3,
         ..default()
     });
     // The rim: the inside of a slightly larger copy, drawn black, seen only round the edge.
     let rim = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.04, 0.035, 0.03),
+        base_color: GLOVE_RIM,
         unlit: true,
         cull_mode: Some(Face::Front),
         ..default()
@@ -541,21 +581,62 @@ fn spawn_hand(
         Pickable::IGNORE,
         Visibility::Hidden,
     ));
+    // The text cursor: a node of no size at the pointer, its parts about it, the rim's under
+    // the glove's.
+    let rect = |r: Rect, colour: Color| {
+        (
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(r.min.x),
+                top: px(r.min.y),
+                width: px(r.width()),
+                height: px(r.height()),
+                ..default()
+            },
+            BackgroundColor(colour),
+            Pickable::IGNORE,
+        )
+    };
+    commands
+        .spawn((
+            Name::new("text cursor"),
+            TextBeam,
+            Node {
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            GlobalZIndex(i32::MAX),
+            Pickable::IGNORE,
+            Visibility::Hidden,
+        ))
+        .with_children(|beam| {
+            for part in beam_parts() {
+                beam.spawn(rect(part.inflate(BEAM_RIM), GLOVE_RIM));
+            }
+            for part in beam_parts() {
+                beam.spawn(rect(part, GLOVE));
+            }
+        });
 }
 
-/// The hand's image at the pointer, its hot spot on it; hidden where the hand is.
+/// What shows the pointer: the hand's image, and the text cursor.
+type Pointers = Or<(With<HandImage>, With<TextBeam>)>;
+
+/// The hand's image at the pointer, its hot spot on it, or over a field the text cursor, its
+/// middle on it; hidden where the hand is.
 fn show(
     shown: Res<HandShown>,
     scale: Res<UiScale>,
-    mut images: Query<(&mut Node, &mut Visibility), With<HandImage>>,
+    mut images: Query<(&mut Node, &mut Visibility, Has<TextBeam>), Pointers>,
 ) {
-    for (mut node, mut vis) in &mut images {
-        let Some(at) = shown.at else {
+    for (mut node, mut vis, beam) in &mut images {
+        let Some(at) = shown.at.filter(|_| beam == (shown.feel == Feel::Text)) else {
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
         // Nodes are laid out in the interface's scale; the pointer is in the window's.
-        let corner = at / scale.0 - HOT * SHOWN;
+        let hot = if beam { Vec2::ZERO } else { HOT * SHOWN };
+        let corner = at / scale.0 - hot;
         let (left, top) = (px(corner.x), px(corner.y));
         if node.left != left || node.top != top {
             node.left = left;
@@ -715,6 +796,45 @@ mod tests {
         hover(&mut app, Some(panel));
         app.update();
         assert_eq!(app.world().resource::<HandShown>().feel, Feel::Open);
+    }
+
+    #[test]
+    fn over_a_field_that_takes_typing_the_hand_is_a_text_cursor() {
+        let (mut app, _) = app();
+        // Bevy's own field, and the password's, which is a field of ours.
+        let text = app
+            .world_mut()
+            .spawn((Node::default(), EditableText::default()))
+            .id();
+        let password = app.world_mut().spawn((Node::default(), Field)).id();
+        let dots = app
+            .world_mut()
+            .spawn((Node::default(), ChildOf(password)))
+            .id();
+        for over in [text, password, dots] {
+            hover(&mut app, Some(over));
+            app.update();
+            let shown = *app.world().resource::<HandShown>();
+            assert_eq!(shown.feel, Feel::Text);
+            assert!(shown.at.is_some(), "shown, as a text cursor");
+        }
+        // Off it, the hand again.
+        let panel = app.world_mut().spawn(Node::default()).id();
+        hover(&mut app, Some(panel));
+        app.update();
+        assert_eq!(app.world().resource::<HandShown>().feel, Feel::Open);
+    }
+
+    #[test]
+    fn the_text_cursor_is_an_i_beam_about_the_pointer() {
+        let [stem, top, bottom] = beam_parts();
+        assert_eq!(stem.center(), Vec2::ZERO, "the pointer is its middle");
+        assert_eq!(stem.height(), BEAM_HEIGHT);
+        assert!(stem.width() < top.width());
+        assert_eq!(top.min.y, stem.min.y, "a serif across each end");
+        assert_eq!(bottom.max.y, stem.max.y);
+        assert_eq!(top.center().x, 0.0);
+        assert_eq!(top.size(), bottom.size());
     }
 
     #[test]
