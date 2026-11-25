@@ -81,10 +81,14 @@ pub(crate) mod colours {
     /// A choice that is made, among others that could be.
     pub const CHOSEN: Color = Color::srgb(0.27, 0.52, 0.42);
     pub const CHOSEN_HOVER: Color = Color::srgb(0.33, 0.60, 0.49);
-    /// A field to type in, its edge, and its edge while it has the keyboard.
+    /// A field to type in, its edge, its edge under the pointer, and its edge while it has the
+    /// keyboard.
     pub const FIELD: Color = Color::srgba(0.0, 0.0, 0.0, 0.35);
     pub const FIELD_EDGE: Color = Color::srgb(0.30, 0.33, 0.38);
+    pub const FIELD_HOVER: Color = Color::srgb(0.52, 0.56, 0.62);
     pub const FIELD_FOCUS: Color = Color::srgb(0.45, 0.62, 0.90);
+    /// What is selected in a field that has the keyboard (the cursor is the text's colour).
+    pub const SELECTION: Color = Color::srgb(0.20, 0.32, 0.52);
     /// The main screen's lines and edges, its chosen tab, and what is not built yet, as the web
     /// page's dark theme has them.
     pub const BORDER: Color = Color::srgb(0.23, 0.23, 0.26);
