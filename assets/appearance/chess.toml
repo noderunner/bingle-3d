@@ -1,0 +1,97 @@
+# How this client draws chess and its variants (Bingle's ADR 0124: the server says what things
+# are, and each client decides how they look). Data only: nothing here changes the rules.
+#
+# A chessboard of walnut and maple squares with a dark border inlaid round it, as Amazons' is, in
+# a frame of the board's own wood; the whole set of turned chessmen in pale and in dark wood
+# (`assets-src/blender/chessmen.py`). A king in check has a red stamp under it.
+
+games = [
+    "chess",
+    "chess-960",
+    "chess-crazyhouse",
+    "chess-antichess",
+    "chess-atomic",
+    "chess-alice",
+]
+
+[board]
+squares = ["dark_square", "light_square"]
+border = "inlay"
+
+# Each piece, by the id the game gives it (`upright`: turned any way, never leaning; `forward`:
+# looking across the board from its seat's side).
+[pieces.pawn]
+model = "models/chess/pawn.glb"
+stands = "upright"
+
+[pieces.rook]
+model = "models/chess/rook.glb"
+stands = "upright"
+
+[pieces.knight]
+model = "models/chess/knight.glb"
+stands = "forward"
+
+[pieces.bishop]
+model = "models/chess/bishop.glb"
+stands = "forward"
+
+[pieces.queen]
+model = "models/chess/queen.glb"
+stands = "upright"
+
+[pieces.king]
+model = "models/chess/king.glb"
+stands = "forward"
+
+# The king the view tints `check`: a red stamp on its square, round its foot.
+[tints.check]
+stamp = "check"
+size = 0.8
+
+[seats.white]
+pieces = "boxwood"
+colour = [0.90, 0.80, 0.62]
+
+[seats.black]
+pieces = "ebonised"
+colour = [0.13, 0.11, 0.10]
+
+# As in `chessmen.toml`: pale wood, polished, and dark wood stained near black.
+[materials.boxwood]
+wood = "maple"
+tint = [1.0, 0.93, 0.78]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+[materials.ebonised]
+wood = "walnut"
+tint = [0.30, 0.26, 0.25]
+clearcoat = 0.5
+clearcoat_roughness = 0.15
+
+# The squares, as in `amazons.toml`: walnut, and maple a shade warmer than the pale pieces, so
+# they stand out on it.
+[materials.dark_square]
+wood = "walnut"
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+[materials.light_square]
+wood = "maple"
+tint = [0.96, 0.84, 0.64]
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+# The border round the squares: walnut stained darker than the dark squares.
+[materials.inlay]
+wood = "walnut"
+tint = [0.55, 0.5, 0.48]
+clearcoat = 0.3
+clearcoat_roughness = 0.25
+
+# A king in check's stamp: a matt red ink.
+[materials.check]
+tint = [0.70, 0.10, 0.08]
+roughness = 0.8
+reflectance = 0.2

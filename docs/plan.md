@@ -654,8 +654,11 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - The pieces, made by the pipeline:
   - **Chessmen**: king, queen, bishop, knight, rook and pawn of the usual pattern, the king
     46 mm tall for a 28 mm cell. Five are turned from profiles; the knight's head is an outline
-    of its side given a carved head's thickness. Pale and near-black wood. Bingle has no chess,
-    but Breakthrough (pawns), Amazons (queens on a checkered board, and a red checker for an
+    of its side given a carved head's thickness. Pale and near-black wood. Chess and its
+    variants (Chess960, Crazyhouse, Antichess, Atomic, Alice: `chess.toml`) are played with the
+    whole set on Amazons' chessboard of walnut and maple squares, a king in check stamped red on
+    its square (the view's `check` tint); Alice's two boards are one board 16 squares wide, with
+    nothing yet between them. Breakthrough (pawns), Amazons (queens on a checkered board, and a red checker for an
     arrow), Brandubh (pawns and a king) and Fist (the whole set, its ownerless pawn a queen of
     green copper) are played with them.
   - **Checkers**: a wooden draughtsman with a milled edge, stained red or black; a king is two.

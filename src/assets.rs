@@ -25,6 +25,7 @@ files![
     "appearance/amazons.toml",
     "appearance/blooms.toml",
     "appearance/bowling-solitaire.toml",
+    "appearance/chess.toml",
     "appearance/chessmen.toml",
     "appearance/courtfall.toml",
     "appearance/draughts.toml",
