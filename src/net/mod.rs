@@ -14,6 +14,9 @@
 //! So is the signed-in account's own socket (`/ws-dm`), which says when its friends list changes;
 //! and while an account is signed in, the thread tells the server every minute that it is here,
 //! so that its friends see it online.
+//!
+//! A game's look from the server is fetched in the same loop, a range of a file at a time
+//! (`downloads::fetch`), whenever there is no request to answer.
 
 pub mod api;
 pub mod server_url;
@@ -37,6 +40,9 @@ use api::{
 use std::collections::BTreeMap;
 
 use crate::call::DirectCalling;
+use crate::downloads::Downloads;
+use crate::downloads::cache::Cache;
+use crate::downloads::fetch::Fetcher;
 use crate::friends::{self, Friends};
 use crate::login::{LoginScreen, Screen};
 use crate::new_game::NewGame;
@@ -222,6 +228,13 @@ pub enum Request {
         kind: String,
         data: serde_json::Value,
     },
+    /// Fetch this of the look the server offers for a game (`downloads`).
+    FetchLook {
+        game: String,
+        scope: crate::downloads::Scope,
+    },
+    /// Stop fetching a game's look.
+    AbandonLook { game: String },
     /// Join the voice chat of a game, for the seat `player_name` sits at, in place of any other.
     JoinVoice { room: String, player_name: String },
     /// Leave the game's voice chat.
@@ -419,6 +432,8 @@ enum Reply {
         room: String,
         event: VoiceEvent,
     },
+    /// How fetching a game's look is going, or that it is done.
+    Look(crate::downloads::News),
 }
 
 #[derive(Resource)]
@@ -485,11 +500,15 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
     let mut watching: Option<Watching> = None;
     let mut account = AccountLink::default();
     let mut voice: Option<VoiceLink> = None;
+    let cache = Cache::new(Cache::default_dir(), crate::downloads::cache::CAP);
+    let mut fetcher = Fetcher::new(cache);
     loop {
-        // With a socket to read, the inbox is only looked at between reads; signed in without
-        // one (waiting to open it again), it is waited on a little, so that the account is still
-        // looked after; otherwise there is nothing to do until a request comes.
-        let request = if watching.is_some() || account.socket.is_some() || voice.is_some() {
+        // With a socket to read or a look to fetch, the inbox is only looked at between reads;
+        // signed in without one (waiting to open it again), it is waited on a little, so that
+        // the account is still looked after; otherwise there is nothing to do until a request
+        // comes.
+        let busy = watching.is_some() || account.socket.is_some() || voice.is_some();
+        let request = if busy || fetcher.busy() {
             match inbox.try_recv() {
                 Ok(r) => Some(r),
                 Err(mpsc::TryRecvError::Empty) => None,
@@ -508,6 +527,14 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
             }
         };
         let replies = match request {
+            Some(Request::FetchLook { game, scope }) => {
+                fetcher.add(game, scope);
+                Vec::new()
+            }
+            Some(Request::AbandonLook { game }) => {
+                fetcher.abandon(&game);
+                Vec::new()
+            }
             Some(Request::JoinVoice { room, player_name }) => {
                 if let Some(old) = voice.take() {
                     old.leave(&mut session);
@@ -542,6 +569,7 @@ fn run(mut session: Session, inbox: Receiver<Request>, outbox: Sender<Reply>) {
                 let mut replies: Vec<Reply> = read_socket(&mut session, &mut watching)
                     .into_iter()
                     .collect();
+                replies.extend(fetcher.step(&session).map(Reply::Look));
                 replies.extend(account.tick(&mut session, Instant::now()));
                 if let Some(link) = voice.as_mut() {
                     replies.extend(link.tick(&mut session, Instant::now()));
@@ -964,8 +992,12 @@ fn handle(
             join,
         }),
         Request::IceServers => Some(Reply::IceServers(session.ice_servers())),
-        // Taken by `run`, with the voice chat's link.
-        Request::JoinVoice { .. } | Request::LeaveVoice | Request::VoiceSignal { .. } => None,
+        // Taken by `run`, with the voice chat's link and the fetcher.
+        Request::JoinVoice { .. }
+        | Request::LeaveVoice
+        | Request::VoiceSignal { .. }
+        | Request::FetchLook { .. }
+        | Request::AbandonLook { .. } => None,
         Request::Signal { to, kind, data } => {
             // A message the other end does not need any more (the call ended) is refused; the
             // call itself says so.
@@ -1063,7 +1095,7 @@ pub const RETRY_AFTER: Duration = Duration::from_secs(5);
 
 // A system: each resource it fills is a parameter.
 #[allow(clippy::too_many_arguments)]
-fn poll_network(
+pub fn poll_network(
     net: Res<Net>,
     mut status: ResMut<ServerStatus>,
     mut watch: ResMut<WatchStatus>,
@@ -1074,19 +1106,33 @@ fn poll_network(
     mut call: ResMut<DirectCalling>,
     mut voice: ResMut<VoiceChat>,
     (screen, mut login): (Option<Res<Screen>>, Option<ResMut<LoginScreen>>),
+    (mut downloads, appearances): (
+        Option<ResMut<Downloads>>,
+        Option<Res<crate::appearance::Appearances>>,
+    ),
 ) {
     let on_login = screen.as_deref() == Some(&Screen::Login);
     let replies = net.replies.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         match replies.try_recv() {
             Ok(Reply::Opened { watch: id, opened }) if id == watch.id => {
-                // From now on a lost socket reopens this room, not another bot match.
-                watch.target = Some(Target::Room(opened.room_code.clone()));
-                watch.table = Some(Table::new(*opened));
-                watch.problem = None;
+                // A game whose look the server offers waits for it (`downloads`).
+                if let (Some(downloads), Some(appearances)) = (downloads.as_mut(), &appearances)
+                    && downloads.wants(&opened.info, appearances)
+                {
+                    watch.target = Some(Target::Room(opened.room_code.clone()));
+                    watch.problem = None;
+                    downloads.hold(&net, id, opened);
+                    continue;
+                }
+                open_table(&mut watch, *opened);
             }
             Ok(Reply::Event { watch: id, event }) if id == watch.id => {
                 let Some(table) = watch.bypass_change_detection().table.as_mut() else {
+                    // A game held for its look reads what it missed once it is drawn.
+                    if let Some(downloads) = downloads.as_mut().filter(|d| d.holds(id)) {
+                        downloads.missed(id);
+                    }
                     continue;
                 };
                 match table.apply(&event) {
@@ -1310,6 +1356,11 @@ fn poll_network(
             Ok(Reply::VoiceJoined { room, result }) => voice.joined(&net, &room, result),
             Ok(Reply::VoicePeers { room, peers }) => voice.peers(&room, &peers),
             Ok(Reply::Voice { room, event }) => voice.event(&room, event),
+            Ok(Reply::Look(news)) => {
+                if let Some(downloads) = downloads.as_mut() {
+                    downloads.push(news);
+                }
+            }
             Ok(Reply::Connected(snapshot)) => {
                 status.retry_in = None;
                 // The connection lists every game; a narrower list is asked for again.
@@ -1477,6 +1528,19 @@ impl WatchStatus {
         self.target.is_some()
     }
 
+    /// The number of this watch: a reply for another is dropped.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Starts a watch of a room, as `watch` does, with no thread to tell.
+    #[cfg(test)]
+    pub fn start_for_test(&mut self) -> u64 {
+        self.id += 1;
+        self.target = Some(Target::Room("AB12CD".into()));
+        self.id
+    }
+
     /// The position to draw what lies on the table from: the game's, or, while this client
     /// builds a move of several selections, the server's preview of it after those made (a
     /// team picked, before the card that ends the impulse is chosen).
@@ -1489,6 +1553,14 @@ impl WatchStatus {
                 .unwrap_or(&table.state.state),
         )
     }
+}
+
+/// Puts a game opened on the table.
+pub fn open_table(watch: &mut WatchStatus, opened: Opened) {
+    // From now on a lost socket reopens this room, not another bot match.
+    watch.target = Some(Target::Room(opened.room_code.clone()));
+    watch.table = Some(Table::new(opened));
+    watch.problem = None;
 }
 
 /// Starts watching, in place of whatever was watched before.
@@ -1613,14 +1685,14 @@ pub fn reconnect(net: &Net, status: &mut ServerStatus) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::net::api::{Board, Game, GameInfo, GameSeat, Gesture, LegalSelection};
     use crate::play::{self, Stage};
     use bevy::ecs::system::RunSystemOnce;
     use std::sync::Arc;
 
-    fn opened() -> Opened {
+    pub(crate) fn opened() -> Opened {
         Opened {
             room_code: "AB12CD".into(),
             info: GameInfo {
@@ -1641,6 +1713,7 @@ mod tests {
                 reserves: Default::default(),
                 cards: None,
                 engine: String::new(),
+                clients: Vec::new(),
             },
             game: Game {
                 game_def_id: "g".into(),
@@ -1774,7 +1847,7 @@ mod tests {
             .send(Reply::Connected(Snapshot {
                 server: "http://127.0.0.1:8080".into(),
                 version: "1".into(),
-                api_version: "1.14.0".into(),
+                api_version: "1.17.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
                 account: None,

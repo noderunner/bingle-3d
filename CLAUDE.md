@@ -126,7 +126,8 @@ These are Bingle's decisions; the client is built around them, not around changi
 - **Commercial games stay out of this repository**
   ([ADR 0127](https://github.com/noderunner/bingle/blob/main/docs/decisions/0127-commercial-games-in-a-private-overlay.md)). A server marks the games it builds from its
   private overlay `private` (API 1.8); the client leaves them out of every list
-  (`session::public`) unless the private folder has their look. That folder is
+  (`session::public`) unless the server offers their look (API 1.17, `downloads/`) or the
+  private folder has it. That folder is
   `bingle-3d/assets` in the overlay, read at run time (plan, decision 2; `--private-dir`,
   `BINGLE3D_PRIVATE_DIR`, `private_dir`), and their looks go there. Never add their names,
   art, models or rules text here, not even in a test: a test makes up a game id.

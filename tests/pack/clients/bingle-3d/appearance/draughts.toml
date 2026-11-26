@@ -1,0 +1,36 @@
+# The look of Bingle's Draughts fixture pack (its tests/testdata/draughts/pack), as a server
+# offers it: a pack's clients/bingle-3d/ folder (Bingle's ADR 0147). It names the client's own
+# checkers and brings its own stones and card picture, so a game drawn with it shows where it came
+# from. `scripts/pack-server.sh` runs a server with it.
+
+format = 1
+games = ["pack-draughts-0.1.0", "pack-draughts-0.1.0-6"]
+
+[pieces.man]
+model = "models/checkers/man.glb"
+
+[pieces.king]
+model = "models/checkers/king.glb"
+
+[seats.black]
+pieces = "jade"
+colour = [0.16, 0.45, 0.30]
+
+[seats.white]
+pieces = "carnelian"
+colour = [0.75, 0.30, 0.16]
+
+[materials.jade]
+albedo = "textures/jade_albedo.png"
+roughness = 0.25
+clearcoat = 0.6
+clearcoat_roughness = 0.1
+
+[materials.carnelian]
+albedo = "textures/carnelian_albedo.png"
+roughness = 0.25
+clearcoat = 0.6
+clearcoat_roughness = 0.1
+
+[card.pictures]
+"pack-draughts-0.1.0" = "pictures/card.png"

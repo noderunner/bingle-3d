@@ -353,6 +353,7 @@ mod tests {
                 reserves: Default::default(),
                 cards: None,
                 engine: String::new(),
+                clients: Vec::new(),
             },
             game: Game {
                 game_def_id: "g".into(),

@@ -39,6 +39,7 @@ impl Plugin for BrowserPlugin {
         app.insert_resource(NewGameOnStart(self.new_game.clone()))
             .init_resource::<ChosenMembers>()
             .init_resource::<MainScreen>()
+            .init_resource::<CardPictures>()
             .add_systems(Startup, (spawn_panel, load_card_pictures))
             .add_systems(
                 Update,
@@ -54,7 +55,8 @@ impl Plugin for BrowserPlugin {
                             .or_eager(resource_changed::<ChosenMembers>)
                             .or_eager(resource_changed::<Signing>)
                             .or_eager(resource_changed::<Friends>)
-                            .or_eager(resource_changed::<MainScreen>),
+                            .or_eager(resource_changed::<MainScreen>)
+                            .or_eager(resource_changed::<CardPictures>),
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
@@ -131,11 +133,22 @@ const TABS: [(&str, bool); 5] = [
     ("Global Chat", false),
 ];
 
-/// The pictures on the games' cards, by game id, loaded once.
+/// The pictures on the games' cards, by game id: the client's own, loaded once, and those of
+/// the looks a server offers, as they are fetched (`downloads`).
 #[derive(Resource, Debug, Default)]
-struct CardPictures(HashMap<String, Handle<Image>>);
+pub(crate) struct CardPictures(HashMap<String, Handle<Image>>);
 
 impl CardPictures {
+    /// A game's picture, unless it has one already.
+    pub(crate) fn insert(&mut self, game: String, picture: Handle<Image>) {
+        self.0.entry(game).or_insert(picture);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has(&self, game: &str) -> bool {
+        self.0.contains_key(game)
+    }
+
     /// The picture of the family's chosen member, or else of any of its members.
     fn for_family(&self, family: &Family, chosen: &str) -> Option<Handle<Image>> {
         self.0.get(chosen).cloned().or_else(|| {
@@ -194,6 +207,8 @@ pub(crate) enum Action {
     WatchBots(String),
     /// Watch a game being played.
     Watch(String),
+    /// Play on without the look the server offers, which is still being fetched.
+    SkipLook,
     /// Play this game against the server's bots.
     PlayBots(String),
     /// Start a game of this and wait for people to join it.
@@ -1002,6 +1017,7 @@ fn on_activate(
     mut signing: ResMut<Signing>,
     mut screen: ResMut<MainScreen>,
     mut list_scroll: Query<&mut ScrollPosition, With<ListArea>>,
+    mut downloads: Option<ResMut<crate::downloads::Downloads>>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
@@ -1126,6 +1142,11 @@ fn on_activate(
         }
         Action::SignOut => net.send(Request::SignOut),
         Action::Friends(_) | Action::Voice(_) | Action::Menu(_) | Action::Login(_) => {}
+        Action::SkipLook => {
+            if let Some(downloads) = downloads.as_mut() {
+                downloads.skip(&net, &mut watching);
+            }
+        }
         Action::Back => {
             stop_watching(&net, &mut watching);
             // The list is as old as the last connection: read it again.
@@ -1257,6 +1278,7 @@ mod tests {
             version: "1.0.0".into(),
             tutorials: 0,
             private: false,
+            clients: Vec::new(),
         };
         let labels = |def: &GameDef| -> Vec<&str> {
             let family = &crate::families::families(std::slice::from_ref(def))[0];
@@ -1396,6 +1418,7 @@ mod tests {
             version: "1.0.0".into(),
             tutorials: 0,
             private: false,
+            clients: Vec::new(),
         };
         let defs = [def("a"), def("b")];
         let family = &families(&defs)[0];
@@ -1521,6 +1544,7 @@ mod tests {
             version: "1.0.0".into(),
             tutorials: 0,
             private: false,
+            clients: Vec::new(),
         };
         assert_eq!(
             describe_def("Solitaire", &def),

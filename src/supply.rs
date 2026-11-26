@@ -191,6 +191,7 @@ mod tests {
                 .into(),
             cards: None,
             engine: String::new(),
+            clients: Vec::new(),
         }
     }
 

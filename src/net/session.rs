@@ -26,6 +26,7 @@ use super::api::{
     Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
+use super::api::{CLIENT, ClientFile, ClientIndex};
 use super::api::{DirectCallRequest, DirectSignalRequest, IceServer, RtcConfig};
 use super::api::{DirectHistory, DirectHistoryRequest, DirectMessage, DirectMessageRequest};
 use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
@@ -785,6 +786,74 @@ impl Session {
         Ok(info)
     }
 
+    /// The origin of the server in use (`https://host:port`): what a downloaded look's index is
+    /// kept under, since another server's game of the same id is another game.
+    pub fn origin(&self) -> Option<String> {
+        self.url.as_ref().ok().map(ServerUrl::origin)
+    }
+
+    /// `GET /api/game-defs/{id}/clients/bingle-3d`: the files of the look the server offers for
+    /// this game (API 1.17). Anyone who can reach the server may read them, so nobody is named.
+    pub fn client_index(&self, game_def_id: &str) -> Result<ClientIndex, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        self.get(&url, &client_path(game_def_id, None), None)
+    }
+
+    /// One file of that look, from byte `from` to `to` (exclusive), as it comes. It is asked for
+    /// only if it is still the one whose hash the index gave (`If-Range`): a server whose file
+    /// has changed sends the whole of the new one, from its start, which a caller tells by
+    /// [`Received::Whole`].
+    pub fn client_file(
+        &self,
+        game_def_id: &str,
+        file: &ClientFile,
+        from: u64,
+        to: u64,
+    ) -> Result<(Received, ureq::BodyReader<'static>), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let target = url.join(&client_path(game_def_id, Some(&file.path)));
+        let response = self
+            .agent
+            .get(&target)
+            .header("Range", format!("bytes={from}-{}", to.max(from + 1) - 1))
+            .header("If-Range", format!("\"{}\"", file.sha256))
+            .call()
+            .map_err(|e| self.transport_problem(&url, e))?;
+        let status = response.status().as_u16();
+        let starts_at = |range: &str| {
+            range
+                .strip_prefix("bytes ")
+                .and_then(|r| r.split_once('-'))
+                .and_then(|(start, _)| start.parse::<u64>().ok())
+        };
+        let received = match status {
+            200 => Received::Whole,
+            206 => {
+                let range = response
+                    .headers()
+                    .get("content-range")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(starts_at);
+                if range != Some(from) {
+                    return Err(Problem::NotBingle(format!(
+                        "{url} sent another part of {} than the one asked for.",
+                        file.path
+                    )));
+                }
+                Received::Part
+            }
+            _ => {
+                let mut response = response;
+                let body = response.body_mut().read_to_string().unwrap_or_default();
+                let message = serde_json::from_str::<ErrorBody>(&body)
+                    .map(|b| b.error)
+                    .unwrap_or_else(|_| format!("{} was answered with status {status}", file.path));
+                return Err(Problem::Refused { status, message });
+            }
+        };
+        Ok((received, response.into_body().into_reader()))
+    }
+
     /// The unfinished games that match `query`, newest change first.
     pub fn games(&mut self, query: &GameQuery) -> Result<Vec<OpenGame>, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
@@ -1367,15 +1436,41 @@ pub fn new_game_request(settings: &GameSettings, player_name: &str) -> CreateGam
     }
 }
 
+/// What [`Session::client_file`] is sending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Received {
+    /// The bytes asked for.
+    Part,
+    /// The whole file, from its start.
+    Whole,
+}
+
+/// The path of a game's files for this client: the index, or one file of it.
+pub fn client_path(game_def_id: &str, file: Option<&str>) -> String {
+    let index = format!(
+        "/api/game-defs/{}/clients/{CLIENT}",
+        query_value(game_def_id)
+    );
+    match file {
+        // Each part of a path is checked before it is asked for (`downloads::check::path`),
+        // and keeps to what a URL may hold as it is.
+        Some(f) => format!(
+            "{index}/files/{}",
+            f.split('/').map(query_value).collect::<Vec<_>>().join("/")
+        ),
+        None => index,
+    }
+}
+
 /// `GET /api/games` for `query`, with as many games as the server lists at once.
 /// The games this client shows, and the ids of those it leaves out: the server's private
 /// overlay's (commercial games, whose looks this repository may not hold: Bingle's ADR 0127),
-/// but those the private folder has a look for (`looks`; plan, decision 2). A public server
-/// marks none.
+/// but those the private folder has a look for (`looks`; plan, decision 2) and those the server
+/// offers a look for (`GameDef::offers_look`; *Downloaded looks*). A public server marks none.
 pub fn public(defs: Vec<GameDef>, looks: &HashSet<String>) -> (Vec<GameDef>, HashSet<String>) {
     let (hidden, shown): (Vec<GameDef>, Vec<GameDef>) = defs
         .into_iter()
-        .partition(|d| d.private && !looks.contains(&d.id));
+        .partition(|d| d.private && !looks.contains(&d.id) && !d.offers_look());
     (shown, hidden.into_iter().map(|d| d.id).collect())
 }
 
@@ -1536,6 +1631,7 @@ pub(crate) mod tests {
             version: "1.0.0".into(),
             tutorials: 0,
             private,
+            clients: Vec::new(),
         };
         let none = HashSet::new();
         let defs = || vec![def("hex", false), def("p", true), def("go", false)];
@@ -1550,6 +1646,14 @@ pub(crate) mod tests {
         let (shown, hidden) = public(defs(), &looks);
         assert_eq!(shown.len(), 3);
         assert!(hidden.is_empty());
+        // The server offers a look for it: shown. One for another client is not enough.
+        let offered = |clients: &[&str]| {
+            let mut defs = defs();
+            defs[1].clients = clients.iter().map(|c| c.to_string()).collect();
+            public(defs, &none).1
+        };
+        assert!(offered(&["made-up", "bingle-3d"]).is_empty());
+        assert_eq!(offered(&["made-up"]), HashSet::from(["p".to_string()]));
         // Read from the server: absent is public.
         let read: Vec<GameDef> = serde_json::from_str(
             r#"[{"id":"a","name":"A","seats_required":2},
@@ -1559,7 +1663,7 @@ pub(crate) mod tests {
         assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.14.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.17.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1597,7 +1701,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.14.0");
+        assert_eq!(probe.api_version, "1.17.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1642,7 +1746,7 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.14.0");
+        assert_eq!(snap.api_version, "1.17.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");

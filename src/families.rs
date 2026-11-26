@@ -214,6 +214,7 @@ mod tests {
             version: "1.0.0".into(),
             tutorials: 0,
             private: false,
+            clients: Vec::new(),
         }
     }
 
