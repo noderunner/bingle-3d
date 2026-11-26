@@ -54,12 +54,12 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.14.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.17.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
 | Textures | JPEG, given mipmaps by the client when they load (`src/textures.rs`); the room's light as prefiltered KTX2 cubemaps | Bevy 0.20 makes no mipmaps, and lossless KTX2 with them is ten times the size; Bevy's runtime-filtered environment light filters every frame |
-| Appearance | TOML files in `assets/appearance/`, one per game (or family of variants), by game id | Data, never code; `toml` is already a dependency. Replaces "RON or YAML" in the plan before |
+| Appearance | TOML files in `assets/appearance/`, one per game (or family of variants), by game id, each saying the format it is written in (`format`, `appearance::FORMAT`) | Data, never code; `toml` is already a dependency. Replaces "RON or YAML" in the plan before. The format lets a look from a server say what it was written for |
 | CI | GitHub Actions on `ubuntu-latest` and `windows-latest`: `fmt`, `clippy -D warnings`, `build`, `test` | The only way to know Windows builds without a Windows machine at hand |
 
 ## Stages
@@ -976,6 +976,66 @@ this repository may not hold (decision 2). This repository names none of them, h
 - Not built for it: a seat's supply lying face up (it stands on edge, as any flat piece's
   does), and the parts in the showcase.
 
+### Downloaded looks: a game's look from the server (2026-11-26)
+
+A server may offer the look of a game this client does not ship: an install pack carries a
+folder for each client, `clients/bingle-3d/`, laid out as `assets/` is, and the server lists and
+serves it without reading it (Bingle's ADR 0147, *Every client's files*; API 1.17, bingle#302).
+The client fetches it, checks it, keeps it, and draws the game with it exactly as with a
+built-in or private-folder look, so one build of the client plays a private game on any server
+that offers its look (bingle#303). This repository still names no game: its test pack's look is
+for Bingle's own Draughts fixture.
+
+- **Knowing what a server offers**: a game's `clients` (in the list and in its info) name the
+  clients the server has files for. A game the server marks `private` is shown when it offers
+  this client a look, or the private folder has one (`session::public`). The client requires
+  API 1.17.
+- **Fetching** is the network thread's (`downloads/fetch.rs`): the index first
+  (`GET /api/game-defs/{id}/clients/bingle-3d`), then only the files the cache lacks, each a
+  mebibyte at a time by byte range (`If-Range` its hash), so the thread answers everything else
+  in between, a download broken off goes on from where it stopped, and one abandoned stops at
+  once. A game's whole look is fetched when the player opens it, unless the client has a look
+  of its own for it (built in, or in the private folder: how a look is tried before it goes
+  into a pack); the game waits to be drawn, its panel says how far the fetching has got, and
+  *Play without it* draws it from the defaults at once. What happened in the game meanwhile is
+  read again once it is drawn. The list asks, for each family whose look the server offers, for
+  its appearance file and its card's picture only.
+- **Keeping** (`downloads/cache.rs`): files in the platform's cache directory, each by its
+  SHA-256, so a file shared by two variants, two versions or two servers is fetched once; the
+  index each server last gave for each game beside them (used when the server cannot be asked).
+  The cache keeps 2 GiB, and drops what was used longest ago. `BINGLE3D_CACHE_DIR` names another
+  folder.
+- **Trust** (`downloads/check.rs`): everything from a server is hostile until checked, against
+  the client's own limits, whatever the server's were:
+  - each file matches its hash when it is fetched and each time it is read;
+  - only appearance files, binary glTF, PNG, JPEG, KTX2 and Ogg Vorbis are taken; nothing else
+    is fetched. A look is data and never code: no shader, no script;
+  - at most 1,024 files and 256 MiB a look, 32 MiB a model or picture, 8 MiB a sound and 1 MiB an
+    appearance file;
+  - what a decoder is given: pictures at most 4,096 pixels a side (a model's own too), a model's
+    meshes at most 500,000 vertices, no list in it over 4 million, and no buffer or picture it
+    names outside itself (which the asset server would follow); a sound at most 60 s;
+  - paths keep to a look's folder. A fetched file is found under `downloads/<sha256>.<kind>`,
+    never by its path, and the look that names it is renamed to match, so it adds to the client
+    and never replaces a file the client ships or another game's. A file a look names (a model,
+    a picture) by one of the client's own paths or its private folder's is not taken: the
+    client's own is used;
+  - a look that cannot be read is left out, as a whole, and logged, and the game is drawn from
+    the defaults: one written for a later format, one that does not say its format, one that
+    names a file it did not bring (or that was refused) and the client does not have.
+- **Drawing**: the look is an appearance file like any other, for the game it came with alone,
+  whatever its `games` say (a pack's game ids carry its version), and its card's picture is the
+  one it gives that game, or its only one. It may name the client's own models, materials and
+  sounds, as a private look does. Of several appearance files in a look, the one that names the
+  game is read, else the only one.
+- **The appearance file has a format number** (`format`, now 1): a look from a server must say
+  it; a built-in or private one may leave it out.
+- **Tried** against a Bingle built from its main branch with the Draughts fixture pack, marked
+  private, and this repository's `tests/pack/clients/bingle-3d/` as its folder
+  (`scripts/pack-server.sh`): the game is listed with the pack's picture, and opening it fetches
+  its look (jade and carnelian checkers, its own textures) and draws it.
+- Not built: fonts or environments in a look; what was refused shown anywhere but the log.
+
 ### A card game of several seats: a table laid round its seats (2026-11-25)
 
 The first game with hands of cards that each player keeps to themselves, and the first for
@@ -1135,12 +1195,16 @@ running the client on the headset. It is young and changing; look at it again th
 
 Settled 2026-11-16:
 
-1. **Assets ship with the client.** Models, textures and sounds live in this repository and are
-   packaged with the binary. Downloading from the server waits until a data pack needs it.
+1. **Assets ship with the client, and a game's look may come from the server.** Models,
+   textures and sounds live in this repository and are packaged with the binary. A server may
+   offer the look of a game the client does not ship (an install pack's, Bingle's ADR 0147),
+   which the client fetches, checks and keeps (*Downloaded looks*, 2026-11-26).
 2. **Private games' appearance is loaded from a folder at run time.** The binary is the same for
    everyone; a private build is the public binary plus a folder of appearance files from
    `bingle-private`, found by a configured path. Shared code still names no game. (Built
-   2026-11-24: a private game is shown when that folder has its look; *Private games*.)
+   2026-11-24: a private game is shown when that folder has its look; *Private games*.) It
+   stays beside looks from a server: for the overlay's games, and for making a look before it
+   goes into a pack, since a look in the folder is used before one the server offers.
 3. **Bingle publishes a schema and an API version** (done in
    [bingle#212](https://github.com/noderunner/bingle/issues/212), Bingle's ADR 0134), so the client
    checks the server it talks to at start-up and says clearly when it is too old or too new, rather

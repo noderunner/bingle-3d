@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use crate::appearance::Appearances;
 use crate::browser::{Action, button, buttons, colours, line, seat_dot};
 use crate::clock;
+use crate::downloads::Downloads;
 use crate::fonts::UiFonts;
 use crate::lobby;
 use crate::net::api::{GameInfo, Gesture};
@@ -35,7 +36,9 @@ impl Plugin for GamePanelPlugin {
                 (
                     watch_on_start.run_if(resource_changed::<ServerStatus>),
                     rebuild.run_if(
-                        resource_changed::<WatchStatus>.or_eager(resource_changed::<VoiceChat>),
+                        resource_changed::<WatchStatus>
+                            .or_eager(resource_changed::<VoiceChat>)
+                            .or_eager(resource_changed::<Downloads>),
                     ),
                     tick_clocks,
                 )
@@ -46,6 +49,27 @@ impl Plugin for GamePanelPlugin {
 
 #[derive(Resource)]
 struct WatchOnStart(Option<Target>);
+
+/// A game waiting for the look the server offers: how far it has been fetched, and the way to
+/// play on without it.
+fn looking(p: &mut ChildSpawnerCommands, f: &UiFonts, (done, total): (u64, u64)) {
+    p.spawn(line(
+        f.semibold(16.0),
+        colours::TEXT,
+        "Fetching the game's look…",
+    ));
+    if total > 0 {
+        let mb = |bytes: u64| bytes as f64 / 1e6;
+        p.spawn(line(
+            f.regular(13.0),
+            colours::MUTED,
+            &format!("{:.1} of {:.1} MB", mb(done), mb(total)),
+        ));
+    }
+    p.spawn(buttons()).with_children(|row| {
+        row.spawn(button(f, "Play without it", Action::SkipLook));
+    });
+}
 
 /// A seat's time on the panel, counted down between the server's reports.
 #[derive(Component)]
@@ -124,6 +148,7 @@ fn rebuild(
     voice: Res<VoiceChat>,
     fonts: Res<UiFonts>,
     appearances: Res<Appearances>,
+    downloads: Res<Downloads>,
     panel: Single<(Entity, &mut Node), With<GamePanel>>,
 ) {
     let (panel, mut node) = panel.into_inner();
@@ -148,6 +173,9 @@ fn rebuild(
                     lobby::draw(p, f, table, watching.lobby_problem.as_ref());
                     resigning(p, f, table, &watching.resign);
                     voice_chat::draw(p, f, &voice, table);
+                }
+                None if downloads.holds(watching.id()) => {
+                    looking(p, f, downloads.waiting(watching.id()).unwrap_or_default());
                 }
                 None => {
                     let what = match &watching.target {
@@ -581,6 +609,7 @@ mod tests {
             reserves: Default::default(),
             cards: None,
             engine: String::new(),
+            clients: Vec::new(),
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),

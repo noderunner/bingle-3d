@@ -38,7 +38,8 @@ only how that looks ([ADR 0124](https://github.com/noderunner/bingle/blob/main/d
   definition, a palette by seat, a shape by piece type. A game may later get a hand-made
   appearance in this client, but never needs one.
 - **No game is named in shared code.** Game-specific appearance lives in per-game files, so
-  games kept out of public repositories (Bingle's private overlay) can bring their own.
+  games kept out of public repositories (Bingle's private overlay) can bring their own, and a
+  server can offer a game's look for the client to fetch.
 
 ## Downloads
 
@@ -179,9 +180,9 @@ wood with a dark border, and red checkers for arrows. Blooms' stones are polishe
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden
 bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
 captures is carried to a small wooden tray in front of them, with a square for every capture the win
-needs. The client needs a Bingle whose API is 1.10 or newer. Games a server builds from its private
-overlay (commercial games, marked `private`) are not shown: they are for a private build of the
-client.
+needs. The client needs a Bingle whose API is 1.17 or newer. Games a server builds from its private
+overlay (commercial games, marked `private`) are shown only when the client has their look: one the
+server offers, or one in the private folder.
 
 Where the table stands is yours to choose, and nobody else's business: the server knows nothing
 of it, and each player at a table may be sitting somewhere else. *Place*, at the bottom right,
@@ -347,9 +348,17 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   requests, and invitations to games, and *Write* opens a conversation with a friend; your
   friends see you online while the client runs.
 - `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
+- **A game's look from the server**: a server may offer the look of a game this client does not
+  ship (an install pack's `clients/bingle-3d/`, Bingle's ADR 0147). The client fetches it when the
+  game is opened (its card's picture when the list shows it), checks it, and keeps it in the
+  platform's cache directory (`~/.cache/bingle-3d`, `%LOCALAPPDATA%\bingle-3d\cache`), up to 2 GB;
+  `BINGLE3D_CACHE_DIR` names another. `bash scripts/pack-server.sh` runs a Bingle, built from the
+  checkout beside this one, with a pack that offers one (`tests/pack/`).
 - A server built with Bingle's private overlay offers games this repository does not draw. The
-  client shows them only with the private folder of their looks (`bingle-3d/assets` in the
-  overlay): `--private-dir DIR`, `BINGLE3D_PRIVATE_DIR`, or `private_dir` in `config.toml`.
+  client shows them only with their look: one the server offers, or the private folder of their
+  looks (`bingle-3d/assets` in the overlay): `--private-dir DIR`, `BINGLE3D_PRIVATE_DIR`, or
+  `private_dir` in `config.toml`. A look in the private folder is used before one the server
+  offers, which is how a look is tried before it goes into a pack.
 
 **Windows**: install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 with the *Desktop development with C++* workload, then rustup, then `cargo run`.

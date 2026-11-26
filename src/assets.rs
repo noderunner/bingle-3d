@@ -5,9 +5,14 @@
 //! Beside them, the private folder (plan, decision 2): the looks of games this repository may
 //! not hold (Bingle's ADR 0127), read once at start-up and found by the same paths, so a private
 //! game's appearance file, its models and its textures are used as ours are.
+//!
+//! And the files of the looks a server offers (`downloads.rs`), once fetched and checked: each
+//! under `downloads/` by its hash, so that no game's file is ever found by another's path, and
+//! the look that names it is renamed to match.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use bevy::asset::io::embedded::EmbeddedAssetRegistry;
 use bevy::prelude::*;
@@ -211,6 +216,35 @@ pub const PRIVATE_DIR_VAR: &str = "BINGLE3D_PRIVATE_DIR";
 /// The private folder's files, by their paths in it, once read (`use_private`).
 static PRIVATE: OnceLock<Vec<(String, &'static [u8])>> = OnceLock::new();
 
+/// Where the files of the looks a server offers are found: `downloads/<sha256>.<kind>`.
+pub const DOWNLOADED: &str = "downloads/";
+
+/// The files of looks a server offered, fetched in this run, by their names under `DOWNLOADED`.
+static FETCHED: RwLock<BTreeMap<String, &'static [u8]>> = RwLock::new(BTreeMap::new());
+
+/// Adds a file fetched from a server, under its name in `DOWNLOADED`, for the rest of the run,
+/// and says whether it is new: a file of the same name (the same hash) is kept only once.
+pub fn add_downloaded(name: &str, bytes: Vec<u8>) -> (&'static [u8], bool) {
+    debug_assert!(name.starts_with(DOWNLOADED));
+    let mut fetched = FETCHED.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(bytes) = fetched.get(name) {
+        return (bytes, false);
+    }
+    // Kept for the rest of the run, as ours are, and lent to the asset server as ours are.
+    let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    fetched.insert(name.to_string(), bytes);
+    (bytes, true)
+}
+
+/// A file's bytes, wherever it is: ours, the private folder's, or fetched.
+fn find(file: &str) -> Option<&'static [u8]> {
+    if file.starts_with(DOWNLOADED) {
+        let fetched = FETCHED.read().unwrap_or_else(|e| e.into_inner());
+        return fetched.get(file).copied();
+    }
+    all().find(|(f, _)| *f == file).map(|(_, bytes)| bytes)
+}
+
 /// Files read from the private folder: each by its path in it, and its bytes.
 pub type PrivateFiles = Vec<(String, Vec<u8>)>;
 
@@ -240,7 +274,7 @@ pub fn read_private(dir: &Path) -> Result<(PrivateFiles, Vec<String>), String> {
                 walk(&path, root, out, problems);
             } else if name.ends_with(".md") {
                 continue;
-            } else if FILES.iter().any(|(f, _)| *f == name) {
+            } else if FILES.iter().any(|(f, _)| *f == name) || name.starts_with(DOWNLOADED) {
                 problems.push(format!(
                     "{name}: the client has its own, so this one is left out"
                 ));
@@ -296,20 +330,18 @@ pub fn path(file: &str) -> String {
 
 /// Whether the client has this file.
 pub fn exists(file: &str) -> bool {
-    all().any(|(f, _)| f == file)
+    find(file).is_some()
 }
 
 /// A file's contents as text, if it is one of ours and is UTF-8.
 pub fn text(file: &str) -> Option<&'static str> {
-    all()
-        .find(|(f, _)| *f == file)
-        .and_then(|(_, bytes)| std::str::from_utf8(bytes).ok())
+    find(file).and_then(|bytes| std::str::from_utf8(bytes).ok())
 }
 
 /// The JSON part of one of our models: a binary glTF file is a 12-byte header, then chunks,
 /// each its length, its kind and its bytes, the JSON first.
 fn model_json(file: &str) -> Option<serde_json::Value> {
-    let bytes = all().find(|(f, _)| *f == file)?.1;
+    let bytes = find(file)?;
     if bytes.get(..4)? != b"glTF" || bytes.get(16..20)? != b"JSON" {
         return None;
     }
@@ -467,15 +499,30 @@ mod tests {
         write("appearance/made-up.toml");
         write("models/made-up.glb");
         write("models/ring.glb"); // one of ours
+        std::fs::create_dir_all(dir.join("downloads")).unwrap();
+        write("downloads/x.glb"); // where fetched files are
         write(".git/config");
         write("README.md");
         let (files, problems) = read_private(&dir).unwrap();
         let names: Vec<&str> = files.iter().map(|(f, _)| f.as_str()).collect();
         assert_eq!(names, ["appearance/made-up.toml", "models/made-up.glb"]);
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].starts_with("models/ring.glb"));
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].starts_with("downloads/x.glb"));
+        assert!(problems[1].starts_with("models/ring.glb"));
         assert!(read_private(&dir.join("not-there")).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_fetched_is_found_by_its_name_and_kept_once() {
+        let name = "downloads/test-once.toml";
+        assert!(!exists(name));
+        let (first, new) = add_downloaded(name, b"format = 1".to_vec());
+        assert!(new);
+        let (again, new) = add_downloaded(name, b"format = 1".to_vec());
+        assert!(!new && std::ptr::eq(first, again));
+        assert_eq!(text(name), Some("format = 1"));
+        assert!(!all().any(|(f, _)| f == name), "not listed with ours");
     }
 
     #[test]

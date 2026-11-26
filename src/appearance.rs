@@ -61,9 +61,14 @@
 //! - `panel.counters`: the view's counters of each seat shown under its name in the game's
 //!   panel (a score, tricks taken).
 //!
+//! - `format`: the format of appearance file it is written in ([`FORMAT`]), which a look a
+//!   server offers must say (`downloads.rs`): one written for a later format is left out.
+//!
 //! The private folder (plan, decision 2) adds files of its own, for the games of Bingle's
 //! private overlay (ADR 0127), read here as these are; a game the server marks private is
-//! shown only when one of them is for it (`Appearances::private_games`).
+//! shown only when one of them is for it (`Appearances::private_games`), or the server offers
+//! a look for it. A look a server offers is read here too, once it is fetched and checked
+//! (`Appearance::downloaded`).
 
 use std::collections::BTreeMap;
 
@@ -73,10 +78,20 @@ use serde::Deserialize;
 use crate::assets;
 use crate::look::{self, MaterialSpec};
 
+/// The format of appearance file this client reads. A file says the format it was written in
+/// (`format`, 1 when it does not); one written for a later format is not read. Raise it when a
+/// file this client reads would be read otherwise by an older one, and say what changed here:
+/// - 1: the first (2026-11-26).
+pub const FORMAT: u32 = 1;
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Appearance {
-    /// The games this is for, by the id the server gives them.
+    /// The format it is written in ([`FORMAT`]).
+    pub format: Option<u32>,
+    /// The games this is for, by the id the server gives them. A look a server offers is for
+    /// the game it came with, whatever it says.
+    #[serde(default)]
     pub games: Vec<String>,
     #[serde(default)]
     pub pieces: BTreeMap<String, PieceLook>,
@@ -128,6 +143,9 @@ pub struct Appearance {
     /// server marks them private.
     #[serde(skip)]
     pub private: bool,
+    /// Offered by the server, fetched and checked (`downloads.rs`).
+    #[serde(skip)]
+    pub downloaded: bool,
 }
 
 /// The view's board of choices (`ext.view.<view>`: `lines`, each with an `id`, an `icon` and
@@ -595,9 +613,145 @@ fn sides_problems(piece: &PieceLook, materials: &BTreeMap<String, MaterialSpec>)
     out
 }
 
+/// Only the format an appearance file says it is written in: read before the rest, since a
+/// file of a later format may say what this client cannot read.
+#[derive(Deserialize)]
+struct Format {
+    format: Option<toml::Value>,
+}
+
 impl Appearance {
     pub fn parse(text: &str) -> Result<Self, String> {
+        let said = toml::from_str::<Format>(text)
+            .map_err(|e| e.to_string())?
+            .format;
+        if let Some(format) = said {
+            match format.as_integer() {
+                Some(n) if (1..=i64::from(FORMAT)).contains(&n) => {}
+                Some(n) if n > i64::from(FORMAT) => {
+                    return Err(format!(
+                        "written for format {n} of the appearance file; this client reads {FORMAT}"
+                    ));
+                }
+                _ => return Err(format!("format {format} is not a format")),
+            }
+        }
         toml::from_str(text).map_err(|e| e.to_string())
+    }
+
+    /// A look a server offers for this game: read from its appearance files (by their paths),
+    /// for this game alone, with every file it names renamed by `file`, which gives where the
+    /// client keeps one fetched (None for a file the look's folder does not have, or that was
+    /// refused). It must say its format, and name only files it brought and the client's own
+    /// (not its private folder's), and materials it has: a look that does not is left out, as
+    /// a whole, and the game is drawn from the defaults.
+    pub fn downloaded(
+        game: &str,
+        looks: &[(String, String)],
+        file: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, String> {
+        let (path, text) = Self::choose(game, looks)?;
+        let mut look = Self::parse(text).map_err(|e| format!("{path}: {e}"))?;
+        if look.format.is_none() {
+            return Err(format!(
+                "{path}: a look from a server says the format it is written in (format = {FORMAT})"
+            ));
+        }
+        look.retarget(game);
+        for name in look.files_mut() {
+            *name = match file(name) {
+                Some(kept) => kept,
+                None if assets::FILES.iter().any(|(f, _)| f == name) => continue,
+                // Nothing the client has: the look's problems say so.
+                None => format!("{}missing/{name}", assets::DOWNLOADED),
+            };
+        }
+        let problems = look.problems();
+        if !problems.is_empty() {
+            return Err(format!("{path}: {}", problems.join("; ")));
+        }
+        look.downloaded = true;
+        Ok(look)
+    }
+
+    /// The path of the picture on this game's card that its look from a server names, if any.
+    pub fn downloaded_picture(game: &str, looks: &[(String, String)]) -> Option<String> {
+        let (_, text) = Self::choose(game, looks).ok()?;
+        let mut look = Self::parse(text).ok()?;
+        look.retarget(game);
+        look.card.pictures.remove(game)
+    }
+
+    /// The appearance file of a server's look for this game: the one that names it, else the
+    /// only one.
+    fn choose<'a>(game: &str, looks: &'a [(String, String)]) -> Result<(&'a str, &'a str), String> {
+        let named = looks.iter().find(|(_, text)| {
+            toml::from_str::<Games>(text).is_ok_and(|g| g.games.iter().any(|g| g == game))
+        });
+        match (named, looks) {
+            (Some((path, text)), _) | (None, [(path, text)]) => Ok((path, text)),
+            (None, []) => Err("the server's look has no appearance file".into()),
+            (None, _) => Err(
+                "the server's look has several appearance files, and none names the game".into(),
+            ),
+        }
+    }
+
+    /// For this game alone: what is said of a game by its id is said of this one, when it is
+    /// said of this one or of one game only (a pack's look need not know the id its game is
+    /// given, with its version in it).
+    fn retarget(&mut self, game: &str) {
+        fn only<T>(map: &mut BTreeMap<String, T>, game: &str) {
+            let mine = map.remove(game).or_else(|| match map.len() {
+                1 => map.pop_first().map(|(_, v)| v),
+                _ => None,
+            });
+            map.clear();
+            if let Some(v) = mine {
+                map.insert(game.to_string(), v);
+            }
+        }
+        self.games = vec![game.to_string()];
+        only(&mut self.card.pictures, game);
+        only(&mut self.board.marks, game);
+    }
+
+    /// Every file it names: models, pictures, textures and sounds.
+    pub fn files_mut(&mut self) -> Vec<&mut String> {
+        let mut out: Vec<&mut String> = Vec::new();
+        out.extend(self.pieces.values_mut().map(|p| &mut p.model));
+        out.extend(self.card.pictures.values_mut());
+        if let Some(b) = &mut self.bowls {
+            out.extend([&mut b.model, &mut b.stones]);
+        }
+        if let Some(f) = &mut self.fences {
+            out.extend([&mut f.model, &mut f.bowl, &mut f.heap]);
+        }
+        let s = &mut self.sounds;
+        out.extend(
+            [
+                &mut s.lift,
+                &mut s.put,
+                &mut s.play,
+                &mut s.win,
+                &mut s.lose,
+                &mut s.capture,
+            ]
+            .into_iter()
+            .flatten(),
+        );
+        if let Some(g) = &mut self.grid {
+            out.extend(g.pictures.values_mut());
+            out.extend(&mut g.covered);
+        }
+        for m in self.materials.values_mut() {
+            out.extend(
+                [&mut m.albedo, &mut m.normal, &mut m.arm]
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        out
     }
 
     /// What is wrong with it: names of materials it does not define, and files the client does
@@ -854,6 +1008,13 @@ impl Appearance {
     }
 }
 
+/// Only the games an appearance file is for.
+#[derive(Deserialize)]
+struct Games {
+    #[serde(default)]
+    games: Vec<String>,
+}
+
 /// Every appearance the client has.
 #[derive(Resource, Debug, Default)]
 pub struct Appearances(pub Vec<Appearance>);
@@ -1054,6 +1215,140 @@ mod tests {
             count += 1;
         }
         assert!(count > 0, "the private folder has no appearance files");
+    }
+
+    #[test]
+    fn a_file_says_its_format_and_one_for_a_later_format_is_not_read() {
+        assert_eq!(Appearance::parse("games = [\"a\"]").unwrap().format, None);
+        assert_eq!(
+            Appearance::parse("format = 1\ngames = [\"a\"]")
+                .unwrap()
+                .format,
+            Some(FORMAT)
+        );
+        let later = Appearance::parse("format = 2\ngames = [\"a\"]\nhovers = true").unwrap_err();
+        assert!(later.contains("written for format 2"), "{later}");
+        assert!(Appearance::parse("format = \"one\"").is_err());
+        assert!(Appearance::parse("format = 0").is_err());
+    }
+
+    #[test]
+    fn a_look_from_a_server_is_for_its_game_and_names_only_what_it_brought_and_ours() {
+        let (man, _) = assets::add_downloaded("downloads/test-look-man.glb", b"x".to_vec());
+        assert_eq!(man, b"x");
+        assets::add_downloaded("downloads/test-look-card.png", b"x".to_vec());
+        let kept = |path: &str| {
+            let name = match path {
+                "models/man.glb" => "man.glb",
+                "pictures/card.png" => "card.png",
+                _ => return None,
+            };
+            Some(format!("downloads/test-look-{name}"))
+        };
+        let text = |extra: &str| {
+            format!(
+                "format = 1\ngames = [\"other\"]\n[pieces.man]\nmodel = \"models/man.glb\"\n\
+                 [pieces.king]\nmodel = \"models/checkers/king.glb\"\n\
+                 [card.pictures]\n\"x-1.0.0\" = \"pictures/card.png\"\n{extra}"
+            )
+        };
+        let one = |text: String| vec![("appearance/x.toml".to_string(), text)];
+        let look = Appearance::downloaded("x-2.0.0", &one(text("")), kept).unwrap();
+        assert!(look.downloaded);
+        assert_eq!(look.games, ["x-2.0.0"], "for the game it came with alone");
+        assert_eq!(
+            look.card.pictures,
+            BTreeMap::from([("x-2.0.0".into(), "downloads/test-look-card.png".into())]),
+            "the only picture it has is this game's"
+        );
+        assert_eq!(look.pieces["man"].model, "downloads/test-look-man.glb");
+        assert_eq!(
+            look.pieces["king"].model, "models/checkers/king.glb",
+            "ours"
+        );
+        assert_eq!(
+            Appearance::downloaded_picture("x-2.0.0", &one(text(""))).as_deref(),
+            Some("pictures/card.png")
+        );
+
+        // Something it did not bring, nor the client has, and it is left out.
+        let lacking = text("[pieces.queen]\nmodel = \"models/queen.glb\"\n");
+        let e = Appearance::downloaded("x-2.0.0", &one(lacking), kept).unwrap_err();
+        assert!(
+            e.contains("no model downloads/missing/models/queen.glb"),
+            "{e}"
+        );
+        // A look that does not say its format, or says a later one.
+        let e = Appearance::downloaded("x", &one(text("").replace("format = 1", "")), kept);
+        assert!(e.unwrap_err().contains("says the format"));
+        let e = Appearance::downloaded(
+            "x",
+            &one(text("").replace("format = 1", "format = 9")),
+            kept,
+        );
+        assert!(e.unwrap_err().contains("format 9"));
+
+        // Of several files, the one that names the game; none naming it is no look.
+        let several = vec![
+            (
+                "appearance/a.toml".to_string(),
+                "format = 1\ngames = [\"a\"]".to_string(),
+            ),
+            (
+                "appearance/b.toml".to_string(),
+                "format = 1\ngames = [\"b\"]".to_string(),
+            ),
+        ];
+        assert_eq!(
+            Appearance::downloaded("b", &several, kept).unwrap().games,
+            ["b"]
+        );
+        assert!(Appearance::downloaded("c", &several, kept).is_err());
+        assert!(Appearance::downloaded("c", &[], kept).is_err());
+    }
+
+    #[test]
+    fn every_file_a_look_names_is_among_its_files() {
+        let mut look = Appearance::parse(
+            r#"games = ["g"]
+            [pieces.p]
+            model = "a"
+            [card.pictures]
+            g = "b"
+            [bowls]
+            model = "c"
+            stones = "d"
+            material = "m"
+            [fences]
+            model = "e"
+            bowl = "f"
+            heap = "g"
+            material = "m"
+            bowl_material = "m"
+            [sounds]
+            lift = "h"
+            put = "i"
+            play = "j"
+            win = "k"
+            lose = "l"
+            capture = "n"
+            [grid]
+            view = "v"
+            choice = "c"
+            at = [0, 0]
+            pictures = { x = "o" }
+            covered = "p"
+            [materials.m]
+            albedo = "q"
+            normal = "r"
+            arm = "s"
+            "#,
+        )
+        .unwrap();
+        let mut names: Vec<String> = look.files_mut().into_iter().map(|f| f.clone()).collect();
+        names.sort();
+        let all: Vec<String> = "abcdefghijklnopqrs".chars().map(String::from).collect();
+        assert_eq!(names, all);
     }
 
     #[test]

@@ -15,11 +15,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// `leave`, `remove`, `bots`) to the schema, 1.5 the sign-in that answers with a session
 /// token, for a client that is not a browser, 1.6 voice chat's calls and events, 1.8 the
 /// games built from the server's private overlay marked `private`, 1.10 the positions a
-/// legal selection takes pieces from (`captures`), and 1.14 the boards of a game played on
-/// several side by side (`Board::boards`: Alice chess).
+/// legal selection takes pieces from (`captures`), 1.14 the boards of a game played on
+/// several side by side (`Board::boards`: Alice chess), and 1.17 the files a game offers each
+/// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 14,
+    minor: 17,
     patch: 0,
 };
 
@@ -442,9 +443,41 @@ pub struct GameDef {
     /// How many tutorials the game has.
     #[serde(default)]
     pub tutorials: u32,
-    /// Built from the server's private overlay (a commercial game): this build does not show it.
+    /// Built from the server's private overlay (a commercial game): this build does not show it,
+    /// unless it has a look for it, its own or one the server offers.
     #[serde(default)]
     pub private: bool,
+    /// The clients other than the web page that the server has files for, for this game
+    /// (API 1.17): [`CLIENT`] among them means it offers a look to fetch.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub clients: Vec<String>,
+}
+
+impl GameDef {
+    /// Whether the server offers this client a look for the game.
+    pub fn offers_look(&self) -> bool {
+        self.clients.iter().any(|c| c == CLIENT)
+    }
+}
+
+/// This client's name among a game's `clients`: the folder of a pack that holds its files.
+pub const CLIENT: &str = "bingle-3d";
+
+/// `GET /api/game-defs/{id}/clients/{client}`: the files a client draws a game with (API 1.17).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ClientIndex {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub files: Vec<ClientFile>,
+}
+
+/// One file of a [`ClientIndex`], fetched from `.../clients/{client}/files/{path}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ClientFile {
+    /// Its path in the client's folder, `/` between the folders.
+    pub path: String,
+    pub size: u64,
+    /// The SHA-256 of its bytes, in lower-case hex: the name it is kept by.
+    pub sha256: String,
 }
 
 /// `GET /api/games`.
@@ -530,6 +563,9 @@ pub struct GameInfo {
     /// and a seat's own to whoever holds it (`Session::state`).
     #[serde(default)]
     pub engine: String,
+    /// The clients the server has files for, for this game (API 1.17), as [`GameDef::clients`].
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub clients: Vec<String>,
 }
 
 impl GameInfo {
@@ -1561,8 +1597,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.14.0")), Compatible);
-        assert_eq!(compatibility(Some("1.15.2")), Compatible);
+        assert_eq!(compatibility(Some("1.17.0")), Compatible);
+        assert_eq!(compatibility(Some("1.18.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.16.3")),
+            ServerTooOld(Some("1.16.3".into())),
+            "1.16 offers no client a game's files"
+        );
         assert_eq!(
             compatibility(Some("1.13.0")),
             ServerTooOld(Some("1.13.0".into())),
@@ -1697,7 +1738,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.14.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.17.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -1875,6 +1916,7 @@ mod tests {
         reads::<Vec<GameDef>>("GET /api/game-defs");
         reads::<OpenGames>("GET /api/games");
         reads::<GameInfo>("GET /api/game-defs/{id}");
+        reads::<ClientIndex>("GET /api/game-defs/{id}/clients/{client}");
         reads::<Vec<BotInfo>>("GET /api/bots");
         reads::<BotMatchResponse>("POST /api/bot-matches");
         reads::<Game>("GET /api/games/{code}");

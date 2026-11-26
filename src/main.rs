@@ -19,6 +19,7 @@ mod config;
 mod coordinates;
 mod cursor;
 mod display;
+mod downloads;
 mod environment;
 mod environment_choice;
 mod escape_menu;
@@ -187,6 +188,8 @@ fn main() -> AppExit {
             server: opts.server.clone(),
             start: opts.start(),
         })
+        // The looks a server offers, fetched as the games are listed and opened.
+        .add_plugins(downloads::DownloadsPlugin)
         .insert_resource(camera::StartView(
             opts.view
                 .as_deref()
