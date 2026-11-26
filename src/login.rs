@@ -675,6 +675,11 @@ fn rebuild_messages(
                 if let Some(problem) = &login.problem {
                     area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
                 }
+                // What the client could not read or keep, a setup file among it: said here
+                // too, since this is the screen a file that was not taken leaves the player on.
+                for notice in &status.notices {
+                    area.spawn(line(f.regular(13.0), colours::WARN, notice));
+                }
                 if form.is_some_and(|form| form.busy) {
                     area.spawn(line(f.regular(13.0), colours::MUTED, "Logging in…"));
                 } else if login.entering {

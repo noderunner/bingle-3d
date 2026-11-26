@@ -54,7 +54,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.17.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.18.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
@@ -1035,6 +1035,40 @@ for Bingle's own Draughts fixture.
   (`scripts/pack-server.sh`): the game is listed with the pack's picture, and opening it fetches
   its look (jade and carnelian checkers, its own textures) and draws it.
 - Not built: fonts or environments in a look; what was refused shown anywhere but the log.
+
+### A server's setup file (2026-11-26)
+
+A Bingle server can hand its players this client and a setup file made for the server and for
+whoever asks (Bingle's ADR 0151, bingle#309): which server, and who to be there. A client run
+for the first time then starts as that player with nothing to type (#82).
+
+- **The file** is `bingle-3d-setup.toml`: `format = 1`, `server`, and, as the player was in the
+  browser, an account's `name` and `sign_in_code`, or a guest's `guest_key`; and
+  `certificate_sha256` from a server with a certificate it made for itself. `setup.rs` reads
+  it, with no Bevy in it.
+- **Found** by `--setup FILE`, else beside the program, which is where a player unpacking a
+  build can put it and where the Steam Frame's upload takes it from.
+- **Taken into the config store before anything connects**: the server, the name and the
+  certificate (a `trusted` entry for the server's origin) to `config.toml`, a guest's key to
+  `keys.toml` (and a session kept for that server forgotten here: the file says who to be),
+  and `auto_login` on for a guest. An account's is turned on once its code has signed in, with
+  what the login screen remembers: a code the server turns down must not leave the client
+  going in by itself as a new guest.
+- **A sign-in code is kept nowhere.** It is the run's first request (`Request::SetupSignIn`,
+  `POST /auth/login {code}`, API 1.18), sent from the login screen: signed in, the main screen
+  follows as after a sign-in typed there; refused, the login screen says what the server said,
+  with the server filled in. The guest key goes with it as with any sign-in; one the server no
+  longer knows is refused before the code is looked at, so the code is then tried alone.
+- **Deleted once used up**, since it holds a credential: at once without a code, and when the
+  code is spent or refused with one. Not reached, the server leaves the code good, so the file
+  stays for the next start. A file that cannot be taken (another format, a server the client
+  may not use, a config that cannot be written) is left where it is and the player is told, on
+  the login screen too, which now shows the client's notices.
+- **Its server is the run's**, whatever `--server` says: the code is good nowhere else.
+- **`release.json`** is published with each release (`scripts/release-json.sh`: the version and
+  `API_VERSION`), for a server to offer only the builds its API can be used by.
+- Not built: a private folder found beside the program by itself; a link that opens the
+  installed client with the same code and no file (#77).
 
 ### A card game of several seats: a table laid round its seats (2026-11-25)
 

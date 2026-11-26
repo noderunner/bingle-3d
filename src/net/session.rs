@@ -27,10 +27,12 @@ use super::api::{
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
 use super::api::{CLIENT, ClientFile, ClientIndex};
+use super::api::{
+    CodeLoginRequest, LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse,
+};
 use super::api::{DirectCallRequest, DirectSignalRequest, IceServer, RtcConfig};
 use super::api::{DirectHistory, DirectHistoryRequest, DirectMessage, DirectMessageRequest};
 use super::api::{FriendBody, FriendSettings, FriendsList, HereRequest, HereResponse, OkResponse};
-use super::api::{LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse};
 use super::api::{VoicePeer, VoicePeers, VoiceRequest, VoiceSignalRequest};
 use super::server_url::{Scheme, ServerUrl, query_value};
 use super::socket::{self, Role, Socket};
@@ -427,6 +429,30 @@ impl Session {
         let answer: SessionTokenResponse =
             self.call(&url, "POST", "/auth/login", guest.as_deref(), Some(&body))?;
         self.signed_in(&url, answer)
+    }
+
+    /// Signs in with the code of a server's setup file (`setup.rs`), which works once. The
+    /// guest key goes with it as with any sign-in; a key the server no longer knows is refused
+    /// before the code is looked at, so the code is then tried by itself.
+    pub fn sign_in_with_code(&mut self, code: &str) -> Result<SignIn, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(CodeLoginRequest {
+            code: code.to_string(),
+        })
+        .expect("a sign-in is JSON");
+        let guest = self.store.guest_key(&url.origin()).map(str::to_string);
+        let mut answer: Result<SessionTokenResponse, Problem> =
+            self.call(&url, "POST", "/auth/login", guest.as_deref(), Some(&body));
+        if guest.is_some() && matches!(answer, Err(Problem::Refused { status: 401, .. })) {
+            answer = self.call(&url, "POST", "/auth/login", None, Some(&body));
+        }
+        match self.signed_in(&url, answer?)? {
+            SignIn::Done(account) => Ok(SignIn::Done(account)),
+            SignIn::NeedsCode { .. } => Err(Problem::NotBingle(format!(
+                "{url} asked for a second factor after a setup file's sign-in code, which Bingle \
+                 does not."
+            ))),
+        }
     }
 
     /// The second step: a code, after the password was right.
@@ -1663,7 +1689,7 @@ pub(crate) mod tests {
         assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.17.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.18.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1701,7 +1727,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.17.0");
+        assert_eq!(probe.api_version, "1.18.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1746,7 +1772,7 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.17.0");
+        assert_eq!(snap.api_version, "1.18.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
@@ -2077,6 +2103,76 @@ pub(crate) mod tests {
                 _ => (401, r#"{"error":"auth: who is this?"}"#.into()),
             }
         })
+    }
+
+    /// A server that takes a setup file's sign-in code once, and knows no guest key.
+    pub(crate) fn takes_a_code_once() -> Box<Handler> {
+        let inner = accounts(false, Arc::new(Mutex::new(false)));
+        let spent = Mutex::new(false);
+        Box::new(move |req: &Seen| {
+            let body: serde_json::Value = serde_json::from_str(&req.body).unwrap_or_default();
+            if req.path != "/auth/login" || body.get("code").is_none() {
+                return inner(req);
+            }
+            let mut spent = spent.lock().unwrap();
+            if req.auth.is_some() {
+                // Refused before the sign-in is looked at: the code is not spent by it.
+                let error = "auth: that guest key is not one this server knows";
+                (401, format!(r#"{{"error":"{error}"}}"#))
+            } else if body["code"] == "bgc_good" && !*spent {
+                *spent = true;
+                let me = r#"{"kind":"account","handle":"ana","display_name":"Ana","accounts":true,"signup":false}"#;
+                (
+                    200,
+                    format!(r#"{{"token":"bgs_ana","expires":"x","me":{me}}}"#),
+                )
+            } else {
+                let error =
+                    "auth: that sign-in code does not work: it was used already, or it is too old";
+                (401, format!(r#"{{"error":"{error}"}}"#))
+            }
+        })
+    }
+
+    #[test]
+    fn a_setup_files_code_signs_in_once_and_a_guest_key_the_server_forgot_does_not_cost_it() {
+        let (addr, seen) = serve(takes_a_code_once());
+        let origin = ServerUrl::parse(&addr).unwrap().origin();
+        let mut store = Store::load(None);
+        store
+            .set_guest_key(&origin, Some("bgg_forgotten".into()))
+            .unwrap();
+        let mut s = Session::new(Some(&addr), store);
+
+        let signed = s.sign_in_with_code("bgc_good").unwrap();
+        let SignIn::Done(account) = signed else {
+            panic!("{signed:?}")
+        };
+        assert_eq!(account.handle, "ana");
+        assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
+        {
+            let seen = seen.lock().unwrap();
+            let logins: Vec<&Seen> = seen.iter().filter(|r| r.path == "/auth/login").collect();
+            assert_eq!(logins.len(), 2);
+            assert_eq!(
+                logins[0].auth.as_deref(),
+                Some("Bearer bgg_forgotten"),
+                "the guest goes along, as with any sign-in"
+            );
+            assert_eq!(logins[1].auth, None, "then the code by itself");
+            let sent: serde_json::Value = serde_json::from_str(&logins[1].body).unwrap();
+            assert_eq!(sent, serde_json::json!({"code": "bgc_good"}));
+        }
+        // It worked once.
+        let again = s.sign_in_with_code("bgc_good");
+        let Err(Problem::Refused {
+            status: 401,
+            message,
+        }) = again
+        else {
+            panic!("{again:?}")
+        };
+        assert!(message.contains("used already"), "{message}");
     }
 
     #[test]

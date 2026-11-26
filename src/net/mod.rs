@@ -58,6 +58,9 @@ pub struct NetPlugin {
     /// Skip the login screen this run (the command line asked for something on the server),
     /// or show it whatever the config says (`--sign-in`).
     pub start: Start,
+    /// A server's setup file named on the command line (`setup.rs`); one beside the program is
+    /// taken without being named.
+    pub setup: Option<std::path::PathBuf>,
 }
 
 /// Where a run starts.
@@ -73,11 +76,23 @@ pub enum Start {
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        let store = Store::load(Store::default_dir());
-        let notices = store.problems().to_vec();
+        let mut store = Store::load(Store::default_dir());
+        let mut notices = store.problems().to_vec();
+        // A server's setup file says which server and who to be there, before anything connects.
+        let setup = crate::setup::take(&mut store, self.setup.as_deref());
+        notices.extend(setup.notices);
         for notice in &notices {
             warn!("{notice}");
         }
+        // Its server is the run's: its sign-in code is good nowhere else.
+        let server = if setup.taken {
+            if self.server.is_some() {
+                warn!("--server is left aside: the setup file names the server");
+            }
+            None
+        } else {
+            self.server.as_deref()
+        };
         let auto_login = store.config.auto_login;
         // Where the table stands is the scene's to build; the config is this thread's to keep.
         app.insert_resource(crate::environment::Kept(store.config.environment.clone()))
@@ -102,7 +117,7 @@ impl Plugin for NetPlugin {
             .get_resource::<crate::appearance::Appearances>()
             .map(|a| a.private_games())
             .unwrap_or_default();
-        let session = Session::new(self.server.as_deref(), store).with_private_looks(private_looks);
+        let session = Session::new(server, store).with_private_looks(private_looks);
         let status = ServerStatus {
             server: session.server(),
             connection: Connection::Connecting,
@@ -116,7 +131,20 @@ impl Plugin for NetPlugin {
             Start::StraightIn => true,
             Start::Login => false,
         };
-        let screen = if straight_in {
+        let screen = if let Some(pending) = setup.pending {
+            // The file's sign-in code is spent first, from the login screen: signed in, the
+            // main screen follows; refused, the player is where they can sign in.
+            info!("signing in with the setup file's code");
+            login.entering = true;
+            // Kept once signed in, with the rest of what the login screen remembers.
+            login.auto_login = true;
+            net.send(Request::SetupSignIn {
+                code: pending.code,
+                file: pending.file,
+            });
+            login.probe(&net, true);
+            Screen::Login
+        } else if straight_in {
             net.send(Request::Connect);
             Screen::Main
         } else {
@@ -191,6 +219,12 @@ pub enum Request {
     SignIn { handle: String, password: String },
     /// The second step of signing in, with what the first answered.
     SecondFactor { pending: String, code: Code },
+    /// Sign in with the code of a server's setup file (`setup.rs`), and delete the file once
+    /// the code is spent or refused. If the server is not reached, the file stays.
+    SetupSignIn {
+        code: String,
+        file: std::path::PathBuf,
+    },
     /// End the account's session.
     SignOut,
     /// The login screen's server: use this address from now on, and say whether it is there,
@@ -386,6 +420,12 @@ enum Reply {
         result: Result<Box<(GameInfo, Vec<BotInfo>)>, Problem>,
     },
     SignIn(Result<SignIn, Problem>),
+    /// A setup file's sign-in code was tried. `notice` is what the player should know of the
+    /// file itself: it is kept for the next start, or could not be deleted.
+    SetupSignIn {
+        result: Result<SignIn, Problem>,
+        notice: Option<String>,
+    },
     SignedOut(Result<(), Problem>),
     Friends(Result<FriendsList, Problem>),
     /// A friends call was made; the list as it stands afterwards, or why it was not.
@@ -971,6 +1011,20 @@ fn handle(
         Request::SecondFactor { pending, code } => {
             Some(Reply::SignIn(session.second_factor(&pending, &code)))
         }
+        Request::SetupSignIn { code, file } => {
+            let result = session.sign_in_with_code(&code);
+            // Spent or refused, the code is worth nothing more, and the file goes. Anything
+            // else (nothing answered, a certificate to look at first) leaves it to be tried.
+            let notice = if setup_code_used(&result) {
+                crate::setup::delete(&file)
+            } else {
+                Some(format!(
+                    "The setup file {} is kept: its sign-in code will be tried at the next start.",
+                    file.display()
+                ))
+            };
+            Some(Reply::SetupSignIn { result, notice })
+        }
         Request::SignOut => Some(Reply::SignedOut(session.sign_out())),
         Request::Friends => Some(Reply::Friends(session.friends())),
         Request::Friend(call) => {
@@ -1291,6 +1345,28 @@ pub fn poll_network(
                     // Logged in from the login screen: in once connected.
                     if let Some(login) = login.as_mut() {
                         login.entering = on_login;
+                    }
+                }
+            }
+            Ok(Reply::SetupSignIn { result, notice }) => {
+                if let Some(notice) = notice {
+                    warn!("{notice}");
+                    status.notices.push(notice);
+                }
+                match result {
+                    // As a sign-in typed on the login screen: in once connected.
+                    Ok(_) => {
+                        reconnect(&net, &mut status);
+                        if let Some(login) = login.as_mut() {
+                            login.entering = on_login;
+                        }
+                    }
+                    Err(problem) => {
+                        warn!("the setup file's sign-in code: {}", problem.message());
+                        if let Some(login) = login.as_mut() {
+                            login.entering = false;
+                            login.problem = Some(problem);
+                        }
                     }
                 }
             }
@@ -1676,6 +1752,13 @@ pub fn play(net: &Net, status: &WatchStatus, notation: String, ply: u64) {
 }
 
 /// Connects again now, whatever the state.
+/// Whether a setup file's sign-in code is used up by this answer: it signed the client in, or
+/// the server turned it down (it works once, and for a day). An answer that never reached the
+/// sign-in leaves it good.
+fn setup_code_used(result: &Result<SignIn, Problem>) -> bool {
+    matches!(result, Ok(_) | Err(Problem::Refused { .. }))
+}
+
 pub fn reconnect(net: &Net, status: &mut ServerStatus) {
     status.retry_in = None;
     if !matches!(status.connection, Connection::Ready(_)) {
@@ -2132,6 +2215,122 @@ pub(crate) mod tests {
             .impulse_seat = Some(2);
         app.update();
         assert_eq!(stage(&app), None);
+    }
+
+    /// A setup file with a sign-in code, in a directory of its own.
+    fn setup_file(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bingle-3d-test-setup-code-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(crate::setup::FILE_NAME);
+        std::fs::write(&file, "format = 1\n").unwrap();
+        file
+    }
+
+    #[test]
+    fn a_setup_files_code_is_spent_and_the_file_goes_unless_the_server_was_not_reached() {
+        use session::tests::{serve, session, takes_a_code_once};
+        let (addr, _seen) = serve(takes_a_code_once());
+        let try_code = |s: &mut Session, code: &str, file: &std::path::Path| {
+            let request = Request::SetupSignIn {
+                code: code.into(),
+                file: file.to_path_buf(),
+            };
+            match handle(s, &mut None, request) {
+                Some(Reply::SetupSignIn { result, notice }) => (result, notice),
+                _ => panic!("no answer about the setup file's code"),
+            }
+        };
+
+        // Signed in: the file is used up.
+        let file = setup_file("good");
+        let (result, notice) = try_code(&mut session(&addr), "bgc_good", &file);
+        assert!(matches!(result, Ok(SignIn::Done(_))), "{result:?}");
+        assert_eq!(notice, None);
+        assert!(!file.exists());
+
+        // Refused (spent by now): the file is worth nothing, and goes too.
+        let file = setup_file("spent");
+        let (result, notice) = try_code(&mut session(&addr), "bgc_good", &file);
+        assert!(matches!(result, Err(Problem::Refused { status: 401, .. })));
+        assert_eq!(notice, None);
+        assert!(!file.exists());
+
+        // Nothing answered: the code may still be good, so the file stays, and the player is told.
+        let file = setup_file("unreached");
+        let (result, notice) = try_code(&mut session("http://127.0.0.1:1"), "bgc_good", &file);
+        assert!(matches!(result, Err(Problem::Unreachable(_))), "{result:?}");
+        assert!(notice.is_some_and(|n| n.contains("is kept")));
+        assert!(file.exists());
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn the_login_screen_goes_in_when_a_setup_files_code_signs_in_and_says_why_when_it_does_not() {
+        let (net, requests, replies) = Net::for_test_with_replies();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(ServerStatus {
+                server: "http://127.0.0.1:8080".into(),
+                connection: Connection::Connecting,
+                notices: vec![],
+                retry_in: None,
+            })
+            .insert_resource(Screen::Login)
+            .insert_resource(LoginScreen::new("http://127.0.0.1:8080", true))
+            .init_resource::<WatchStatus>()
+            .init_resource::<GameList>()
+            .init_resource::<NewGame>()
+            .init_resource::<Signing>()
+            .init_resource::<DirectCalling>()
+            .init_resource::<VoiceChat>()
+            .init_resource::<Friends>()
+            .add_systems(PreUpdate, poll_network)
+            .insert_resource(net);
+        let account = session::Account {
+            handle: "ana".into(),
+            display_name: "Ana".into(),
+            must_change_password: false,
+        };
+
+        // Refused: the login screen stops waiting and says what the server said.
+        app.world_mut().resource_mut::<LoginScreen>().entering = true;
+        replies
+            .send(Reply::SetupSignIn {
+                result: Err(Problem::Refused {
+                    status: 401,
+                    message: "that sign-in code does not work".into(),
+                }),
+                notice: Some("the file could not be deleted".into()),
+            })
+            .unwrap();
+        app.update();
+        let login = app.world().resource::<LoginScreen>();
+        assert!(!login.entering);
+        assert!(
+            login
+                .problem
+                .as_ref()
+                .is_some_and(|p| p.message().contains("sign-in code"))
+        );
+        assert_eq!(
+            app.world().resource::<ServerStatus>().notices,
+            ["the file could not be deleted"]
+        );
+        assert_eq!(requests.try_iter().count(), 0, "nothing more is asked");
+
+        // Signed in: connect as that account, and go in once connected.
+        replies
+            .send(Reply::SetupSignIn {
+                result: Ok(SignIn::Done(account)),
+                notice: None,
+            })
+            .unwrap();
+        app.update();
+        assert!(app.world().resource::<LoginScreen>().entering);
+        assert_eq!(requests.try_iter().collect::<Vec<_>>(), [Request::Connect]);
     }
 
     #[test]

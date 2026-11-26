@@ -176,6 +176,12 @@ A game's own rules and its players' words keep their terms.
 - `src/config.rs`: `config.toml` and `keys.toml` (guest keys, and the session token of an account
   signed in). Keys never go in `config.toml`, and a file that
   cannot be read is never overwritten.
+- `src/setup.rs`: a server's setup file (`bingle-3d-setup.toml`, Bingle's ADR 0151; `--setup`,
+  or beside the program), taken into the config store at start, before anything connects: the
+  server, the name, a certificate's fingerprint, a guest's key. An account's sign-in code is
+  kept nowhere: the network thread spends it first (`Request::SetupSignIn`), from the login
+  screen. **The file is deleted once it is used up, and never when the code may still be
+  good** (the server was not reached). No Bevy in it. **Never log the code or the key.**
 - `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
   and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
   or the games being played (*Active*). Its `Action` is what every panel's buttons do. The
@@ -539,8 +545,9 @@ A game's own rules and its players' words keep their terms.
 - `scripts/release-build.sh`: a release for one platform (Linux, Windows, the Steam Frame), as
   `.github/workflows/release.yml` runs it on a tag (plan, decision 11). The Frame's is
   cross-built against Valve's sysroot (`scripts/frame-sysroot.sh`); `scripts/openxr-loader.sh`
-  builds the OpenXR loader a Linux build ships in `lib/`. **Cutting a release is pushing a
-  tag: only when the maintainer asks for one.**
+  builds the OpenXR loader a Linux build ships in `lib/`. `scripts/release-json.sh` writes the
+  release's `release.json` (the version and `API_VERSION`), which a server that offers the
+  builds reads. **Cutting a release is pushing a tag: only when the maintainer asks for one.**
 
 ## Dependencies and Bevy
 

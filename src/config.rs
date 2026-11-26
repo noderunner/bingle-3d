@@ -1,6 +1,7 @@
 //! What the client remembers between runs, in the platform's config directory: `config.toml`
 //! (which server, and the certificates the player has trusted), and `keys.toml` beside it (the
 //! guest key each server gave this client, and the session of the account signed in there).
+//! A server's setup file fills both in at start (`setup.rs`).
 //!
 //! The keys are kept apart so that `config.toml` can be read, edited and shared without giving a
 //! guest or an account away. On Linux the keys file is readable by its owner only.
@@ -191,6 +192,22 @@ impl Store {
         }
         self.config.fullscreen = Some(fullscreen);
         self.config.resolution = resolution;
+        self.save_config()
+    }
+
+    /// Whether what is remembered can be written down: there is a config directory, and both
+    /// files in it could be read (one that could not is never overwritten). A setup file is
+    /// taken only then (`setup.rs`), or it would be used up and nothing kept of it.
+    pub fn can_keep(&self) -> bool {
+        self.dir.is_some() && self.config_writable && self.keys_writable
+    }
+
+    /// Remembers the name to sit down under.
+    pub fn set_name(&mut self, name: &str) -> io::Result<()> {
+        if self.config.name.as_deref() == Some(name) {
+            return Ok(());
+        }
+        self.config.name = Some(name.to_string());
         self.save_config()
     }
 
