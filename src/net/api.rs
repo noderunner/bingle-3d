@@ -16,11 +16,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// token, for a client that is not a browser, 1.6 voice chat's calls and events, 1.8 the
 /// games built from the server's private overlay marked `private`, 1.10 the positions a
 /// legal selection takes pieces from (`captures`), 1.14 the boards of a game played on
-/// several side by side (`Board::boards`: Alice chess), and 1.17 the files a game offers each
-/// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`).
+/// several side by side (`Board::boards`: Alice chess), 1.17 the files a game offers each
+/// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), and 1.18 the
+/// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 17,
+    minor: 18,
     patch: 0,
 };
 
@@ -41,6 +42,14 @@ pub struct LoginRequest {
     pub handle: String,
     pub password: String,
     pub token: bool,
+}
+
+/// `POST /auth/login`'s body from a server's setup file (`setup.rs`): its sign-in code in place
+/// of the handle and the password. The answer is a [`SessionTokenResponse`], with no second
+/// factor asked for.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CodeLoginRequest {
+    pub code: String,
 }
 
 /// `POST /auth/second`'s body: the second step of a sign-in, with a code from the account's
@@ -1597,8 +1606,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.17.0")), Compatible);
-        assert_eq!(compatibility(Some("1.18.2")), Compatible);
+        assert_eq!(compatibility(Some("1.18.0")), Compatible);
+        assert_eq!(compatibility(Some("1.19.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.17.3")),
+            ServerTooOld(Some("1.17.3".into())),
+            "1.17 takes no sign-in code"
+        );
         assert_eq!(
             compatibility(Some("1.16.3")),
             ServerTooOld(Some("1.16.3".into())),
@@ -1738,7 +1752,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.17.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.18.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -1899,6 +1913,31 @@ mod tests {
         assert_eq!(zones["stock"], vec![CardOnTable::default(); 2]);
         assert_eq!(zones["hand:2"].len(), 1, "a seat's own zone, by its owner");
         assert!(read_empty().card_zones().is_empty());
+    }
+
+    /// `scripts/release-json.sh` reads the version out of this file's text, for a release's
+    /// `release.json`: this holds the text to the form it reads.
+    #[test]
+    fn the_release_script_can_read_the_api_version() {
+        let source = include_str!("api.rs").replace("\r\n", "\n");
+        let start = source
+            .find("\npub const API_VERSION: Version = Version {\n")
+            .expect("the constant starts a line");
+        let block = &source[start..];
+        let block = &block[..block.find("\n};\n").expect("and its end another")];
+        let read: Vec<u32> = block
+            .lines()
+            .filter_map(|line| {
+                let (name, number) = line.strip_prefix("    ")?.split_once(": ")?;
+                ["major", "minor", "patch"]
+                    .contains(&name)
+                    .then(|| number.strip_suffix(',')?.parse().ok())?
+            })
+            .collect();
+        assert_eq!(
+            read,
+            [API_VERSION.major, API_VERSION.minor, API_VERSION.patch]
+        );
     }
 
     #[test]
@@ -2178,6 +2217,12 @@ mod tests {
                 handle: "ana".into(),
                 password: "secret".into(),
                 token: true,
+            }),
+        );
+        sends(
+            "POST /auth/login",
+            json(CodeLoginRequest {
+                code: "bgc_once".into(),
             }),
         );
         for (code, recovery_code) in [("123456", ""), ("", "abcd-efgh")] {

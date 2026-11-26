@@ -10,6 +10,7 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/release-build.sh
+      - scripts/release-json.sh
       - scripts/openxr-loader.sh
       - scripts/frame-sysroot.sh
 
@@ -99,12 +100,21 @@ jobs:
             tar -czf "$name.tar.gz" "$name"
           fi
 
+      # Which API these builds were made for, for a server that offers them to its players
+      # (Bingle's docs/client-builds.md). Once is enough: it is the same for every platform.
+      - name: release.json
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          bash scripts/release-json.sh > target/dist/release.json
+          cat target/dist/release.json
+
       - uses: actions/upload-artifact@v7
         with:
           name: bingle-3d-${{ matrix.platform }}
           path: |
             target/dist/*.zip
             target/dist/*.tar.gz
+            target/dist/release.json
           if-no-files-found: error
 
   publish:
@@ -137,6 +147,9 @@ jobs:
 
           The Windows and Linux builds start in the headset when SteamVR is running, and in a
           window otherwise.
+
+          `release.json` is for a Bingle server that offers these builds to its players: it
+          goes in the version's folder with the archives.
           EOF
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --title "bingle-3d $GITHUB_REF_NAME" \

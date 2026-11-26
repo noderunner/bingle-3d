@@ -48,6 +48,7 @@ mod ray_pointer;
 mod run_limit;
 mod scene;
 mod seat_markers;
+mod setup;
 mod showcase;
 mod sides;
 mod sign_in;
@@ -187,6 +188,7 @@ fn main() -> AppExit {
         .add_plugins(net::NetPlugin {
             server: opts.server.clone(),
             start: opts.start(),
+            setup: opts.setup.clone(),
         })
         // The looks a server offers, fetched as the games are listed and opened.
         .add_plugins(downloads::DownloadsPlugin)

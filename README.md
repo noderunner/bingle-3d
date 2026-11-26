@@ -54,6 +54,11 @@ is running, and in a window otherwise.
   beside it.
 - **Steam Frame**, on the headset itself with no PC: see [below](#on-the-steam-frame).
 
+A Bingle server may offer these builds itself, from the menu on its logo, with a **setup file**
+that names the server and who you are there. Put `bingle-3d-setup.toml` beside the program (in
+the unpacked folder) and start it: the client connects to that server as you, with nothing to
+type. See [below](#a-servers-setup-file).
+
 ## Building
 
 You need [rustup](https://rustup.rs/); `rust-toolchain.toml` picks the compiler (Rust 1.100), and
@@ -180,7 +185,7 @@ wood with a dark border, and red checkers for arrows. Blooms' stones are polishe
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden
 bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
 captures is carried to a small wooden tray in front of them, with a square for every capture the win
-needs. The client needs a Bingle whose API is 1.17 or newer. Games a server builds from its private
+needs. The client needs a Bingle whose API is 1.18 or newer. Games a server builds from its private
 overlay (commercial games, marked `private`) are shown only when the client has their look: one the
 server offers, or one in the private folder.
 
@@ -307,7 +312,9 @@ and once that is merged, tag main's commit `v` and that version (`v0.0.1`) and p
 [The release workflow](.github/workflows/release.yml) builds the three archives with
 `scripts/release-build.sh` and publishes them as a GitHub release; it refuses a tag that
 disagrees with `Cargo.toml`. A pull request that changes the release's scripts runs the builds
-without publishing.
+without publishing. With the archives it publishes `release.json` (`scripts/release-json.sh`):
+the version, and the version of Bingle's API the builds were made for, which a server that
+offers the builds reads to offer only those it can be used by.
 
 The models, textures and light are made by Blender, run from scripts, from CC0 sources; how to
 make them again, or add to them, is in [assets-src/README.md](assets-src/README.md). Building
@@ -348,6 +355,19 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   requests, and invitations to games, and *Write* opens a conversation with a friend; your
   friends see you online while the client runs.
 - `BINGLE3D_CONFIG_DIR` points the client at another directory, to keep a development setup apart.
+- <a id="a-servers-setup-file"></a>**A server's setup file** (`bingle-3d-setup.toml`, from the
+  menu on the server's logo; Bingle's
+  [ADR 0151](https://github.com/noderunner/bingle/blob/main/docs/decisions/0151-the-server-offers-the-3d-client-and-a-setup-file.md))
+  is taken in once at start: from beside the program, or from `--setup FILE`. Its server, your
+  name and the fingerprint of a certificate the server made for itself go into `config.toml`;
+  a guest's key goes into `keys.toml`, and the client is that guest; an account's sign-in code
+  is spent for a session, which is kept as any sign-in's is. The client then logs in by itself
+  (`auto_login`), once it is that player. **The file is deleted once it is used up**, since it
+  says who you are: at once, or, with a sign-in code, when the code is spent or the server turns it down (it works
+  once, for a day: after that, download the file again or log in with your password). If the
+  server cannot be reached the file stays for the next start; one the client cannot read (a
+  newer format, a server it may not use) is left alone, and the login screen says why. With a
+  setup file, its server is the run's, whatever `--server` says.
 - **A game's look from the server**: a server may offer the look of a game this client does not
   ship (an install pack's `clients/bingle-3d/`, Bingle's ADR 0147). The client fetches it when the
   game is opened (its card's picture when the list shows it), checks it, and keeps it in the

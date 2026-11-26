@@ -28,6 +28,9 @@ Options:
                      keep your address from the others
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
+  --setup FILE       a server's setup file (its address, and who you are there):
+                     taken in once and deleted; one named bingle-3d-setup.toml
+                     beside the program is taken without being asked for
   --private-dir DIR  the private folder of games' looks this client may not ship
                      ($BINGLE3D_PRIVATE_DIR, or config.toml's private_dir): a game
                      the server marks private is shown only when it has its look
@@ -99,6 +102,8 @@ pub struct Options {
     pub voice_check: bool,
     /// Where the table stands, for this run: an environment's id.
     pub environment: Option<String>,
+    /// A server's setup file to take in (`setup.rs`).
+    pub setup: Option<PathBuf>,
     /// The private folder of games' looks, for this run (`assets::read_private`).
     pub private_dir: Option<PathBuf>,
     /// Where the camera starts, as `YAW,PITCH,RADIUS[,X,Z]`.
@@ -203,6 +208,7 @@ impl Options {
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
                 "--environment" => opts.environment = Some(value("an environment's name")?),
                 "--private-dir" => opts.private_dir = Some(PathBuf::from(value("a folder")?)),
+                "--setup" => opts.setup = Some(PathBuf::from(value("a setup file")?)),
                 "--view" => {
                     let v = value("YAW,PITCH,RADIUS[,X,Z]")?;
                     crate::camera::StartView::parse(&v).map_err(|e| format!("--view: {e}"))?;
@@ -291,6 +297,24 @@ mod tests {
         assert_eq!(parse(&["--fullscreen"]).unwrap().fullscreen, Some(true));
         assert_eq!(parse(&["--windowed"]).unwrap().fullscreen, Some(false));
         assert!(parse(&["--windowed", "--fullscreen"]).is_err());
+    }
+
+    #[test]
+    fn a_setup_file_is_a_path() {
+        assert_eq!(parse(&[]).unwrap().setup, None);
+        assert_eq!(
+            parse(&["--setup", "bingle-3d-setup.toml"]).unwrap().setup,
+            Some(PathBuf::from("bingle-3d-setup.toml"))
+        );
+        assert_eq!(
+            parse(&[r"--setup=C:\Users\ana\Downloads\bingle-3d-setup.toml"])
+                .unwrap()
+                .setup,
+            Some(PathBuf::from(
+                r"C:\Users\ana\Downloads\bingle-3d-setup.toml"
+            ))
+        );
+        assert!(parse(&["--setup"]).is_err());
     }
 
     #[test]
