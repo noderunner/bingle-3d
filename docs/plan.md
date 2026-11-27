@@ -551,8 +551,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   selection does not say what it adds); with a pawn in hand, a see-through pawn.
   Which action builds on which side is the look's (`[fences] sides`: the API names the actions
   but not their sides). The panel's fence buttons still work.
-- Games of placing a stone (Go, Gomoku, Pente, Meridians, Hex, Havannah, Mycelium, Reversi,
-  Yavalath) play alike: each seat's stones in a turned bowl beside the board (Reversi's discs
+- Games of placing a stone (Go, Gomoku, Pente, Meridians, Hex, Havannah, Mycelium, Othello,
+  Yavalath) play alike: each seat's stones in a turned bowl beside the board (Othello's discs
   excepted, below) (the looks:
   `points.toml`, `hex.toml`, and `stones.toml` for the rest, slate and shell, and jade for
   Mycelium's green), and on the player's turn the pointer is the stone, floating and bobbing as

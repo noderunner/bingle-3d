@@ -6873,7 +6873,7 @@ wood = "contrast"
                 ("c3", &[("disc", "white")]),
             ];
             app.world_mut().resource_mut::<WatchStatus>().table =
-                Some(grid_table("reversi", cells));
+                Some(grid_table("othello", cells));
             app.update();
             app.update();
             let shown = sides(&mut app);

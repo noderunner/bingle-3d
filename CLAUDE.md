@@ -360,7 +360,7 @@ A game's own rules and its players' words keep their terms.
   then is lowered: `travel`), and the pointer's hand gives way to anything held under the
   pointer; off the board, what is held waits over the board's edge where the pointer is
   beyond it (`hand::within`, `BoardEdge`), and over a panel the hand is back. Where every
-  click places one stone (Go, Hex, Reversi: `Turn::auto_hand`), the stone is held under the
+  click places one stone (Go, Hex, Othello: `Turn::auto_hand`), the stone is held under the
   pointer by itself and carried from there to where it is placed. The pointer's place is read
   from a board's `Spot`s and from anything marked `hand::Surface` (a card, the cloth).
 - `src/cursor.rs`: the pointer, which is the client's own: the system's cursor is never shown

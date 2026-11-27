@@ -438,7 +438,7 @@ impl Turn {
 
     /// The kind of piece the player holds without taking it from anywhere, at the start of a
     /// selection where every click on the board places one piece of that kind, and that is all
-    /// it does (Go, Hex, Reversi: a stone, held under the pointer). Choices that are not clicks
+    /// it does (Go, Hex, Othello: a stone, held under the pointer). Choices that are not clicks
     /// (pass, swap) may be there too; they are the panel's. Empty when the selections do not
     /// name the kind.
     pub fn auto_hand(&self) -> Option<&str> {
