@@ -647,6 +647,15 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   seat's pieces and rim are made of, and each seat's paint (in the panels, and shading its
   cells; `colour` until format 2 of the file). Hex's: slate and clamshell stones (the shell a
   little translucent), the slate side's rim stained ebony and the shell side's in maple.
+- **The paint contract** (ADR 0154, decision 4), which a test holds every shipped look and the
+  standard look to (`paint_contract.rs`). Within one game: the paints of all its colors can be told
+  apart, and the order of lightness is kept (`white` the lightest of the game's colors, `black` the
+  darkest). A new look's author reads it so: a seat's `paint`, the `tint` of the material of its
+  pieces, what that material looks like (its texture's average times its tint), and the rim of a
+  goal, each on every wood the board may be made of, must differ in OKLab by at least 0.08 between
+  any two colors of a game, and `white` must be at least 4 L* lighter than every other color
+  (`black` darker). The colors of each game are a short table in the test (`GAMES`): a game
+  an appearance file names must be in it.
 - As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
   each material using one is built again (Bevy does not rebuild a material when its image
   changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left

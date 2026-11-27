@@ -39,6 +39,8 @@ mod look;
 mod move_tiles;
 mod net;
 mod new_game;
+#[cfg(test)]
+mod paint_contract;
 mod patience;
 mod play;
 mod props;
