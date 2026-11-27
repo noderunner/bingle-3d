@@ -403,7 +403,7 @@ fn dress(
                 .get(&seat.color)
                 .and_then(|s| s.pieces.as_ref())
                 .map(named)
-                .unwrap_or_else(|| lacquer(look::seat_colour(&seat.color, seat.seat)))
+                .unwrap_or_else(|| lacquer(look::seat_paint(&seat.color, seat.seat)))
         });
         let (low, high) = assets::model_span(model).unwrap_or((0.0, 0.07));
         let hit = meshes.add(
@@ -447,9 +447,9 @@ fn dress(
     }
 }
 
-/// A seat's colour as a lacquer, for the part of a marker that is its seat's.
-fn lacquer(colour: Color) -> MaterialSpec {
-    let c = colour.to_srgba();
+/// A seat's paint as a lacquer, for the part of a marker that is its seat's.
+fn lacquer(paint: Color) -> MaterialSpec {
+    let c = paint.to_srgba();
     MaterialSpec {
         tint: Some([c.red, c.green, c.blue]),
         roughness: Some(0.35),

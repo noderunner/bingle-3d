@@ -314,11 +314,11 @@ pub fn groove() -> MaterialSpec {
     }
 }
 
-/// A goal's edge of the board (its rim and sides), stained in its seat's colour (or a plain dark
+/// A goal's edge of the board (its rim and sides), stained in its seat's paint (or a plain dark
 /// stain for a goal every seat shares). Satin, not gloss: the sides face the room's window, and a
 /// gloss there shows the window rather than the wood.
-pub fn goal(colour: Option<Color>) -> MaterialSpec {
-    let stain = colour.map_or([0.25, 0.22, 0.20], |c| {
+pub fn goal(paint: Option<Color>) -> MaterialSpec {
+    let stain = paint.map_or([0.25, 0.22, 0.20], |c| {
         let c = c.to_srgba();
         [c.red, c.green, c.blue]
     });
@@ -330,9 +330,9 @@ pub fn goal(colour: Option<Color>) -> MaterialSpec {
     }
 }
 
-/// A piece in its seat's colour, polished.
-pub fn piece(colour: Color) -> MaterialSpec {
-    let c = colour.to_srgba();
+/// A piece in its seat's paint, polished.
+pub fn piece(paint: Color) -> MaterialSpec {
+    let c = paint.to_srgba();
     MaterialSpec {
         tint: Some([c.red, c.green, c.blue]),
         roughness: Some(0.35),
@@ -425,12 +425,13 @@ pub fn trim_silver() -> MaterialSpec {
     }
 }
 
-/// The colour a seat is drawn in. A seat's colour word is an identifier, not a colour, but most
-/// games name their seats after the colour players know them by, so a word this client knows is
-/// drawn as that colour. Any other word gets a colour from a palette by seat, so that every seat
-/// still looks different.
-pub fn seat_colour(word: &str, seat: u32) -> Color {
-    named(word).unwrap_or_else(|| {
+/// The paint a seat is drawn in, in the standard look (Bingle's ADR 0154). A seat's color is a
+/// name, not a value to draw with, but most games name their colors after a color word players
+/// know, so a color whose name is a word this client knows is painted as the word says. Any
+/// other gets a paint from a palette by seat, so that every seat still looks different. With
+/// `appearance::seat_paint`, the only place a color becomes paint.
+pub fn seat_paint(color: &str, seat: u32) -> Color {
+    named(color).unwrap_or_else(|| {
         let i = (seat.max(1) - 1) as usize % PALETTE.len();
         PALETTE[i]
     })
@@ -448,8 +449,8 @@ const PALETTE: [Color; 8] = [
     Color::srgb(0.85, 0.40, 0.60),
 ];
 
-fn named(word: &str) -> Option<Color> {
-    Some(match word.to_ascii_lowercase().as_str() {
+fn named(color: &str) -> Option<Color> {
+    Some(match color.to_ascii_lowercase().as_str() {
         "red" => PALETTE[0],
         "blue" => PALETTE[1],
         "yellow" | "gold" => PALETTE[2],
@@ -605,12 +606,12 @@ mod tests {
     }
 
     #[test]
-    fn known_words_are_their_colour_and_others_differ_by_seat() {
-        assert_eq!(seat_colour("Red", 2), seat_colour("red", 1));
-        assert_ne!(seat_colour("red", 1), seat_colour("blue", 2));
-        assert_eq!(seat_colour("cthonic", 1), PALETTE[0]);
-        assert_ne!(seat_colour("cthonic", 1), seat_colour("abyssal", 2));
-        assert_eq!(seat_colour("x", 9), PALETTE[0], "the palette goes round");
-        assert_eq!(seat_colour("x", 0), PALETTE[0]);
+    fn known_color_words_are_painted_so_and_others_differ_by_seat() {
+        assert_eq!(seat_paint("Red", 2), seat_paint("red", 1));
+        assert_ne!(seat_paint("red", 1), seat_paint("blue", 2));
+        assert_eq!(seat_paint("cthonic", 1), PALETTE[0]);
+        assert_ne!(seat_paint("cthonic", 1), seat_paint("abyssal", 2));
+        assert_eq!(seat_paint("x", 9), PALETTE[0], "the palette goes round");
+        assert_eq!(seat_paint("x", 0), PALETTE[0]);
     }
 }

@@ -234,7 +234,7 @@ pub fn draw(
                 })
                 .with_children(|row| {
                     row.spawn(seat_dot(
-                        appearances.seat_colour(&form.def_id, &seat.color, seat.seat),
+                        appearances.seat_paint(&form.def_id, &seat.color, seat.seat),
                         12.0,
                     ));
                     row.spawn(line(f.semibold(14.0), colours::TEXT, &seat.label));

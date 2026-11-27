@@ -302,7 +302,7 @@ pub fn shade_at(d: f32, fade: f32, strength: f32) -> f32 {
     strength * t * t * (3.0 - 2.0 * t)
 }
 
-/// A cell's top, shaded towards one of its sides in `colour`: as strong as `strength` at that
+/// A cell's top, shaded towards one of its sides in `paint`: as strong as `strength` at that
 /// side (`apothem` from the middle, facing `toward`), and fading to nothing `fade` in from it.
 /// Rings of points, close enough for the fade to look smooth across the cell.
 pub fn shading(
@@ -311,7 +311,7 @@ pub fn shading(
     toward: Vec2,
     apothem: f32,
     fade: f32,
-    colour: LinearRgba,
+    paint: LinearRgba,
     strength: f32,
 ) -> Mesh {
     // Close together, so that a short fade near the side is still smooth.
@@ -320,8 +320,7 @@ pub fn shading(
     let mut b = Builder::default();
     let add = |b: &mut Builder, v: Vec2| -> u32 {
         let alpha = shade_at(apothem - v.dot(toward), fade, strength);
-        b.colours
-            .push([colour.red, colour.green, colour.blue, alpha]);
+        b.colours.push([paint.red, paint.green, paint.blue, alpha]);
         b.vertex(centre + Vec3::new(v.x, 0.0, v.y), Vec3::Y)
     };
     // The outline of the cell, its sides cut into equal pieces.

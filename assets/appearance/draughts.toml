@@ -14,11 +14,11 @@ model = "models/checkers/king.glb"
 
 [seats.black]
 pieces = "black"
-colour = [0.14, 0.12, 0.12]
+paint = [0.14, 0.12, 0.12]
 
 [seats.red]
 pieces = "red"
-colour = [0.62, 0.14, 0.11]
+paint = [0.62, 0.14, 0.11]
 
 # Stained wood with a satin finish: the grain shows through the stain.
 [materials.black]

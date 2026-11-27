@@ -23,11 +23,11 @@ stands = "upright"
 
 [seats.white]
 pieces = "pale"
-colour = [0.88, 0.78, 0.60]
+paint = [0.88, 0.78, 0.60]
 
 [seats.black]
 pieces = "dark"
-colour = [0.24, 0.16, 0.12]
+paint = [0.24, 0.16, 0.12]
 
 # Oiled wood: a soft sheen.
 [materials.pale]

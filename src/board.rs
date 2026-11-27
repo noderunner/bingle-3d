@@ -37,11 +37,11 @@ use bevy::picking::Pickable;
 use bevy::picking::mesh_picking::ray_cast::SimplifiedMesh;
 use bevy::prelude::*;
 
-use crate::appearance::{Appearance, Appearances, PieceLook, PlayOn, Stands};
+use crate::appearance::{self, Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
 use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::highlight::{Lit, Outline, Tone};
-use crate::look::{self, MaterialSpec, seat_colour};
+use crate::look::{self, MaterialSpec, seat_paint};
 use crate::net::WatchStatus;
 use crate::net::api::{
     Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard, Position,
@@ -984,14 +984,9 @@ impl Tools<'_> {
         handle
     }
 
-    /// The colour a seat is shown in: its appearance's, or its own.
-    fn seat_colour(&self, colour: &str, seat: u32) -> Color {
-        self.look
-            .and_then(|l| l.seats.get(colour)?.colour)
-            .map_or_else(
-                || seat_colour(colour, seat),
-                |[r, g, b]| Color::srgb(r, g, b),
-            )
+    /// The paint a seat is shown in: its appearance's, or the standard look's.
+    fn seat_paint(&self, color: &str, seat: u32) -> Color {
+        appearance::seat_paint(self.look, color, seat)
     }
 
     /// A kind of piece: the model its look gives, or the generic stone.
@@ -1121,12 +1116,13 @@ impl Tools<'_> {
         }
     }
 
-    /// What a seat's pieces are made of: the appearance's material, or the seat's colour.
-    fn piece_material(&self, colour: &str, seat: u32) -> MaterialSpec {
+    /// What a seat's pieces are made of: the appearance's material, or the seat's paint in
+    /// the standard look.
+    fn piece_material(&self, color: &str, seat: u32) -> MaterialSpec {
         self.look
-            .and_then(|l| l.material(l.seats.get(colour).and_then(|s| s.pieces.as_ref())))
+            .and_then(|l| l.material(l.seats.get(color).and_then(|s| s.pieces.as_ref())))
             .cloned()
-            .unwrap_or_else(|| look::piece(seat_colour(colour, seat)))
+            .unwrap_or_else(|| look::piece(seat_paint(color, seat)))
     }
 }
 
@@ -2043,7 +2039,7 @@ fn build_board(
     let yours = table.yours();
     let mut ghost = yours
         .map(|s| tools.piece_material(&s.color, s.seat))
-        .unwrap_or_else(|| look::piece(seat_colour("", 1)))
+        .unwrap_or_else(|| look::piece(seat_paint("", 1)))
         .build(tools.server);
     ghost.base_color = ghost.base_color.with_alpha(0.5);
     ghost.alpha_mode = AlphaMode::Blend;
@@ -2545,7 +2541,7 @@ fn goal_material(tools: &Tools, table: &Table, seat: Option<u32>) -> MaterialSpe
         look.material(look.seats.get(&seat.color)?.goal.as_ref())
             .cloned()
     })
-    .unwrap_or_else(|| look::goal(seat.map(|seat| seat_colour(&seat.color, seat.seat))))
+    .unwrap_or_else(|| look::goal(seat.map(|seat| seat_paint(&seat.color, seat.seat))))
 }
 
 /// The outer side of a cell in a region a goal names: where the board shows that goal.
@@ -2743,11 +2739,11 @@ fn shade_goals(
     };
     let mut by_seat: BTreeMap<Option<u32>, Mesh> = BTreeMap::new();
     for strip in strips {
-        let colour = match strip
+        let paint = match strip
             .seat
             .and_then(|s| table.info.seats.iter().find(|d| d.seat == s))
         {
-            Some(seat) => tools.seat_colour(&seat.color, seat.seat),
+            Some(seat) => tools.seat_paint(&seat.color, seat.seat),
             None => Color::srgb(0.25, 0.22, 0.20),
         };
         let shading = slab::shading(
@@ -2756,7 +2752,7 @@ fn shade_goals(
             strip.normal,
             apothem,
             pitch * SHADE_FADE,
-            colour.to_linear(),
+            paint.to_linear(),
             SHADE_STRENGTH,
         );
         match by_seat.get_mut(&strip.seat) {

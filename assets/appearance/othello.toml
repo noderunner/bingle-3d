@@ -15,11 +15,11 @@ up = { black = "dark", white = "light" }
 
 [seats.black]
 pieces = "dark"
-colour = [0.08, 0.08, 0.09]
+paint = [0.08, 0.08, 0.09]
 
 [seats.white]
 pieces = "light"
-colour = [0.92, 0.90, 0.85]
+paint = [0.92, 0.90, 0.85]
 
 # Polished ivory and near black, as the generic disc's (`look::disc_light`, `disc_dark`).
 [materials.light]

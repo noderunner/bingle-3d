@@ -37,15 +37,15 @@ material = "bowl"
 
 [seats.black]
 pieces = "slate"
-colour = [0.13, 0.13, 0.14]
+paint = [0.13, 0.13, 0.14]
 
 [seats.white]
 pieces = "shell"
-colour = [0.92, 0.91, 0.87]
+paint = [0.92, 0.91, 0.87]
 
 [seats.green]
 pieces = "jade"
-colour = [0.36, 0.62, 0.42]
+paint = [0.36, 0.62, 0.42]
 
 [materials.slate]
 albedo = "textures/stone/slate_albedo.jpg"
