@@ -7,7 +7,7 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::environment::{Chosen, Environments};
 use crate::fonts::UiFonts;
 use crate::net::{Net, Request};
@@ -17,7 +17,7 @@ pub struct EnvironmentChoicePlugin;
 impl Plugin for EnvironmentChoicePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_buttons)
-            .add_systems(Update, colour_buttons);
+            .add_systems(Update, color_buttons);
     }
 }
 
@@ -42,7 +42,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>, all: Res<Environme
             row.spawn((
                 Text::new("Place"),
                 fonts.regular(14.0),
-                TextColor(colours::MUTED),
+                TextColor(colors::MUTED),
                 Pickable::IGNORE,
             ));
             for environment in &all.0 {
@@ -55,12 +55,12 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>, all: Res<Environme
                         border_radius: BorderRadius::all(px(6)),
                         ..default()
                     },
-                    BackgroundColor(colours::BUTTON),
+                    BackgroundColor(colors::BUTTON),
                     observe(choose),
                     children![(
                         Text::new(environment.name.clone()),
                         fonts.semibold(13.0),
-                        TextColor(colours::TEXT),
+                        TextColor(colors::TEXT),
                         // Clicks land on the button, not its label.
                         Pickable::IGNORE,
                     )],
@@ -85,19 +85,19 @@ fn choose(
     }
 }
 
-fn colour_buttons(
+fn color_buttons(
     chosen: Res<Chosen>,
     mut buttons: Query<(&Hovered, &PlaceButton, &mut BackgroundColor)>,
 ) {
     for (hovered, button, mut background) in &mut buttons {
-        let colour = match (button.0 == chosen.0, hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+        let color = match (button.0 == chosen.0, hovered.0) {
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
-        if background.0 != colour {
-            background.0 = colour;
+        if background.0 != color {
+            background.0 = color;
         }
     }
 }
@@ -111,13 +111,13 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<Chosen>()
-            .add_systems(Update, colour_buttons);
+            .add_systems(Update, color_buttons);
         let garden = app
             .world_mut()
             .spawn((
                 PlaceButton("garden".into()),
                 Hovered::default(),
-                BackgroundColor(colours::BUTTON),
+                BackgroundColor(colors::BUTTON),
                 observe(choose),
             ))
             .id();
@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(app.world().resource::<Chosen>().0, "garden");
         assert_eq!(
             app.world().get::<BackgroundColor>(garden).unwrap().0,
-            colours::CHOSEN
+            colors::CHOSEN
         );
     }
 }

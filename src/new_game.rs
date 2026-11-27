@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 
 use crate::appearance::Appearances;
-use crate::browser::{Action, button, buttons, chip, colours, line, seat_dot};
+use crate::browser::{Action, button, buttons, chip, colors, line, seat_dot};
 use crate::fonts::UiFonts;
 use crate::net::api::{BotInfo, GameInfo};
 use crate::net::session::Problem;
@@ -191,11 +191,11 @@ pub fn draw(
 ) {
     area.spawn(line(
         f.semibold(17.0),
-        colours::TEXT,
+        colors::TEXT,
         &format!("New game: {}", form.name),
     ));
     if let Some(problem) = &form.problem {
-        area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        area.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
         area.spawn(buttons()).with_children(|row| {
             row.spawn(button(
                 f,
@@ -210,7 +210,7 @@ pub fn draw(
         return;
     }
     let Some(info) = &form.info else {
-        area.spawn(line(f.regular(14.0), colours::MUTED, "Reading the game…"));
+        area.spawn(line(f.regular(14.0), colors::MUTED, "Reading the game…"));
         area.spawn(buttons()).with_children(|row| {
             row.spawn(button(f, "Cancel", Action::CancelNewGame));
         });
@@ -237,7 +237,7 @@ pub fn draw(
                         appearances.seat_paint(&form.def_id, &seat.color, seat.seat),
                         12.0,
                     ));
-                    row.spawn(line(f.semibold(14.0), colours::TEXT, &seat.label));
+                    row.spawn(line(f.semibold(14.0), colors::TEXT, &seat.label));
                 });
             block.spawn(buttons()).with_children(|row| {
                 let mut offer = |label: &str, fill: Fill| {
@@ -264,14 +264,14 @@ pub fn draw(
         });
     }
 
-    area.spawn(line(f.semibold(14.0), colours::TEXT, "Time"));
+    area.spawn(line(f.semibold(14.0), colors::TEXT, "Time"));
     area.spawn(buttons()).with_children(|row| {
         for (label, time) in TIMES {
             row.spawn(chip(f, label, Action::SetTime(*time), form.time == *time));
         }
     });
 
-    area.spawn(line(f.semibold(14.0), colours::TEXT, "Start"));
+    area.spawn(line(f.semibold(14.0), colors::TEXT, "Start"));
     area.spawn(buttons()).with_children(|row| {
         if !form.must_wait() {
             row.spawn(chip(
@@ -292,7 +292,7 @@ pub fn draw(
     if form.must_wait() {
         area.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             "A seat kept for a friend: they are invited, and the game waits for your Start.",
         ));
     }
@@ -308,7 +308,7 @@ pub fn draw(
         (false, false) => "The game starts at once.",
         (false, true) => "The game waits for your Start; until then seats can be changed.",
     };
-    area.spawn(line(f.regular(13.0), colours::MUTED, starts));
+    area.spawn(line(f.regular(13.0), colors::MUTED, starts));
     area.spawn(buttons()).with_children(|row| {
         row.spawn(button(f, "Make the game", Action::StartGame));
         row.spawn(button(f, "Cancel", Action::CancelNewGame));

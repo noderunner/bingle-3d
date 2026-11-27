@@ -12,7 +12,7 @@ import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
-# How much finer a wood's relief is than its colour, as `look::DETAIL` in the client.
+# How much finer a wood's relief is than its color, as `look::DETAIL` in the client.
 DETAIL = 3.17
 
 

@@ -1,4 +1,4 @@
-"""Stones: a lens-shaped stone, modelled here and exported as glTF, and the colour of two kinds of
+"""Stones: a lens-shaped stone, modelled here and exported as glTF, and the color of two kinds of
 stone, drawn here as images.
 
 The shape is turned from a profile: the height at distance r from the middle is
@@ -8,7 +8,7 @@ fills 80 % of a 28 mm cell. It is mapped flat from above, the texture's middle o
 
 - Slate: near black, a little cool, faintly mottled.
 - Polished minerals (`minerals.py`): lapis lazuli, red jasper, tiger's eye and black slate, for
-  games of coloured stones.
+  games of colored stones.
 - Polished marbles (`minerals.py` too), white and black, for pieces mapped in metres (a disc, a
   ring): each the same again every 64 mm, so a piece of any size is cut from it.
 - Shell: warm white with fine growth lines, the way a shell grows: thin lines a fraction of a
@@ -154,8 +154,8 @@ def shell(size, seed=7):
     # Lines darken blue most, so they lean yellow; bands are a plain grey.
     line_dark = 0.09 * np.clip(line, 0.0, 2.5)[..., None] * np.array([0.6, 0.8, 1.4])
     band_dark = 0.05 * band[..., None]
-    colour = base * (1.0 - line_dark) * (1.0 - band_dark) * (1.0 + 0.015 * mottle[..., None])
-    return np.clip(colour, 0.0, 1.0)
+    color = base * (1.0 - line_dark) * (1.0 - band_dark) * (1.0 + 0.015 * mottle[..., None])
+    return np.clip(color, 0.0, 1.0)
 
 
 def slate(size, seed=11):
@@ -163,8 +163,8 @@ def slate(size, seed=11):
     base = np.array([0.020, 0.021, 0.024])  # linear: near black, a little cool
     mottle = 0.6 * smooth_noise(rng, size, 10) + 0.4 * smooth_noise(rng, size, 40)
     grain = rng.normal(0.0, 1.0, (size, size))
-    colour = base[None, None, :] * (1.0 + 0.18 * mottle + 0.05 * grain)[..., None]
-    return np.clip(colour, 0.0, 1.0)
+    color = base[None, None, :] * (1.0 + 0.18 * mottle + 0.05 * grain)[..., None]
+    return np.clip(color, 0.0, 1.0)
 
 
 def run():

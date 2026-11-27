@@ -40,10 +40,10 @@ zstandard (KTX2) and tomllib. Nothing is installed into it.
 
 | Step | Makes | From |
 |---|---|---|
-| `environment` | `environment/room_{diffuse,specular}.ktx2`: the room's light for Bevy's `EnvironmentMapLight` | an HDR panorama, graded for a table top (the floor below the horizon made the dim table the board stands on, colours at half saturation), then GGX-filtered per roughness level, and irradiance from spherical harmonics |
+| `environment` | `environment/room_{diffuse,specular}.ktx2`: the room's light for Bevy's `EnvironmentMapLight` | an HDR panorama, graded for a table top (the floor below the horizon made the dim table the board stands on, colors at half saturation), then GGX-filtered per roughness level, and irradiance from spherical harmonics |
 | `woods` | `textures/wood/<wood>_{albedo,normal,arm}.jpg`: three board woods (teak, walnut, cherry), pale maple, and the table's felt | scanned wood and cloth, resized |
-| `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg`, polished minerals for coloured stones: `textures/stone/{lapis,jasper,tiger_eye,black_slate}_albedo.jpg`, and two polished marbles for pieces cut flat (a disc, a ring): `textures/stone/marble_{white,black}_albedo.jpg` | the stone's profile, turned; the colours drawn with numpy (the minerals in `minerals.py`, numpy alone, so they can be tried outside Blender: lapis's cloud, calcite and pyrite flecks, jasper's veins, tiger's eye's bands and silk, slate's layers). A marble is the same again every 64 mm both ways (its noise goes round the texture's edges), so a material lays it side by side with itself (`metres = 0.064`) and a piece mapped in metres is cut from it at its real size: white with soft grey veins, black with crisp white ones, each vein an even width along its length |
-| `engraving` | `textures/engraving/glyphs_{albedo,normal}.png`: the coordinates' glyphs as cuts in wood, an atlas of 8 × 5 cells | each glyph of Fira Sans set as a Blender text object and rendered from above in Cycles; the cut's colour (walls darkening to its bottom) and its walls' slopes worked out from that shape |
+| `stones` | `models/stone.glb`, `textures/stone/{slate,shell}_albedo.jpg`, polished minerals for colored stones: `textures/stone/{lapis,jasper,tiger_eye,black_slate}_albedo.jpg`, and two polished marbles for pieces cut flat (a disc, a ring): `textures/stone/marble_{white,black}_albedo.jpg` | the stone's profile, turned; the colors drawn with numpy (the minerals in `minerals.py`, numpy alone, so they can be tried outside Blender: lapis's cloud, calcite and pyrite flecks, jasper's veins, tiger's eye's bands and silk, slate's layers). A marble is the same again every 64 mm both ways (its noise goes round the texture's edges), so a material lays it side by side with itself (`metres = 0.064`) and a piece mapped in metres is cut from it at its real size: white with soft grey veins, black with crisp white ones, each vein an even width along its length |
+| `engraving` | `textures/engraving/glyphs_{albedo,normal}.png`: the coordinates' glyphs as cuts in wood, an atlas of 8 × 5 cells | each glyph of Fira Sans set as a Blender text object and rendered from above in Cycles; the cut's color (walls darkening to its bottom) and its walls' slopes worked out from that shape |
 | `cards` | `pictures/cards/points.jpg`: the picture on the cards of the games played on a square board's points, in the client's main screen | Cycles, 512 × 512: a teak board of nine lines by nine with its star points, and slate and shell stones from `assets/appearance/points.toml`, from the player's side |
 | `surfaces` | `textures/garden/*`: what the garden is made of | scanned surfaces resized as the woods are (tatami, hinoki, linen, moss, cut stone, bark, a bamboo fence, the rocks' own); and, drawn with numpy, the raked gravel (a scan of gravel with a furrow's shape laid over it), the water's ripples, a bamboo cane, clipped shrubs' leaves, sprays of maple and bamboo leaves cut out (PNG with alpha), and the trees and hills beyond the fence |
 | `tableware` | `models/bowl.glb`, `models/bowl_stones.glb`: a turned bowl, and the heap of stones in it | the bowl's profile, turned; the board's stone with few triangles, three dozen of them heaped |
@@ -72,12 +72,12 @@ ffmpeg, bit-exactly, so the same script makes the same files.
 How the client reads them:
 
 - **Woods** are mapped by position, in metres (`look::world_uvs`), so a wood's texture must be
-  seamless and its real size known (`look::WOODS`), with the colour an oil finish gives the raw
-  veneer that was scanned. Its normal map is read three times finer than its colour, for the
+  seamless and its real size known (`look::WOODS`), with the color an oil finish gives the raw
+  veneer that was scanned. Its normal map is read three times finer than its color, for the
   pores a close look sees. `arm` is ambient occlusion, roughness and metalness in red, green and
   blue, as glTF reads them.
 - **Textures** are JPEG, and the client makes their mipmaps when they load
-  (`src/textures.rs`); a colour texture's name ends in `_albedo`, which is how it is read as
+  (`src/textures.rs`); a color texture's name ends in `_albedo`, which is how it is read as
   sRGB.
 - **Models** are glTF, in metres, made for a 28 mm cell; the first mesh is used. The client
   reads how low and how high a model reaches from its file (`assets::model_span`): a piece is
@@ -93,7 +93,7 @@ How the client reads them:
   file. A piece's first part is its seat's material; a part after it is what the piece's look
   gives it (`parts`), or its seat's look (`seats.<word>.parts`: a trim that is gold on one
   seat's pieces and silver on the other's), or else the piece's own material. A metal is a
-  material with `metallic` (and no colour but its `tint`, which is what it reflects).
+  material with `metallic` (and no color but its `tint`, which is what it reflects).
 
 ## A piece
 

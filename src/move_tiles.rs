@@ -7,7 +7,7 @@
 //! stands, as its holder sees them: to the right, and forward) and the seat its stamp is. The
 //! client draws them from that alone, so no card is named here: the square the piece stands on
 //! stamped in one ink, each square it may go to in another, the card's name engraved under the
-//! grid and a seal in its stamp's seat's colour beside it. A seat's tiles lie in front of it,
+//! grid and a seal in its stamp's seat's color beside it. A seat's tiles lie in front of it,
 //! reading from its side; the side's lies at the right hand of the seat on impulse, which takes
 //! it next. When the cards change hands the tiles slide to their new places.
 //!
@@ -78,7 +78,7 @@ pub struct MoveCard {
     pub name: String,
     /// Each move: to the right and forward, as its holder sees it.
     pub moves: Vec<[i32; 2]>,
-    /// The colour word of the seat its stamp is, if it has one.
+    /// The color word of the seat its stamp is, if it has one.
     pub stamp: Option<String>,
 }
 
@@ -418,12 +418,12 @@ struct Kit {
     engraving: Handle<StandardMaterial>,
     glyphs: HashMap<usize, Handle<Mesh>>,
     seal: Handle<Mesh>,
-    /// The seal's ink in each colour word's colour.
+    /// The seal's ink in each color word's color.
     seals: HashMap<String, Handle<StandardMaterial>>,
     reach: i32,
 }
 
-/// An ink: the stamp's cover, in its colour, cut out where the stamp did not reach.
+/// An ink: the stamp's cover, in its color, cut out where the stamp did not reach.
 fn ink(spec: MaterialSpec) -> MaterialSpec {
     MaterialSpec {
         albedo: spec.albedo.clone().or_else(|| Some(STAMP.into())),

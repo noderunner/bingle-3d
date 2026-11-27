@@ -11,8 +11,8 @@ import bevy_pbr::render::forward_io::VertexOutput;
 import bevy_pbr::render::mesh_view_bindings::globals;
 
 struct Glow {
-    // The light's colour, linear.
-    colour: vec4<f32>,
+    // The light's color, linear.
+    color: vec4<f32>,
     // The ring: its line's brightness, where it lies across the ring (0 the edge), how wide it is,
     // and the halo's brightness round it.
     ring: vec4<f32>,
@@ -78,5 +78,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         light = ribbon(u, v, t);
     }
-    return vec4<f32>(glow.colour.rgb * light * breath(t), 0.0);
+    return vec4<f32>(glow.color.rgb * light * breath(t), 0.0);
 }

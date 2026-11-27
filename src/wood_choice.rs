@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::board::BoardWood;
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::fonts::UiFonts;
 use crate::look::BOARD_WOODS;
 
@@ -16,7 +16,7 @@ pub struct WoodChoicePlugin;
 impl Plugin for WoodChoicePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_buttons)
-            .add_systems(Update, colour_buttons);
+            .add_systems(Update, color_buttons);
     }
 }
 
@@ -41,7 +41,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
             row.spawn((
                 Text::new("Board"),
                 fonts.regular(14.0),
-                TextColor(colours::MUTED),
+                TextColor(colors::MUTED),
                 Pickable::IGNORE,
             ));
             for wood in BOARD_WOODS {
@@ -54,12 +54,12 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
                         border_radius: BorderRadius::all(px(6)),
                         ..default()
                     },
-                    BackgroundColor(colours::BUTTON),
+                    BackgroundColor(colors::BUTTON),
                     observe(choose),
                     children![(
                         Text::new(label(wood)),
                         fonts.semibold(13.0),
-                        TextColor(colours::TEXT),
+                        TextColor(colors::TEXT),
                         // Clicks land on the button, not its label.
                         Pickable::IGNORE,
                     )],
@@ -84,19 +84,19 @@ fn choose(activate: On<Activate>, buttons: Query<&WoodButton>, mut wood: ResMut<
     }
 }
 
-fn colour_buttons(
+fn color_buttons(
     wood: Res<BoardWood>,
     mut buttons: Query<(&Hovered, &WoodButton, &mut BackgroundColor)>,
 ) {
     for (hovered, button, mut background) in &mut buttons {
-        let colour = match (button.0 == wood.0, hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+        let color = match (button.0 == wood.0, hovered.0) {
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
-        if background.0 != colour {
-            background.0 = colour;
+        if background.0 != color {
+            background.0 = color;
         }
     }
 }
@@ -110,13 +110,13 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<BoardWood>()
-            .add_systems(Update, colour_buttons);
+            .add_systems(Update, color_buttons);
         let cherry = app
             .world_mut()
             .spawn((
                 WoodButton("cherry"),
                 Hovered::default(),
-                BackgroundColor(colours::BUTTON),
+                BackgroundColor(colors::BUTTON),
                 observe(choose),
             ))
             .id();
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(app.world().resource::<BoardWood>().0, "cherry");
         assert_eq!(
             app.world().get::<BackgroundColor>(cherry).unwrap().0,
-            colours::CHOSEN
+            colors::CHOSEN
         );
     }
 

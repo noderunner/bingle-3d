@@ -9,7 +9,7 @@ Drawn here:
   furrows up the picture, 8 cm apart on a mesh that maps it over 64 cm. The mesh's mapping bends
   them round the rocks (`garden.py`);
 - `water_normal`: ripples that repeat, to drift over the pond;
-- `cane`: a bamboo cane's length, pale, for a tint to colour: its joints, and the bloom below them;
+- `cane`: a bamboo cane's length, pale, for a tint to color: its joints, and the bloom below them;
 - `hedge`: small leaves, packed, for clipped shrubs;
 - `maple` and `bamboo`: a spray of leaves on a twig, cut out (PNG with alpha), for the cards the
   trees' foliage is made of;
@@ -139,7 +139,7 @@ def cane():
     rng = np.random.default_rng(5)
     v = (np.arange(h) + 0.5) / h
     joint = (v * 3.0) % 1.0
-    colour = np.full((h, w, 3), 0.80)
+    color = np.full((h, w, 3), 0.80)
     # Just above each joint the cane is pale with bloom; the joint itself is a dark ring under a
     # light one.
     bloom = np.exp(-joint / 0.10)
@@ -147,13 +147,13 @@ def cane():
     scar = np.exp(-0.5 * ((joint - 0.985) / 0.006) ** 2)
     shade = 0.82 + 0.22 * bloom + 0.25 * ring - 0.45 * scar
     streaks = 1.0 + 0.05 * np.repeat(rng.normal(0, 1, (1, w)), h, 0)
-    colour *= (shade[:, None] * streaks)[..., None]
-    common.write_jpeg(out("cane", "albedo"), np.clip(colour, 0, 1), 90)
+    color *= (shade[:, None] * streaks)[..., None]
+    common.write_jpeg(out("cane", "albedo"), np.clip(color, 0, 1), 90)
 
 
-def stamp(colour, height, cy, cx, ry, rx, angle, tint, top):
+def stamp(color, height, cy, cx, ry, rx, angle, tint, top):
     """A leaf as an ellipse, stamped into a picture that repeats: over what is lower than it."""
-    size = colour.shape[0]
+    size = color.shape[0]
     r = int(max(ry, rx)) + 2
     ys, xs = np.mgrid[-r : r + 1, -r : r + 1]
     c, s = math.cos(angle), math.sin(angle)
@@ -166,21 +166,21 @@ def stamp(colour, height, cy, cx, ry, rx, angle, tint, top):
     z = top + 0.5 * (1.0 - d) - 0.12 * np.exp(-((v * 3.0) ** 2))
     mask = (d < 1.0) & (z > height[rows, cols])
     shade = (0.75 + 0.25 * (1.0 - d)) * (1.0 - 0.25 * np.exp(-((v * 5.0) ** 2)))
-    colour[rows[mask], cols[mask]] = tint * shade[mask][:, None]
+    color[rows[mask], cols[mask]] = tint * shade[mask][:, None]
     height[rows[mask], cols[mask]] = z[mask]
 
 
 def hedge():
     size = 512
     rng = np.random.default_rng(9)
-    colour = np.tile(np.array([0.010, 0.022, 0.008]), (size, size, 1))
+    color = np.tile(np.array([0.010, 0.022, 0.008]), (size, size, 1))
     height = np.zeros((size, size))
     for i in range(5200):
         top = i / 5200.0
         green = np.array([0.045, 0.115, 0.030]) * rng.uniform(0.55, 1.35)
         green[0] *= rng.uniform(0.7, 1.6)
         stamp(
-            colour,
+            color,
             height,
             rng.uniform(0, size),
             rng.uniform(0, size),
@@ -192,12 +192,12 @@ def hedge():
         )
     # Deeper between the leaves.
     depth = (height - height.min()) / (height.max() - height.min())
-    colour *= (0.35 + 0.65 * depth)[..., None]
-    common.write_jpeg(out("hedge", "albedo"), common.linear_to_srgb(colour * 2.2), 88)
+    color *= (0.35 + 0.65 * depth)[..., None]
+    common.write_jpeg(out("hedge", "albedo"), common.linear_to_srgb(color * 2.2), 88)
     common.write_jpeg(out("hedge", "normal"), encode(normal_from_height(height, 0.004)), 90)
 
 
-def fill_polygon(colour, alpha, points, tint, shade=None):
+def fill_polygon(color, alpha, points, tint, shade=None):
     """Fills a polygon (points as (x, y) in pixels) into an RGBA picture, with soft edges."""
     pts = np.asarray(points, np.float64)
     size = alpha.shape[0]
@@ -223,7 +223,7 @@ def fill_polygon(colour, alpha, points, tint, shade=None):
     cover /= 4.0
     region = (slice(y0, y1), slice(x0, x1))
     c = np.asarray(tint)[None, None, :] * (1.0 if shade is None else shade[region][..., None])
-    colour[region] = colour[region] * (1.0 - cover[..., None]) + c * cover[..., None]
+    color[region] = color[region] * (1.0 - cover[..., None]) + c * cover[..., None]
     alpha[region] = np.maximum(alpha[region], cover)
 
 
@@ -258,26 +258,26 @@ def bamboo_leaf(cx, cy, size, angle):
     return [(cx + size * (x * c - y * s), cy + size * (x * s + y * c)) for x, y in pts]
 
 
-def line(colour, alpha, a, b, width, tint):
+def line(color, alpha, a, b, width, tint):
     a, b = np.asarray(a, float), np.asarray(b, float)
     d = b - a
     n = np.array([-d[1], d[0]]) / max(np.linalg.norm(d), 1e-6) * width / 2.0
-    fill_polygon(colour, alpha, [a - n, b - n, b + n, a + n], tint)
+    fill_polygon(color, alpha, [a - n, b - n, b + n, a + n], tint)
 
 
-def bleed(colour, alpha, fill):
-    """Gives what is cut away the leaves' own colour, so smaller mip levels do not darken the
+def bleed(color, alpha, fill):
+    """Gives what is cut away the leaves' own color, so smaller mip levels do not darken the
     leaves' edges with what was never seen."""
-    colour[...] = colour * alpha[..., None] + np.asarray(fill)[None, None, :] * (1.0 - alpha[..., None])
+    color[...] = color * alpha[..., None] + np.asarray(fill)[None, None, :] * (1.0 - alpha[..., None])
 
 
 def spray(name, size, seed, make):
     rng = np.random.default_rng(seed)
-    colour = np.zeros((size, size, 3))
+    color = np.zeros((size, size, 3))
     alpha = np.zeros((size, size))
-    fill = make(rng, colour, alpha, size)
-    bleed(colour, alpha, fill)
-    rgba = np.concatenate([common.linear_to_srgb(colour), alpha[..., None]], -1)
+    fill = make(rng, color, alpha, size)
+    bleed(color, alpha, fill)
+    rgba = np.concatenate([common.linear_to_srgb(color), alpha[..., None]], -1)
     common.write_png(out(name, "albedo", "png"), rgba)
 
 
@@ -291,14 +291,14 @@ MAPLE = [
 ]
 
 
-def maple(rng, colour, alpha, size):
+def maple(rng, color, alpha, size):
     twig = (0.10, 0.07, 0.05)
     # A twig from the bottom middle, forking, its leaves in pairs along it.
     stems = []
 
     def grow(at, angle, length, depth):
         end = (at[0] + length * math.sin(angle), at[1] - length * math.cos(angle))
-        line(colour, alpha, at, end, 3.0 + depth * 2.0, twig)
+        line(color, alpha, at, end, 3.0 + depth * 2.0, twig)
         steps = 5
         for i in range(1, steps + 1):
             t = i / steps
@@ -319,24 +319,24 @@ def maple(rng, colour, alpha, size):
             a = angle + side * rng.uniform(0.5, 1.4)
             stalk = size * rng.uniform(0.035, 0.07)
             base = (p[0] + stalk * math.sin(a), p[1] - stalk * math.cos(a))
-            line(colour, alpha, p, base, 1.6, twig)
+            line(color, alpha, p, base, 1.6, twig)
             tint = np.array(palette[rng.integers(len(palette))]) * rng.uniform(0.75, 1.25)
             leaf = size * rng.uniform(0.075, 0.115)
             # Upside down in the picture: y grows downwards, and a leaf points away from its stalk.
             turn = math.pi - a + rng.uniform(-0.3, 0.3)
             pts = maple_leaf(base[0], base[1], leaf, turn, rng)
-            fill_polygon(colour, alpha, pts, tint)
+            fill_polygon(color, alpha, pts, tint)
             # The midrib of each of the three long lobes, a little lighter.
             for da in (-0.7, 0.0, 0.7):
                 tip = (
                     base[0] + leaf * 0.5 * math.sin(a + da * 1.0),
                     base[1] - leaf * 0.5 * math.cos(a + da * 1.0),
                 )
-                line(colour, alpha, base, tip, 1.0, tint * 1.3)
+                line(color, alpha, base, tip, 1.0, tint * 1.3)
     return (0.50, 0.07, 0.022)
 
 
-def bamboo(rng, colour, alpha, size):
+def bamboo(rng, color, alpha, size):
     twig = (0.16, 0.20, 0.07)
     # Thin stalks from the bottom middle, each ending in a fan of leaves.
     for k in range(7):
@@ -344,7 +344,7 @@ def bamboo(rng, colour, alpha, size):
         length = size * rng.uniform(0.35, 0.62)
         at = (size * 0.5, size * 0.98)
         end = (at[0] + length * math.sin(angle), at[1] - length * math.cos(angle))
-        line(colour, alpha, at, end, 3.0, twig)
+        line(color, alpha, at, end, 3.0, twig)
         for t in (0.55, 0.8, 1.0):
             p = (at[0] + (end[0] - at[0]) * t, at[1] + (end[1] - at[1]) * t)
             for _ in range(4 if t == 1.0 else 2):
@@ -352,9 +352,9 @@ def bamboo(rng, colour, alpha, size):
                 green = np.array([0.10, 0.22, 0.045]) * rng.uniform(0.6, 1.3)
                 green[0] *= rng.uniform(0.8, 1.7)
                 leaf = size * rng.uniform(0.20, 0.30)
-                fill_polygon(colour, alpha, bamboo_leaf(p[0], p[1], leaf, math.pi - a), green)
+                fill_polygon(color, alpha, bamboo_leaf(p[0], p[1], leaf, math.pi - a), green)
                 tip = (p[0] + leaf * 0.8 * math.sin(a), p[1] - leaf * 0.8 * math.cos(a))
-                line(colour, alpha, p, tip, 1.0, green * 1.25)
+                line(color, alpha, p, tip, 1.0, green * 1.25)
     return (0.10, 0.20, 0.05)
 
 
@@ -364,7 +364,7 @@ def treeline():
     have turned. The crowns fill the strip's lower half: its foot stands at the fence's top."""
     w, h = 2048, 512
     rng = np.random.default_rng(31)
-    colour = np.zeros((h, w, 3))
+    color = np.zeros((h, w, 3))
     alpha = np.zeros((h, w))
     ys, xs = np.mgrid[0:h, 0:w]
     turned = [(0.30, 0.10, 0.02), (0.36, 0.20, 0.03), (0.22, 0.05, 0.02)]
@@ -402,18 +402,18 @@ def treeline():
                     # Lit from the upper right, dark underneath.
                     light = np.clip(0.70 + 0.45 * (dx * 0.55 - dy * 0.75), 0.35, 1.45)
                     c = own[None, None, :] * light[..., None]
-                    colour[region][inside] = c[inside]
+                    color[region][inside] = c[inside]
                     alpha[region][inside] = 1.0
         # All below a rank's crowns is its trees, in shadow.
         floor = ys > h * (base + 0.04)
-        colour[floor] = np.asarray(tint) * 0.55
+        color[floor] = np.asarray(tint) * 0.55
         alpha[floor] = 1.0
     # Leafy, not smooth: mottled at two sizes.
     fine = rng.normal(0, 1, (h // 2, w // 2)).repeat(2, 0).repeat(2, 1)
     coarse = rng.normal(0, 1, (h // 8, w // 8)).repeat(8, 0).repeat(8, 1)
-    colour *= (1.0 + 0.20 * fine + 0.16 * coarse)[..., None]
-    bleed(colour, alpha, (0.05, 0.09, 0.06))
-    rgba = np.concatenate([common.linear_to_srgb(colour), alpha[..., None]], -1)
+    color *= (1.0 + 0.20 * fine + 0.16 * coarse)[..., None]
+    bleed(color, alpha, (0.05, 0.09, 0.06))
+    rgba = np.concatenate([common.linear_to_srgb(color), alpha[..., None]], -1)
     common.write_png(out("treeline", "albedo", "png"), rgba)
 
 
@@ -421,7 +421,7 @@ def hills():
     """Far hills in the mist: two ridges, the nearer darker, as a strip that repeats sideways."""
     w, h = 2048, 256
     rng = np.random.default_rng(41)
-    colour = np.zeros((h, w, 3))
+    color = np.zeros((h, w, 3))
     alpha = np.zeros((h, w))
     ys = np.arange(h)[:, None]
     t = np.arange(w) / w * 2.0 * math.pi
@@ -434,10 +434,10 @@ def hills():
         # Paler lower down, where the mist lies.
         fade = np.clip((ys - ridge[None, :]) / (h * 0.5), 0.0, 1.0)
         c = np.asarray(tint)[None, None, :] * (1.0 - 0.0 * fade[..., None]) + 0.25 * fade[..., None]
-        colour[below] = c[below]
+        color[below] = c[below]
         alpha[below] = 1.0
-    bleed(colour, alpha, (0.40, 0.48, 0.52))
-    rgba = np.concatenate([common.linear_to_srgb(colour), alpha[..., None]], -1)
+    bleed(color, alpha, (0.40, 0.48, 0.52))
+    rgba = np.concatenate([common.linear_to_srgb(color), alpha[..., None]], -1)
     common.write_png(out("hills", "albedo", "png"), rgba)
 
 

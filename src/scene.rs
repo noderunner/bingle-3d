@@ -170,7 +170,7 @@ fn build_environment(
         Part,
         DirectionalLight {
             illuminance: env.sun.illuminance,
-            color: env.sun.colour.map_or(Color::WHITE, srgb),
+            color: env.sun.color.map_or(Color::WHITE, srgb),
             shadow_maps_enabled: true,
             // The shadows the shadow map is too coarse for: under a stone, in a cut line.
             contact_shadows_enabled: true,
@@ -263,7 +263,7 @@ fn light_cameras(
             // The table fades into the room past arm's length, rather than ending; a garden
             // into its mist.
             DistanceFog {
-                color: srgb(env.fog.colour),
+                color: srgb(env.fog.color),
                 falloff: FogFalloff::Linear {
                     start: env.fog.start,
                     end: env.fog.end,

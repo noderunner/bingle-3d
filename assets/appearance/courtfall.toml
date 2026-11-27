@@ -47,7 +47,7 @@ model = "models/tile_hex.glb"
 stands = "fitted"
 material = "hazard"
 
-# What the view's tints (a hex coloured by a key of the legend) are drawn as: a tile laid on the
+# What the view's tints (a hex colored by a key of the legend) are drawn as: a tile laid on the
 # hex, or a stamp on it. A key with no look here (a deployment zone) is not drawn.
 [tints.green]
 piece = "green"
@@ -86,7 +86,7 @@ tint = [0.30, 0.26, 0.25]
 clearcoat = 0.5
 clearcoat_roughness = 0.15
 
-# The tiles: teak stained, its figure showing through the colour; oiled, not polished.
+# The tiles: teak stained, its figure showing through the color; oiled, not polished.
 [materials.overgrowth]
 wood = "teak"
 tint = [0.42, 0.95, 0.36]

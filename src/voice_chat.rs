@@ -23,7 +23,7 @@ use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
-use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::browser::{Action, button, buttons, chip, colors, line};
 use crate::call::DirectCalling;
 use crate::fonts::UiFonts;
 use crate::net::api::{IceServer, VoiceEvent, VoicePeer};
@@ -603,9 +603,9 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
         return;
     }
     let here = voice.phase != Phase::Off && voice.room == table.room_code;
-    p.spawn(line(f.semibold(15.0), colours::TEXT, "Voice chat"));
+    p.spawn(line(f.semibold(15.0), colors::TEXT, "Voice chat"));
     if let Some(error) = &voice.error {
-        p.spawn(line(f.regular(13.0), colours::WARN, error));
+        p.spawn(line(f.regular(13.0), colors::WARN, error));
     }
     if !here {
         p.spawn(buttons()).with_children(|row| {
@@ -614,7 +614,7 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
         return;
     }
     if voice.phase == Phase::Joining {
-        p.spawn(line(f.regular(13.0), colours::MUTED, "Joining…"));
+        p.spawn(line(f.regular(13.0), colors::MUTED, "Joining…"));
         return;
     }
     let me = match (voice.mic_open(), voice.speaking) {
@@ -625,11 +625,11 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
         (true, true) => "You  ·  speaking".to_string(),
         (true, false) => "You".to_string(),
     };
-    p.spawn(line(f.regular(14.0), colours::TEXT, &me));
+    p.spawn(line(f.regular(14.0), colors::TEXT, &me));
     if voice.people.is_empty() {
         p.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             "Nobody else is in the call yet.",
         ));
     }
@@ -649,9 +649,9 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
                     ..default()
                 },
                 BackgroundColor(match person.state {
-                    PeerState::Connected => colours::GOOD,
-                    PeerState::Failed => colours::WARN,
-                    _ => colours::FIELD_EDGE,
+                    PeerState::Connected => colors::GOOD,
+                    PeerState::Failed => colors::WARN,
+                    _ => colors::FIELD_EDGE,
                 }),
             ));
             let text = match person.state {
@@ -660,10 +660,10 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
                 PeerState::Failed => format!("{}  ·  no connection", person.name),
                 _ => format!("{}  ·  connecting…", person.name),
             };
-            row.spawn(line(f.regular(14.0), colours::TEXT, &text));
+            row.spawn(line(f.regular(14.0), colors::TEXT, &text));
             row.spawn(act(f, "−", VoiceAction::Quieter(person.name.clone())));
             let volume = format!("{:.0}%", voice.volume(&person.name) * 100.0);
-            row.spawn(line(f.regular(13.0), colours::MUTED, &volume));
+            row.spawn(line(f.regular(13.0), colors::MUTED, &volume));
             row.spawn(act(f, "+", VoiceAction::Louder(person.name.clone())));
         });
     }
@@ -689,7 +689,7 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, voice: &VoiceChat, table:
             ("Speaker", speakers, &voice.speaker, false),
         ];
         for (title, list, chosen, input) in lists {
-            p.spawn(line(f.semibold(13.0), colours::TEXT, title));
+            p.spawn(line(f.semibold(13.0), colors::TEXT, title));
             p.spawn(buttons()).with_children(|row| {
                 let wrap = |c: Choice| {
                     Action::Voice(if input {

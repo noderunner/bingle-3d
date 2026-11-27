@@ -61,7 +61,7 @@ def output(*parts):
 
 
 def read_image(path):
-    """An image as float32, (height, width, channels), with values as stored (no colour change)."""
+    """An image as float32, (height, width, channels), with values as stored (no color change)."""
     buf = oiio.ImageBuf(path)
     if buf.has_error:
         raise SystemExit(f"{path}: {buf.geterror()}")
@@ -99,7 +99,7 @@ def resize_to(pixels, width, height):
 
 
 def write_jpeg(path, pixels, quality):
-    """Writes values in 0..1 (already in the file's encoding: sRGB for colour) as a baseline JPEG
+    """Writes values in 0..1 (already in the file's encoding: sRGB for color) as a baseline JPEG
     with no metadata, so the same input always gives the same bytes."""
     h, w, c = pixels.shape
     data = np.clip(np.round(pixels * 255.0), 0, 255).astype(np.uint8)

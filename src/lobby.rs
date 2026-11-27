@@ -11,7 +11,7 @@
 
 use bevy::prelude::*;
 
-use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::browser::{Action, button, buttons, chip, colors, line};
 use crate::fonts::UiFonts;
 use crate::net::LobbyCall;
 use crate::net::session::Problem;
@@ -123,11 +123,11 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: O
     };
     p.spawn(line(
         f.semibold(15.0),
-        colours::TEXT,
+        colors::TEXT,
         "Before the game starts",
     ));
     for seat in &offers.seats {
-        p.spawn(line(f.regular(13.0), colours::MUTED, &seat.label));
+        p.spawn(line(f.regular(13.0), colors::MUTED, &seat.label));
         if seat.calls.is_empty() {
             continue;
         }
@@ -141,7 +141,7 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: O
         let who: Vec<String> = offers.kept.iter().map(|h| format!("@{h}")).collect();
         p.spawn(line(
             f.regular(13.0),
-            colours::TEXT,
+            colors::TEXT,
             &format!("Waiting for {}: they are invited.", who.join(" and ")),
         ));
     }
@@ -157,9 +157,9 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: O
         Start::ByHost(Some(host)) => format!("{host} starts the game."),
         Start::ByHost(None) => "The host starts the game.".to_string(),
     };
-    p.spawn(line(f.regular(13.0), colours::MUTED, &how));
+    p.spawn(line(f.regular(13.0), colors::MUTED, &how));
     if let Some(problem) = problem {
-        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
     p.spawn(buttons()).with_children(|row| {
         if offers.start == Start::Ready {

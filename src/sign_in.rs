@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle};
 use bevy::ui_widgets::TextInput;
 
-use crate::browser::{Action, button, buttons, colours, line};
+use crate::browser::{Action, button, buttons, colors, line};
 use crate::fonts::UiFonts;
 use crate::net::session::{Account, Code, Problem, SignIn};
 use crate::net::{Net, Request};
@@ -206,14 +206,14 @@ pub fn status(
     if session_ended {
         area.spawn(line(
             f.regular(13.0),
-            colours::WARN,
+            colors::WARN,
             "You were signed out: the server ended the session.",
         ));
     }
     if let Some(problem) = &signing.out_problem {
         area.spawn(line(
             f.regular(13.0),
-            colours::WARN,
+            colors::WARN,
             &format!(
                 "Signed out here, but the server could not be told: {}",
                 problem.message()
@@ -229,13 +229,13 @@ pub fn status(
             };
             row.spawn(line(
                 f.regular(14.0),
-                colours::TEXT,
+                colors::TEXT,
                 &format!("Signed in as {who}"),
             ));
             row.spawn(button(f, "Sign out", Action::SignOut));
         }
         None => {
-            row.spawn(line(f.regular(14.0), colours::MUTED, "Playing as a guest"));
+            row.spawn(line(f.regular(14.0), colors::MUTED, "Playing as a guest"));
             if signing.form.is_none() {
                 row.spawn(button(f, "Sign in", Action::OpenSignIn));
             }
@@ -244,7 +244,7 @@ pub fn status(
     if account.is_some_and(|a| a.must_change_password) {
         area.spawn(line(
             f.regular(13.0),
-            colours::WARN,
+            colors::WARN,
             "This account must change its password, on the server's web page, before it can \
              play.",
         ));
@@ -284,26 +284,26 @@ pub fn fields(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, first: 
     .observe(on_form_key)
     .with_children(|area| match &form.step {
         Step::Password => {
-            area.spawn(line(f.regular(14.0), colours::TEXT, "Username"));
+            area.spawn(line(f.regular(14.0), colors::TEXT, "Username"));
             let mut handle =
                 area.spawn((HandleField, text_field(f, &form.handle), TabIndex(first)));
             if form.handle.is_empty() {
                 handle.insert(AutoFocus);
             }
-            area.spawn(line(f.regular(14.0), colours::TEXT, "Password"));
+            area.spawn(line(f.regular(14.0), colors::TEXT, "Password"));
             let mut password = area.spawn((
                 PasswordField,
                 Field,
                 Hovered::default(),
                 field_node(),
-                BackgroundColor(colours::FIELD),
-                BorderColor::all(colours::FIELD_EDGE),
+                BackgroundColor(colors::FIELD),
+                BorderColor::all(colors::FIELD_EDGE),
                 TabIndex(first + 1),
                 children![(
                     Dots,
                     Text::new(dots(form.password_len())),
                     f.regular(15.0),
-                    TextColor(colours::TEXT),
+                    TextColor(colors::TEXT),
                     Pickable::IGNORE,
                 )],
             ));
@@ -318,7 +318,7 @@ pub fn fields(area: &mut ChildSpawnerCommands, f: &UiFonts, form: &Form, first: 
             } else {
                 "The code from your authenticator app"
             };
-            area.spawn(line(f.regular(14.0), colours::TEXT, ask));
+            area.spawn(line(f.regular(14.0), colors::TEXT, ask));
             area.spawn((
                 CodeField,
                 text_field(f, &form.code),
@@ -361,19 +361,19 @@ pub(crate) fn text_field(f: &UiFonts, text: &str) -> impl Bundle {
         cursor_style(),
         Hovered::default(),
         f.regular(15.0),
-        TextColor(colours::TEXT),
+        TextColor(colors::TEXT),
         field_node(),
-        BackgroundColor(colours::FIELD),
-        BorderColor::all(colours::FIELD_EDGE),
+        BackgroundColor(colors::FIELD),
+        BorderColor::all(colors::FIELD_EDGE),
     )
 }
 
-/// The cursor Bevy draws in a field, the text's colour (its default is a dark slate, unseen on
+/// The cursor Bevy draws in a field, the text's color (its default is a dark slate, unseen on
 /// the dark fields), and what is selected.
 fn cursor_style() -> TextCursorStyle {
     TextCursorStyle {
-        color: colours::TEXT,
-        selection_color: colours::SELECTION,
+        color: colors::TEXT,
+        selection_color: colors::SELECTION,
         unfocused_selection_color: Color::NONE,
         ..default()
     }
@@ -547,11 +547,11 @@ fn show_dots(
 /// edge: the field itself stays as it is.
 fn edge(focused: bool, hovered: bool) -> Color {
     if focused {
-        colours::FIELD_FOCUS
+        colors::FIELD_FOCUS
     } else if hovered {
-        colours::FIELD_HOVER
+        colors::FIELD_HOVER
     } else {
-        colours::FIELD_EDGE
+        colors::FIELD_EDGE
     }
 }
 
@@ -560,12 +560,12 @@ fn outline_fields(
     mut fields: Query<(Entity, Option<&Hovered>, &mut BorderColor), With<Field>>,
 ) {
     for (entity, hovered, mut border) in &mut fields {
-        let colour = edge(
+        let color = edge(
             focus.get() == Some(entity),
             hovered.is_some_and(|h| h.get()),
         );
-        if border.top != colour {
-            *border = BorderColor::all(colour);
+        if border.top != color {
+            *border = BorderColor::all(color);
         }
     }
 }
@@ -773,15 +773,15 @@ mod tests {
     fn the_cursor_is_seen_on_a_dark_field() {
         let style = cursor_style();
         assert_ne!(style.color, TextCursorStyle::default().color);
-        assert_eq!(style.color, colours::TEXT);
+        assert_eq!(style.color, colors::TEXT);
     }
 
     #[test]
     fn a_fields_edge_is_lit_by_the_pointer_and_more_by_the_keyboard() {
-        assert_eq!(edge(false, false), colours::FIELD_EDGE);
-        assert_eq!(edge(false, true), colours::FIELD_HOVER);
-        assert_eq!(edge(true, false), colours::FIELD_FOCUS);
-        assert_eq!(edge(true, true), colours::FIELD_FOCUS);
+        assert_eq!(edge(false, false), colors::FIELD_EDGE);
+        assert_eq!(edge(false, true), colors::FIELD_HOVER);
+        assert_eq!(edge(true, false), colors::FIELD_FOCUS);
+        assert_eq!(edge(true, true), colors::FIELD_FOCUS);
     }
 
     /// Only the edge changes as the pointer comes over a field, then as it takes the keyboard.
@@ -796,8 +796,8 @@ mod tests {
             .spawn((
                 Field,
                 Hovered::default(),
-                BackgroundColor(colours::FIELD),
-                BorderColor::all(colours::FIELD_EDGE),
+                BackgroundColor(colors::FIELD),
+                BorderColor::all(colors::FIELD_EDGE),
             ))
             .id();
         let looks = |app: &App| {
@@ -808,21 +808,21 @@ mod tests {
             )
         };
         app.update();
-        assert_eq!(looks(&app), (colours::FIELD_EDGE, colours::FIELD));
+        assert_eq!(looks(&app), (colors::FIELD_EDGE, colors::FIELD));
 
         app.world_mut().entity_mut(field).insert(Hovered(true));
         app.update();
-        assert_eq!(looks(&app), (colours::FIELD_HOVER, colours::FIELD));
+        assert_eq!(looks(&app), (colors::FIELD_HOVER, colors::FIELD));
 
         app.world_mut()
             .resource_mut::<InputFocus>()
             .set(field, FocusCause::Pressed);
         app.update();
-        assert_eq!(looks(&app), (colours::FIELD_FOCUS, colours::FIELD));
+        assert_eq!(looks(&app), (colors::FIELD_FOCUS, colors::FIELD));
 
         app.world_mut().entity_mut(field).insert(Hovered(false));
         app.world_mut().resource_mut::<InputFocus>().clear();
         app.update();
-        assert_eq!(looks(&app), (colours::FIELD_EDGE, colours::FIELD));
+        assert_eq!(looks(&app), (colors::FIELD_EDGE, colors::FIELD));
     }
 }

@@ -2,7 +2,7 @@
 //! things are, and this client decides how they look. A per-game appearance (`appearance.rs`)
 //! may improve on them; no game needs one.
 //!
-//! Every board is a slab of wood and every piece a stone in its seat's colour. Where the board
+//! Every board is a slab of wood and every piece a stone in its seat's color. Where the board
 //! stands (a felt-covered table, a garden) is an environment's (`environment.rs`).
 
 use bevy::math::Affine2;
@@ -14,7 +14,7 @@ use crate::{assets, textures};
 
 /// A wood: scanned textures made by the asset pipeline (`assets-src/blender/woods.py`), as
 /// `textures/wood/<name>_{albedo,normal,arm}.jpg`, the size in metres one copy of them covers, and
-/// its finish: the colour (sRGB) oil gives the raw veneer that was scanned, deeper and warmer.
+/// its finish: the color (sRGB) oil gives the raw veneer that was scanned, deeper and warmer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Wood {
     pub name: &'static str,
@@ -72,7 +72,7 @@ pub fn contrasting(board_wood: &str) -> &'static str {
     }
 }
 
-/// How much finer the grain's relief (its normal map) is than its colour: the pores and the
+/// How much finer the grain's relief (its normal map) is than its color: the pores and the
 /// small ripples a close look sees, laid over the figure without stretching a single photograph.
 /// Not a whole number, so the two never line up.
 pub const DETAIL: f32 = 3.17;
@@ -85,7 +85,7 @@ pub fn wood(name: &str) -> Option<Wood> {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterialSpec {
-    /// A colour texture, by its path under `assets/`.
+    /// A color texture, by its path under `assets/`.
     pub albedo: Option<String>,
     /// With a texture of its own: its relief, and its ambient occlusion, roughness and metalness
     /// in red, green and blue, as a wood has them. All from the mesh's own texture coordinates.
@@ -95,16 +95,16 @@ pub struct MaterialSpec {
     /// are in metres (a floor, a wall); without it they are used as the mesh has them.
     pub metres: Option<f32>,
     /// One of `WOODS`, `board` for the board's own, or `contrast` for one that stands out
-    /// against it: its colour, normals and roughness, mapped by position on the table, so a
+    /// against it: its color, normals and roughness, mapped by position on the table, so a
     /// mesh using it needs texture coordinates in metres (`world_uvs`).
     pub wood: Option<String>,
-    /// Multiplies the colour (sRGB), as a stain does; the whole colour when there is no texture.
+    /// Multiplies the color (sRGB), as a stain does; the whole color when there is no texture.
     pub tint: Option<[f32; 3]>,
     /// Perceptual roughness; with a wood, it scales the wood's own.
     pub roughness: Option<f32>,
     /// Bevy's reflectance: 0.5 is most things; less for a surface that reflects little.
     pub reflectance: Option<f32>,
-    /// How much of it is metal (0 to 1): a metal has no colour but what it reflects, tinted its
+    /// How much of it is metal (0 to 1): a metal has no color but what it reflects, tinted its
     /// own, so a polished one shows the room. Not for one with `arm`, whose texture says.
     pub metallic: Option<f32>,
     /// A clear coat over it: how much, and how rough. Polish.
@@ -113,9 +113,9 @@ pub struct MaterialSpec {
     /// How much light passes through it to the other side, as through a shell (0 to 1).
     pub translucency: Option<f32>,
     /// Light of its own, as a lit cell's: linear RGB added to what the camera sees (Bevy does not
-    /// scale an emissive colour by the exposure), so 1 is about white.
+    /// scale an emissive color by the exposure), so 1 is about white.
     pub glow: Option<[f32; 3]>,
-    /// Cut out by its colour texture's alpha: what is below this is not there (a leaf's outline
+    /// Cut out by its color texture's alpha: what is below this is not there (a leaf's outline
     /// on a card). Seen from both sides.
     pub cutout: Option<f32>,
     /// See-through all over, as water is: how much of it is seen (0 to 1).
@@ -407,7 +407,7 @@ pub fn disc_dark() -> MaterialSpec {
 }
 
 /// The trim of a light ring: polished gold. A metal's tint is what it reflects; a little
-/// short of all metal, so that it keeps some colour of its own where it reflects a dim room.
+/// short of all metal, so that it keeps some color of its own where it reflects a dim room.
 pub fn trim_gold() -> MaterialSpec {
     MaterialSpec {
         tint: Some([1.0, 0.86, 0.57]),
@@ -437,7 +437,7 @@ pub fn seat_paint(color: &str, seat: u32) -> Color {
     })
 }
 
-/// Distinct, fairly saturated colours that read well on a light board and on each other.
+/// Distinct, fairly saturated colors that read well on a light board and on each other.
 const PALETTE: [Color; 8] = [
     Color::srgb(0.80, 0.18, 0.16),
     Color::srgb(0.15, 0.33, 0.78),

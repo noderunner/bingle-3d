@@ -17,7 +17,7 @@ use bevy::ui_widgets::{Activate, Button, observe};
 
 use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow};
 
-use crate::browser::{Action, colours};
+use crate::browser::{Action, colors};
 use crate::display::{self, DisplaySettings};
 use crate::fonts::UiFonts;
 use crate::login::{self, LoginScreen, Screen};
@@ -40,7 +40,7 @@ impl Plugin for EscapeMenuPlugin {
                             .or_eager(resource_changed::<WatchStatus>)
                             .or_eager(resource_exists_and_changed::<DisplaySettings>),
                     ),
-                    colour_items,
+                    color_items,
                 )
                     .chain(),
             );
@@ -151,7 +151,7 @@ fn spawn_menu(mut commands: Commands) {
                     // Opaque: blended in linear light, even a little see-through shows the
                     // table plainly.
                     BackgroundColor(Color::srgb(0.07, 0.08, 0.10)),
-                    BorderColor::all(colours::BORDER),
+                    BorderColor::all(colors::BORDER),
                 ))
                 .with_children(|menu| {
                     menu.spawn((
@@ -188,15 +188,15 @@ fn choice(f: &UiFonts, label: &str, action: MenuAction, chosen: bool, node: Node
         Hovered::default(),
         node,
         BackgroundColor(if chosen {
-            colours::CHOSEN
+            colors::CHOSEN
         } else {
-            colours::BUTTON
+            colors::BUTTON
         }),
         observe(on_item),
         children![(
             Text::new(label),
             f.semibold(16.0),
-            TextColor(colours::TEXT),
+            TextColor(colors::TEXT),
             Pickable::IGNORE,
         )],
     )
@@ -210,11 +210,11 @@ fn greyed(f: &UiFonts, label: &str) -> impl Bundle {
 fn greyed_in(f: &UiFonts, label: &str, node: Node) -> impl Bundle {
     (
         node,
-        BackgroundColor(colours::BLANK),
+        BackgroundColor(colors::BLANK),
         children![(
             Text::new(label),
             f.semibold(16.0),
-            TextColor(colours::DISABLED),
+            TextColor(colors::DISABLED),
             Pickable::IGNORE,
         )],
     )
@@ -347,7 +347,7 @@ fn show(
         list.spawn((
             Text::new(text),
             f.semibold(22.0),
-            TextColor(colours::TEXT),
+            TextColor(colors::TEXT),
             Node {
                 margin: UiRect::bottom(px(6)),
                 ..default()
@@ -410,7 +410,7 @@ fn settings(
     list.spawn((
         Text::new("Resolution"),
         f.regular(14.0),
-        TextColor(colours::MUTED),
+        TextColor(colors::MUTED),
         Pickable::IGNORE,
         Node {
             margin: UiRect::top(px(4)),
@@ -461,13 +461,13 @@ fn settings(
     });
 }
 
-fn colour_items(mut items: Query<(&MenuItem, &Hovered, &mut BackgroundColor), Changed<Hovered>>) {
+fn color_items(mut items: Query<(&MenuItem, &Hovered, &mut BackgroundColor), Changed<Hovered>>) {
     for (item, hovered, mut bg) in &mut items {
         bg.0 = match (item.chosen, hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
     }
 }

@@ -18,7 +18,7 @@ use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button, observe};
 use bevy::window::PrimaryWindow;
 
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::fonts::UiFonts;
 use crate::sign_in::Field;
 use crate::vr_panels::InHeadset;
@@ -30,7 +30,7 @@ impl Plugin for VrKeyboardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shifted>()
             .add_systems(Startup, spawn_keyboard)
-            .add_systems(Update, (show, relabel, colour_keys));
+            .add_systems(Update, (show, relabel, color_keys));
     }
 }
 
@@ -257,13 +257,13 @@ fn key_button(f: &UiFonts, key: Pressed, width: f32) -> impl Bundle {
             align_items: AlignItems::Center,
             ..default()
         },
-        BackgroundColor(colours::BUTTON),
+        BackgroundColor(colors::BUTTON),
         observe(on_key),
         children![(
             Label(key),
             Text::new(key.label(false)),
             f.semibold(if matches!(key, Char(..)) { 26.0 } else { 20.0 }),
-            TextColor(colours::TEXT),
+            TextColor(colors::TEXT),
             Pickable::IGNORE,
         )],
     )
@@ -352,17 +352,17 @@ fn relabel(shifted: Res<Shifted>, mut labels: Query<(&Label, &mut Text)>) {
     }
 }
 
-fn colour_keys(shifted: Res<Shifted>, mut keys: Query<(&Pressed, &Hovered, &mut BackgroundColor)>) {
+fn color_keys(shifted: Res<Shifted>, mut keys: Query<(&Pressed, &Hovered, &mut BackgroundColor)>) {
     for (key, hovered, mut bg) in &mut keys {
         let on = *key == Shift && shifted.0;
-        let colour = match (on, hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+        let color = match (on, hovered.0) {
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
-        if bg.0 != colour {
-            bg.0 = colour;
+        if bg.0 != color {
+            bg.0 = color;
         }
     }
 }

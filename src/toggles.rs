@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::board::ShowLegalMoves;
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::coordinates::ShowCoordinates;
 use crate::fonts::UiFonts;
 
@@ -21,7 +21,7 @@ pub struct TogglesPlugin;
 impl Plugin for TogglesPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_buttons)
-            .add_systems(Update, (toggle_with_keys, colour_buttons).chain());
+            .add_systems(Update, (toggle_with_keys, color_buttons).chain());
     }
 }
 
@@ -96,7 +96,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
                         border_radius: BorderRadius::all(px(6)),
                         ..default()
                     },
-                    BackgroundColor(colours::BUTTON),
+                    BackgroundColor(colors::BUTTON),
                     observe(
                         |activate: On<Activate>,
                          toggles: Query<&Toggle>,
@@ -109,7 +109,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>) {
                     children![(
                         Text::new(toggle.label()),
                         fonts.semibold(13.0),
-                        TextColor(colours::TEXT),
+                        TextColor(colors::TEXT),
                         Pickable::IGNORE,
                     )],
                 ));
@@ -132,19 +132,19 @@ fn toggle_with_keys(
     }
 }
 
-fn colour_buttons(
+fn color_buttons(
     settings: Settings,
     mut buttons: Query<(&Toggle, &Hovered, &mut BackgroundColor)>,
 ) {
     for (toggle, hovered, mut background) in &mut buttons {
-        let colour = match (settings.is_on(*toggle), hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+        let color = match (settings.is_on(*toggle), hovered.0) {
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
-        if background.0 != colour {
-            background.0 = colour;
+        if background.0 != color {
+            background.0 = color;
         }
     }
 }

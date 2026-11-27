@@ -11,7 +11,7 @@ use std::time::Instant;
 use bevy::prelude::*;
 
 use crate::appearance::Appearances;
-use crate::browser::{Action, button, buttons, colours, line, seat_dot};
+use crate::browser::{Action, button, buttons, colors, line, seat_dot};
 use crate::clock;
 use crate::downloads::Downloads;
 use crate::fonts::UiFonts;
@@ -55,14 +55,14 @@ struct WatchOnStart(Option<Target>);
 fn looking(p: &mut ChildSpawnerCommands, f: &UiFonts, (done, total): (u64, u64)) {
     p.spawn(line(
         f.semibold(16.0),
-        colours::TEXT,
+        colors::TEXT,
         "Fetching the game's look…",
     ));
     if total > 0 {
         let mb = |bytes: u64| bytes as f64 / 1e6;
         p.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             &format!("{:.1} of {:.1} MB", mb(done), mb(total)),
         ));
     }
@@ -83,7 +83,7 @@ fn tick_clocks(
         return;
     };
     let now = Instant::now();
-    for (seat, mut text, mut colour) in &mut times {
+    for (seat, mut text, mut color) in &mut times {
         let Some(left) = table.time_left(seat.0, now) else {
             continue;
         };
@@ -92,12 +92,12 @@ fn tick_clocks(
             text.0 = words;
         }
         let low = if left < 10.0 {
-            colours::WARN
+            colors::WARN
         } else {
-            colours::TEXT
+            colors::TEXT
         };
-        if colour.0 != low {
-            colour.0 = low;
+        if color.0 != low {
+            color.0 = low;
         }
     }
 }
@@ -138,7 +138,7 @@ fn spawn_panel(mut commands: Commands) {
             border_radius: BorderRadius::all(px(10)),
             ..default()
         },
-        BackgroundColor(colours::PANEL),
+        BackgroundColor(colors::PANEL),
     ));
 }
 
@@ -185,20 +185,20 @@ fn rebuild(
                         Some(Target::Join(_)) => "Joining the game…",
                         _ => "Opening the game…",
                     };
-                    let colour = if watching.problem.is_some() {
-                        colours::MUTED
+                    let color = if watching.problem.is_some() {
+                        colors::MUTED
                     } else {
-                        colours::TEXT
+                        colors::TEXT
                     };
-                    p.spawn(line(f.semibold(16.0), colour, what));
+                    p.spawn(line(f.semibold(16.0), color, what));
                 }
             }
             if let Some(problem) = &watching.problem {
-                p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+                p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
                 if watching.retry_in.is_some() {
                     p.spawn(line(
                         f.regular(13.0),
-                        colours::MUTED,
+                        colors::MUTED,
                         "Trying again shortly.",
                     ));
                 }
@@ -227,7 +227,7 @@ fn rebuild(
 }
 
 fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &Appearances) {
-    p.spawn(line(f.semibold(20.0), colours::TEXT, &table.info.name));
+    p.spawn(line(f.semibold(20.0), colors::TEXT, &table.info.name));
     let doing = if table.yours().is_some() {
         "playing"
     } else {
@@ -235,7 +235,7 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
     };
     p.spawn(line(
         f.regular(13.0),
-        colours::MUTED,
+        colors::MUTED,
         &format!("Room {}  ·  {doing}", table.room_code),
     ));
     for seat in &table.info.seats {
@@ -268,11 +268,11 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
             if won {
                 text.push_str("  · won");
             }
-            row.spawn(line(font, colours::TEXT, &text));
+            row.spawn(line(font, colors::TEXT, &text));
             if let Some(left) = time {
                 row.spawn((
                     SeatTime(seat.seat),
-                    line(f.semibold(14.0), colours::TEXT, &clock::words(left)),
+                    line(f.semibold(14.0), colors::TEXT, &clock::words(left)),
                 ));
             }
         });
@@ -284,25 +284,25 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
                     margin: UiRect::left(px(22)),
                     ..default()
                 },
-                children![line(f.regular(13.0), colours::MUTED, &counted)],
+                children![line(f.regular(13.0), colors::MUTED, &counted)],
             ));
         }
     }
-    let colour = if table.finished() {
-        colours::GOOD
+    let color = if table.finished() {
+        colors::GOOD
     } else {
-        colours::TEXT
+        colors::TEXT
     };
     let summary = if table.to_play() {
         "Your move.".to_string()
     } else {
         table.summary()
     };
-    p.spawn(line(f.semibold(15.0), colour, &summary));
+    p.spawn(line(f.semibold(15.0), color, &summary));
     // What the seat on impulse is asked, as the server words it, for everyone watching; the
     // player's own is the hint under their move (`your_turn`).
     if let Some(words) = asked(table) {
-        p.spawn(line(f.regular(14.0), colours::TEXT, words));
+        p.spawn(line(f.regular(14.0), colors::TEXT, words));
     }
 }
 
@@ -387,9 +387,9 @@ fn score_sheet(
     .with_children(|row| {
         for frame in frames(sheet) {
             let edge = if frame.current {
-                colours::FIELD_FOCUS
+                colors::FIELD_FOCUS
             } else {
-                colours::BORDER
+                colors::BORDER
             };
             row.spawn((
                 Node {
@@ -400,25 +400,25 @@ fn score_sheet(
                     border: UiRect::all(px(1)),
                     ..default()
                 },
-                BackgroundColor(colours::CARD),
+                BackgroundColor(colors::CARD),
                 BorderColor::all(edge),
             ))
             .with_children(|cell| {
                 cell.spawn(line(
                     f.regular(10.0),
-                    colours::MUTED,
+                    colors::MUTED,
                     &frame.number.to_string(),
                 ));
-                cell.spawn(line(f.regular(12.0), colours::TEXT, &frame.marks.join(" ")));
+                cell.spawn(line(f.regular(12.0), colors::TEXT, &frame.marks.join(" ")));
                 let total = frame.total.map(|t| t.to_string()).unwrap_or_default();
-                cell.spawn(line(f.semibold(12.0), colours::TEXT, &total));
+                cell.spawn(line(f.semibold(12.0), colors::TEXT, &total));
             });
         }
     });
     if let Some(total) = sheet["total"].as_i64() {
         p.spawn(line(
             f.semibold(14.0),
-            colours::TEXT,
+            colors::TEXT,
             &format!("Score: {total}"),
         ));
     }
@@ -438,7 +438,7 @@ fn waiting_for_players(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table)
     }
     p.spawn(line(
         f.regular(14.0),
-        colours::TEXT,
+        colors::TEXT,
         &format!(
             "Somebody can join it with the room code {},",
             table.room_code
@@ -447,7 +447,7 @@ fn waiting_for_players(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table)
     if !table.game.invite_url.is_empty() {
         p.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             &format!("or on the web at {}", table.game.invite_url),
         ));
     }
@@ -459,16 +459,16 @@ fn resigning(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, resign: &
         return;
     }
     if let Resign::Failed(problem) = resign {
-        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
     p.spawn(buttons()).with_children(|row| match resign {
         Resign::Confirming => {
-            row.spawn(line(f.regular(14.0), colours::TEXT, "Give up the game?"));
+            row.spawn(line(f.regular(14.0), colors::TEXT, "Give up the game?"));
             row.spawn(button(f, "Resign", Action::Resign));
             row.spawn(button(f, "Keep playing", Action::KeepPlaying));
         }
         Resign::Sent => {
-            row.spawn(line(f.regular(14.0), colours::MUTED, "Resigning…"));
+            row.spawn(line(f.regular(14.0), colors::MUTED, "Resigning…"));
         }
         Resign::No | Resign::Failed(_) => {
             row.spawn(button(f, "Resign", Action::Resign));
@@ -479,7 +479,7 @@ fn resigning(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, resign: &
 /// What the player may do on their impulse.
 fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Turn) {
     if let Some(problem) = &turn.problem {
-        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
     let drawn = table.state.state.panel_actions();
     // After a selection, what the position it leaves asks next (a line to remove, once
@@ -491,7 +491,7 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
     };
     let hint = hint(turn, said, &drawn);
     if !hint.is_empty() {
-        p.spawn(line(f.regular(14.0), colours::TEXT, &hint));
+        p.spawn(line(f.regular(14.0), colors::TEXT, &hint));
     }
     let (choices, _) = on_panel(turn.choices(), &drawn);
     let can_go_back = turn.can_go_back();

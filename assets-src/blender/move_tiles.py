@@ -84,7 +84,7 @@ def smooth_noise(rng, size, cells):
 
 
 def stamp():
-    """The square stamp: its cover (alpha) in 0..1, and the ink's density in its colour."""
+    """The square stamp: its cover (alpha) in 0..1, and the ink's density in its color."""
     rng = np.random.default_rng(STAMP_SEED)
     n = STAMP_SIZE
     # Distance in from the square's edge, in pixels (positive inside).

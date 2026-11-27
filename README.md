@@ -164,8 +164,8 @@ cargo run -- --host hex-7 --voice --relay-only   # the same call, only through t
 
 Any game is drawn from what the server says about it: a hex board's cells as hexagons, a grid's
 as squares, cut into one slab of wood on a felt table, lit by a real room's light; pieces as
-stones in their seat's colour, and the edges a seat must connect (its `goals`) with the board's
-rim stained and the cells along them shaded in its colour. The buttons at the bottom right
+stones in their seat's color, and the edges a seat must connect (its `goals`) with the board's
+rim stained and the cells along them shaded in its color. The buttons at the bottom right
 choose the board's wood: teak, walnut or cherry.
 A game may have a look of its own (`assets/appearance/`): Hex is played with slate and
 clamshell stones, and Go, Gomoku, Pente and Meridians with the same stones on the points where
@@ -182,7 +182,7 @@ moving, click the piece, then the bowl of fences both players share.
 Draughts wooden checkers; Breakthrough,
 Brandubh and Fist turned chessmen; and Amazons its queens on a chessboard of pale and dark
 wood with a dark border, and red checkers for arrows. Blooms' stones are polished minerals (red
-jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each colour in a small wooden
+jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each color in a small wooden
 bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
 captures is carried to a small wooden tray in front of them, with a square for every capture the win
 needs. The client needs a Bingle whose API is 1.20 or newer. Games a server builds from its private

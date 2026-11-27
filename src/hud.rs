@@ -27,12 +27,12 @@ const HINT: &str = "Play: click, Enter  ·  Back: right-click, Backspace  ·  Me
 
 fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     let font = fonts.regular(15.0);
-    let colour = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7));
+    let color = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7));
     commands.spawn((
         crate::login::MainOnly,
         Text::new(HINT),
         font.clone(),
-        colour,
+        color,
         // Only words: the wheel and clicks go through to the table.
         Pickable::IGNORE,
         Node {
@@ -47,7 +47,7 @@ fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
             FpsText,
             Text::new("- fps"),
             font,
-            colour,
+            color,
             Pickable::IGNORE,
             Node {
                 position_type: PositionType::Absolute,

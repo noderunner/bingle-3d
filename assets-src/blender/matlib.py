@@ -32,9 +32,9 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def image(path, colour):
+def image(path, color):
     img = bpy.data.images.load(os.path.join(common.ASSETS, path), check_existing=True)
-    img.colorspace_settings.name = "sRGB" if colour else "Non-Color"
+    img.colorspace_settings.name = "sRGB" if color else "Non-Color"
     return img
 
 
@@ -63,9 +63,9 @@ def build(name, spec):
         arm_file = f"textures/wood/{wood}_arm.jpg"
         detail = True
 
-    def texture(path, colour, uv_map=None):
+    def texture(path, color, uv_map=None):
         node = nodes.new("ShaderNodeTexImage")
-        node.image = image(path, colour)
+        node.image = image(path, color)
         coords = nodes.new("ShaderNodeUVMap")
         if uv_map:
             coords.uv_map = uv_map

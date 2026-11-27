@@ -27,7 +27,7 @@ pub const CARD_SIZE: Vec3 = Vec3::new(0.0635, 0.0889, 0.0003);
 /// the pipeline's (`assets-src/blender/card_faces.py`). None for any other card: the client
 /// has no picture of it.
 pub fn standard_face(suit: &str, rank: &str) -> Option<String> {
-    // A symbol may come with the mark that asks for its coloured form.
+    // A symbol may come with the mark that asks for its colored form.
     let suit = match suit.trim_end_matches('\u{fe0f}') {
         "♠" => "spades",
         "♥" => "hearts",
@@ -163,7 +163,7 @@ mod tests {
                 faces.extend(face);
             }
         }
-        // Each its own, read as a colour, and nothing in the folder that no card shows.
+        // Each its own, read as a color, and nothing in the folder that no card shows.
         let all = assets::FILES
             .iter()
             .filter(|(file, _)| file.starts_with("textures/cards/faces/"));
@@ -171,12 +171,12 @@ mod tests {
         faces.sort();
         faces.dedup();
         assert_eq!(faces.len(), 52 + 16);
-        assert!(faces.iter().all(|f| crate::textures::is_colour(f)));
+        assert!(faces.iter().all(|f| crate::textures::is_color(f)));
 
         assert_eq!(
             standard_face("♥\u{fe0f}", " q "),
             standard_face("♥", "Q"),
-            "the symbol's coloured form, and a label as it happens to be written"
+            "the symbol's colored form, and a label as it happens to be written"
         );
         assert_ne!(
             standard_face("♥", "1"),

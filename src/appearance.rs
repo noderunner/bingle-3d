@@ -57,7 +57,7 @@
 //!   (`choice_grid.rs`): where it lies, the picture of each box and line by the view's name
 //!   for it, and the choice a click on a box makes;
 //! - `markers`: a piece that stands for each seat, in front of it (`seat_markers.rs`): the
-//!   piece by the seat's colour word, the materials it is stained when the view puts seats
+//!   piece by the seat's color word, the materials it is stained when the view puts seats
 //!   on sides, and the choices clicks on them make (a team picked by its members);
 //! - `panel.counters`: the view's counters of each seat shown under its name in the game's
 //!   panel (a score, tricks taken).
@@ -184,7 +184,7 @@ pub struct GridLook {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MarkersLook {
-    /// The piece of each seat, by the seat's colour word: its id in `pieces`.
+    /// The piece of each seat, by the seat's color word: its id in `pieces`.
     pub pieces: BTreeMap<String, String>,
     /// Where a seat's stands, on the seat's own terms: to its right, and from the table's
     /// middle towards it, in metres.
@@ -196,7 +196,7 @@ pub struct MarkersLook {
     /// What a marker's first part is made of: a material of this file's.
     pub material: String,
     /// The parts of its model drawn in its seat's own material (`seats.<word>.pieces`, or the
-    /// seat's colour as a lacquer): a plinth, and what else tells whose it is from across the
+    /// seat's color as a lacquer): a plinth, and what else tells whose it is from across the
     /// table (its eyes). One name, or several.
     #[serde(default, alias = "seat_part", deserialize_with = "one_or_several")]
     pub seat_parts: Vec<String>,
@@ -315,7 +315,7 @@ pub struct TintLook {
 pub struct MoveTilesLook {
     /// The view's cards, by their name in it: `{ hands: { <seat>: [card] }, side: card }`, a
     /// card `{ id, name, moves: [[right, forward]], stamp }`: each move from where the piece
-    /// stands, as its holder sees it, and the colour word of the seat its stamp is.
+    /// stands, as its holder sees it, and the color word of the seat its stamp is.
     pub view: String,
     /// The choice a click on a tile makes: this, then the card's id.
     pub choice: String,
@@ -363,7 +363,7 @@ pub struct BowlLook {
     /// What the bowl is made of. The stones are their seat's.
     pub material: String,
     /// How big the bowl is against its model (1 when not said): smaller where a seat has a
-    /// bowl for each of several colours.
+    /// bowl for each of several colors.
     pub size: Option<f32>,
 }
 
@@ -504,7 +504,7 @@ pub struct PieceLook {
     /// the material of each of its model's two parts, by the part's name. Not with `material`.
     #[serde(default)]
     pub sides: BTreeMap<String, String>,
-    /// Which part's side is up on each seat's pieces, by the seat's colour word; the model's
+    /// Which part's side is up on each seat's pieces, by the seat's color word; the model's
     /// first part's for a seat not named.
     #[serde(default)]
     pub up: BTreeMap<String, String>,
@@ -515,7 +515,7 @@ pub struct PieceLook {
     #[serde(default)]
     pub parts: BTreeMap<String, String>,
     /// The kind of piece, by its id in `pieces`, that a move of this one leaves where it
-    /// started, in the mover's colour (a disc dropped in a ring before the ring moves). The
+    /// started, in the mover's color (a disc dropped in a ring before the ring moves). The
     /// server says only where the move goes; this shows the rest while it is built.
     pub leaves: Option<String>,
 }
@@ -1000,7 +1000,7 @@ impl Appearance {
     }
 
     /// What a part of a piece's model after its first is made of, on the piece of the seat
-    /// with this colour word: the piece's own for it (`PieceLook::parts`), else the seat's
+    /// with this color word: the piece's own for it (`PieceLook::parts`), else the seat's
     /// (`SeatLook::parts`). None when neither says: it is of the piece's own material.
     pub fn part_material(
         &self,
@@ -1605,7 +1605,7 @@ mod tests {
             piece("fist", "pawn").model,
             piece("breakthrough", "pawn").model
         );
-        // A piece may be made of something of its own, and a colour no seat plays have a look.
+        // A piece may be made of something of its own, and a color no seat plays have a look.
         let arrow = piece("amazons", "arrow");
         let look = all.for_game("amazons").unwrap();
         assert!(look.material(arrow.material.as_ref()).is_some());
@@ -1744,7 +1744,7 @@ mod tests {
             "a way of standing the client does not know is refused"
         );
         assert!(
-            Appearance::parse("games = []\ncolour = 1").is_err(),
+            Appearance::parse("games = []\ncolor = 1").is_err(),
             "unknown keys are refused, so a misspelling is not ignored"
         );
     }
@@ -1803,7 +1803,7 @@ mod tests {
         );
         assert_eq!(a.grid.as_ref().unwrap().box_size, Some(0.03));
         assert_eq!(a.panel.counters, ["score"]);
-        // A marker's parts in its seat's colour: one name, or several.
+        // A marker's parts in its seat's color: one name, or several.
         assert_eq!(a.markers.as_ref().unwrap().seat_parts, ["base"]);
         let several = good.replace("seat_part = \"base\"", "seat_parts = [\"base\", \"eyes\"]");
         let markers = Appearance::parse(&several).unwrap().markers.unwrap();

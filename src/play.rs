@@ -939,9 +939,9 @@ impl Turn {
     }
 
     /// The positions whose pieces the move being built turns over where they stand, and the
-    /// colour word each turns to, as far as is known (API 1.20's `converts_to`): as `taking`,
+    /// color word each turns to, as far as is known (API 1.20's `converts_to`): as `taking`,
     /// those the selections made turn over, and once something is chosen towards the next, those
-    /// every selection it could still become turns to the same colour.
+    /// every selection it could still become turns to the same color.
     pub fn turning(&self) -> BTreeMap<&str, &str> {
         let mut out: BTreeMap<&str, &str> = self
             .made
@@ -1308,7 +1308,7 @@ pub struct LineAim(pub Option<LegalSelection>);
 pub struct Hovering(pub Option<String>);
 
 /// A choice a click on something other than the board makes (a stone's bowl: a stone of its
-/// colour).
+/// color).
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct Choice(pub Gesture);
 
@@ -2403,7 +2403,7 @@ mod tests {
         // Placed: nothing held until the next selection.
         assert_eq!(t.gesture(&g("pos", "a1")), Outcome::Ask);
         assert_eq!(t.auto_hand(), None);
-        // A choice of kind first (Blooms' colours), a piece moved (Fendo, Tak), or a move of
+        // A choice of kind first (Blooms' colors), a piece moved (Fendo, Tak), or a move of
         // two parts: no stone held by itself.
         for options in [tak(), fendo(), vec![shoot("a1", "a2", "a3")]] {
             let mut t = Turn::new(1);
@@ -2411,11 +2411,11 @@ mod tests {
             assert_eq!(t.auto_hand(), None);
         }
         let mut t = Turn::new(1);
-        let colours = vec![
+        let colors = vec![
             sel("r", Some("a1"), &[("piece", "red"), ("pos", "a1")]),
             sel("y", Some("a1"), &[("piece", "yellow"), ("pos", "a1")]),
         ];
-        t.answered(answer(2, colours));
+        t.answered(answer(2, colors));
         assert_eq!(t.auto_hand(), None);
     }
 

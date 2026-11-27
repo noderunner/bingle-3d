@@ -23,7 +23,7 @@ use serde_json::Value;
 
 use crate::appearance::{Appearances, GridLook};
 use crate::board::{BoardWood, CellShape, ShowLegalMoves};
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::card_table::CLOTH;
 use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::fonts::UiFonts;
@@ -656,22 +656,22 @@ fn spawn_card(mut commands: Commands, fonts: Option<Res<UiFonts>>) {
             border_radius: BorderRadius::all(px(8)),
             ..default()
         },
-        BackgroundColor(colours::PANEL),
-        BorderColor::all(colours::BORDER),
+        BackgroundColor(colors::PANEL),
+        BorderColor::all(colors::BORDER),
         GlobalZIndex(40),
         children![
             (
                 Heading,
                 Text::new(""),
                 fonts.semibold(15.0),
-                TextColor(colours::TEXT),
+                TextColor(colors::TEXT),
                 Pickable::IGNORE,
             ),
             (
                 Meaning,
                 Text::new(""),
                 fonts.regular(13.0),
-                TextColor(colours::TEXT),
+                TextColor(colors::TEXT),
                 Pickable::IGNORE,
             ),
         ],
