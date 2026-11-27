@@ -9,7 +9,7 @@
 //! board's along its own edges.
 //!
 //! They are engraved in the board's margin: glyphs of the client's font, made by the asset
-//! pipeline (`assets-src/blender/engraving.py`) as an atlas of the cut's colour and its walls'
+//! pipeline (`assets-src/blender/engraving.py`) as an atlas of the cut's color and its walls'
 //! slopes, laid flat on the wood and reading from the player's side, as on a real board. They
 //! stand half way across the margin between the outermost spaces (or a stone on the outermost
 //! lines) and the board's rounded rim (`board::Surface::label_at`), on any size of board.

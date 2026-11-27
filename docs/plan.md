@@ -109,7 +109,7 @@ README, this plan, `.gitignore`.
 ### Stage 3: watch Hex (done, #5)
 
 - Build the board from Hex's game definition: its positions, their hex coordinates and the board's
-  layout, with generic defaults for the pieces (shape by type, colour by seat). Nothing in the code
+  layout, with generic defaults for the pieces (shape by type, color by seat). Nothing in the code
   names Hex: the same path draws any hex board, and square boards and points follow later.
 - Start a bot match (`POST /api/bot-matches`), join as a spectator over `GET /ws/{code}`, and
   animate each `move` event; reload state on a `state` event or a `move_seq` gap.
@@ -117,8 +117,8 @@ README, this plan, `.gitignore`.
 - As built: API 1.1 (for bot matches). The layout coordinates the server sends are used as they
   are, one unit between neighbours, so a hex board, a grid and a board of points all draw from the
   same code; the cells' shape comes from the board's kind (hexagons, squares, round spots) and
-  every piece is a stone in its seat's colour, with a word the client knows (`red`) drawn as that
-  colour and any other from a palette by seat. Shapes by piece type wait for an appearance file,
+  every piece is a stone in its seat's color, with a word the client knows (`red`) drawn as that
+  color and any other from a palette by seat. Shapes by piece type wait for an appearance file,
   since `pieces.*.shape` is leaving the API (ADR 0124). Each `move` event carries the whole
   position, so the client replaces what it shows and drops in only the pieces that are new, and
   rings the last move. The camera frames each new board. *Watch two bots* on any two-player game
@@ -152,9 +152,9 @@ README, this plan, `.gitignore`.
   refused because the game moved on reads the state again. API 1.1 still covers all of it.
 - Each seat's goal on the board: the client targets API 1.2 for the game definition's `goals`
   (bingle#216) and reads the board's `regions`. Every `connect` goal's regions get a strip in the
-  seat's colour along their cells' sides that face off the board (a neutral one for a goal every
+  seat's color along their cells' sides that face off the board (a neutral one for a goal every
   seat shares); a side of a corner cell in two regions goes to the one it faces most, so each
-  edge shows one colour. The way a region faces is square to the line of its cells, away from the
+  edge shows one color. The way a region faces is square to the line of its cells, away from the
   board's middle. Nothing names Hex: any board with connect goals is drawn the same way, and a
   goal type the client does not know is skipped. A server older than API 1.2 is now refused.
 - Playing a person. *Play a person* in the list, or `--host GAME`, makes a game with no
@@ -423,7 +423,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   by SHA-256) and write `assets/`. `previews` renders the assets in Cycles for a person to look
   at. Blender is Flathub's, on the host (it renders on the GPU there); the toolbox has none.
 - The room: an HDR photograph of a room (Poly Haven, CC0), graded by the pipeline for a table
-  top (its floor, below the horizon, made the dim table the board stands on; its colours at half
+  top (its floor, below the horizon, made the dim table the board stands on; its colors at half
   saturation) and filtered into the diffuse and specular cubemaps Bevy's `EnvironmentMapLight`
   reads, on every 3D camera. It is the fill light, kept low; a key light from beyond the board,
   with the room's window turned to it, makes the highlights and shadows, so what faces the
@@ -434,18 +434,18 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the orbit camera looks.
 - Every board is one slab of wood with a rounded rim, its cells cut into it and darkened lines
   between them; the grain is mapped by position, so it runs on across cells, with the grain's
-  relief three times finer than its colour. The player chooses the wood: teak, walnut or cherry,
-  each with the colour of an oil finish (stopgap buttons at the bottom right). Every
+  relief three times finer than its color. The player chooses the wood: teak, walnut or cherry,
+  each with the color of an oil finish (stopgap buttons at the bottom right). Every
   piece is a lens-shaped stone modelled in Blender, each turned, sized and leaning a little
   differently. These are the generic defaults (`look.rs`), for every game.
 - Each goal's edge: the slab's rim along it is stained, and its cells shaded with a soft gradient
-  towards it (fading out a third of the way across), in the seat's colour; a corner on two seats'
+  towards it (fading out a third of the way across), in the seat's color; a corner on two seats'
   edges is split between them.
 - The camera pans as well as orbiting (middle-drag, Shift with right-drag, W A S D). The board's
   coordinates can be shown along its edges (C, or a button): where every position is named as
   letters then a number, a column's letters at its two ends and a row's number at its two sides,
   engraved in the board's margin (glyphs of the client's font, rendered by the pipeline into an
-  atlas of the cut's colour and its walls' slopes); a board named otherwise shows none.
+  atlas of the cut's color and its walls' slopes); a board named otherwise shows none.
 - Games played on points (Go, Gomoku, Pente, Meridians; their appearance file says
   `[board] on = "points"`, as the web page's `style: points` does for its own look): a plain slab
   with lines cut between neighbouring positions (a square grid, or three ways on a hexagonal
@@ -501,10 +501,10 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - Blooms (`assets/appearance/blooms.toml`): stones of polished minerals drawn with numpy
   (`assets-src/blender/minerals.py`), after photographs of real semi-precious Go stones the
   maintainer owns: red jasper and tiger's eye for Warm, lapis lazuli (with a little of
-  sodalite's veining) and black slate for Cool. A small wooden bowl of each colour beside the
+  sodalite's veining) and black slate for Cool. A small wooden bowl of each color beside the
   board, a seat's two at its two hands; the bowls are Go's model made smaller (`[bowls] size`),
   stood by the board's own outline so a hexagonal board's narrowing near side brings them in.
-  A click on a bowl takes a stone of its colour (the seat's colours, `colors`, and each piece's,
+  A click on a bowl takes a stone of its color (the seat's colors, `colors`, and each piece's,
   `pieces[].color`, are read from the game definition); it waits over the bowl, bobbing, while
   the cells it may go to are lit, and a click on one carries it there and sets it down, as a
   piece moved is; the bowl again puts it back. Any game with bowls carries what it places from
@@ -516,13 +516,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   player, of the board's own wood (it changes with the board's), with a square for each capture
   its win wants (`counters[].max`: 15, 20, 25, 40 and 50 on Blooms' five boards). Wide and
   shallow: one row of up to ten, otherwise two rows (8 by 2, 10 by 2, 13 by 2, 20 by 2, 25 by 2;
-  first tried in full rows of up to ten, which made the bigger boards' trays deep). The counts are the position's `reserves` (by the seat's colour word, then the
+  first tried in full rows of up to ten, which made the bigger boards' trays deep). The counts are the position's `reserves` (by the seat's color word, then the
   counter's id). The server does not say which stones were taken (a move's `captured` names one
-  cell), so the board sees it: what leaves the board as a seat's count goes up, not of a colour
+  cell), so the board sees it: what leaves the board as a seat's count goes up, not of a color
   it plays, is its capture, carried from where it stood (straight up clear of its neighbours,
   across, and set into the next empty square, one after another), each with a soft wooden
   "tock", a little higher or lower each time, so several in a row do not grate. A game opened
-  with captures made has its trays filled at once in the other seat's colours by turns; a count
+  with captures made has its trays filled at once in the other seat's colors by turns; a count
   past the squares (the last turn may take more) stacks on the first. Any game whose definition
   has a counter with a count wanted gets them, with no look of its own; `[trays]` may give a
   material and a size. The camera frames the board with the player's tray in front of it. No
@@ -537,8 +537,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   whole, as much of it as may be carried; the wheel puts its stones back down on it one at a
   time (and takes them up again), until the first drop; each click then drops the bottom stone
   carried where it goes, what is left held over it. The camera does not zoom while the wheel is
-  the move's. Its opening places the other seat's stone, shown in that colour (`opening.owner`).
-  The road goals every seat shares no longer shade the board's edges in no one's colour: that
+  the move's. Its opening places the other seat's stone, shown in that color (`opening.owner`).
+  The road goals every seat shares no longer shade the board's edges in no one's color: that
   marking says something only where each seat has its own (Hex). Generic: any game whose seats
   keep pieces in reserve gets a supply.
 - Fendo (`assets/appearance/fendo.toml`): chess pawns of boxwood and of orange-stained maple, and
@@ -579,13 +579,13 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   is in the definition (a Warden is a pawn, an Outrider a knight, an Arbalest a bishop, a
   Juggernaut a rook, the Champion a queen), of boxwood and ebonised walnut. Its terrain is what
   the position's view tints each hex with (`ext.view.tints`, a key of the legend by position,
-  as Bingle's page colours them), drawn as the look's `[tints]` say (`tints.rs`): Overgrowth,
+  as Bingle's page colors them), drawn as the look's `[tints]` say (`tints.rs`): Overgrowth,
   Mire and Hazard as hexagonal tiles of teak stained green, blue and red (`tiles.py`: a tile a
   little narrower than a cell, so the board's lines show round it, 2.4 mm thick), laid on the
   hex, lit with it while a click there would be taken, the units standing on them; the Eye as a
   dot of ink stamped on its hex. A key the look does not name (the deployment zones) is not
   drawn. During the draft the tiles still to lay (the view's `tiles_left`, `[stock]`) wait
-  beside the board to the first seat's left, a column of each colour, each tile the size of the
+  beside the board to the first seat's left, a column of each color, each tile the size of the
   board's. On the player's draft a click on one takes it up (`Turn::take_to_place`): it
   leaves its column and floats under the pointer, bobbing, as Fendo's fence does, and only the
   hexes that tile may go on are lit; over one of them the tile is shown there see-through, in
@@ -659,8 +659,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   for a piece that is nobody's, a material of its own. A kind it does not name is the generic
   stone. A piece is stood by its model's foot, and what is on it in a stack is raised by its
   model's height, both read from the model's file, so a stack may be of several kinds: Tak's
-  flat stones under a wall or a capstone. A colour word no seat plays may have a look too (the
-  pawn that is neither side's in Fist), and one with none still gets a colour. The move being
+  flat stones under a wall or a capstone. A color word no seat plays may have a look too (the
+  pawn that is neither side's in Fist), and one with none still gets a color. The move being
   built shows the piece it would put down (the selection's `piece`, or what stands where it
   moves `from`), and nothing over a position a click would only pick a piece up from.
 - The pieces, made by the pipeline:
@@ -762,7 +762,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   Esc on *Settings* goes back to the menu.
 - Found while building it: the interface is blended in linear light (the cameras are HDR), so a
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
-  see-through, than the same colours on the web page. The new parts use opaque colours.
+  see-through, than the same colors on the web page. The new parts use opaque colors.
 - The pointer is the client's own (`cursor.rs`), never the system's cursor, which some
   platforms showed again now and then while it was meant to be hidden under a piece in hand: a
   small glove of capsules, drawn by a camera of its own into an image shown at the pointer, over
@@ -955,16 +955,16 @@ this repository may not hold (decision 2). This repository names none of them, h
   the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup
   beside the board when nothing counts it; and the piece held under the pointer when a
   selection does not name it (a disc is shown where a ring is placed).
-- **What a move turns over** is shown before it is sent: each piece is see-through in the colour
+- **What a move turns over** is shown before it is sent: each piece is see-through in the color
   it turns to, as a piece placed is (`board::show_taken`, `Turn::turning`; 2026-11-27). The
-  server says which pieces and what colour (API 1.20's `converts_to`, bingle#293), so the client
+  server says which pieces and what color (API 1.20's `converts_to`, bingle#293), so the client
   never guesses: a move may turn over the mover's own pieces as well as another seat's.
 - **The second** is played with move cards: each card shows where a piece may go, and a seat
   chooses one of its own, then a piece and where it goes. **Move tiles** (`move_tiles.rs`,
   the look's `[move_tiles]`): each card of the view's is a tile of pale wood beside the board,
   the grid cut into it and its squares stamped in ink (the piece's in black, where it may go in
   vermilion), its name engraved under the grid with the coordinates' glyphs and a seal in its
-  stamp's seat's colour beside it. Everything on a tile is drawn from the view (its moves, as
+  stamp's seat's color beside it. Everything on a tile is drawn from the view (its moves, as
   its holder sees them, and its name), so no card is in this repository. A seat's tiles lie in
   front of it, reading from its side, and the side's at the right hand of the seat on impulse,
   which takes it next; the camera frames them with the board. A click on a tile the seat may
@@ -984,7 +984,7 @@ this repository may not hold (decision 2). This repository names none of them, h
   parts** (the look's `parts`): its model's parts after the first in materials of their own,
   the same on every seat's piece, as a child of the piece made wherever the piece is
   (`dress_parts`, as `dress_sides` dresses a disc): an engraving's paint in a tile of its
-  seat's colour. The tiles are the overlay's own models, made by a pipeline script there that
+  seat's color. The tiles are the overlay's own models, made by a pipeline script there that
   uses this one's helpers.
 - Not built for it: a seat's supply lying face up (it stands on edge, as any flat piece's
   does), and the parts in the showcase.
@@ -1046,6 +1046,9 @@ for Bingle's own Draughts fixture.
   paint `paint`, which format 1 called `colour`; a file of format 1 is still read, `colour` and
   all, and a client that reads only format 1 leaves a file of format 2 out, as it does any later
   format, and draws the game from its defaults.
+- **An environment file's `sun` and `fog` say `color`** (2026-11-27); a file written before says
+  `colour` and is still read (a serde alias; the file has no format number). `tests/spelling.rs`
+  fails on the old spelling anywhere else.
 - **Tried** against a Bingle built from its main branch with the Draughts fixture pack, marked
   private, and this repository's `tests/pack/clients/bingle-3d/` as its folder
   (`scripts/pack-server.sh`): the game is listed with the pack's picture, and opening it fetches
@@ -1123,8 +1126,8 @@ look of its own:
   the game is covered; the box left on a line has a brass rim; with the legal moves lit (L)
   the boxes that may be crossed are.
 - **Seat markers** (`seat_markers.rs`, the look's `[markers]`): a piece for each seat, by its
-  colour word, standing in front of the seat and looking to the middle, the part the look
-  names in the seat's own colour. Once the view puts the seats on sides, the markers of one
+  color word, standing in front of the seat and looking to the middle, the part the look
+  names in the seat's own color. Once the view puts the seats on sides, the markers of one
   side are made of one material and the other's of another (pale wood and dark, as a chess
   set's), so partners are seen to be; the seat the view names has a ring round its marker's
   foot. Clicks on the markers make the choices that name seats (a team picked by its
@@ -1155,7 +1158,7 @@ look of its own:
     pointer's hand points at it. The pointer over a box, or a line's head, shows a card of
     words beside it: what the line decides, and what that box would make the rule, as the
     view says (`label`, `hint`), so no picture has to be guessed at.
-  - A marker may have several parts in its seat's colour (`seat_parts`: its plinth, its eyes).
+  - A marker may have several parts in its seat's color (`seat_parts`: its plinth, its eyes).
 - Not built: a card dragged to the middle; the cards a seat may play lit (they stand out
   instead); a place printed for a pile on a round table; a taken trick carried to its
   winner's pile (it leaves the middle when the next is led, and the pile has grown already);
@@ -1289,7 +1292,7 @@ Settled 2026-11-20, with the maintainer:
    (`assets-src/sounds/sounds.py`: Python's standard library, then ffmpeg for Ogg Vorbis, which
    Bevy's default audio already reads, so no crate is added), nothing recorded. What they make is
    committed in `assets/` and compiled into the binary (decision 1). Appearance files are TOML. Hex's look: slate and clamshell stones on a wooden
-   board of the player's choosing, each side's goal edges coloured to match its stones.
+   board of the player's choosing, each side's goal edges colored to match its stones.
 9. **Where the table stands is the client's, and each player's.** An environment is chosen on
    this client and kept in its config; the server is not told and the game does not depend on
    it, so two players at one table may be in different places. An environment is data and a

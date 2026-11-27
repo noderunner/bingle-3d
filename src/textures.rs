@@ -3,7 +3,7 @@
 //! file under `textures/`) gets its smaller levels made here when it has loaded, and a sampler
 //! that filters between them and across them at a slant.
 //!
-//! A colour texture (`…_albedo`) is averaged in linear light, as the GPU reads it; the others
+//! A color texture (`…_albedo`) is averaged in linear light, as the GPU reads it; the others
 //! (normals, roughness) as stored.
 //!
 //! Bevy builds a material's GPU side once, from the images it had then, and does not build it
@@ -27,17 +27,17 @@ impl Plugin for TexturesPlugin {
     }
 }
 
-/// Loads one of our textures: in sRGB if it is a colour, as data if not.
+/// Loads one of our textures: in sRGB if it is a color, as data if not.
 pub fn load(server: &AssetServer, file: &str) -> Handle<Image> {
-    let srgb = is_colour(file);
+    let srgb = is_color(file);
     server
         .load_builder()
         .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
         .load(assets::path(file))
 }
 
-/// Whether a texture holds colours (in sRGB), by our naming, rather than data.
-pub fn is_colour(file: &str) -> bool {
+/// Whether a texture holds colors (in sRGB), by our naming, rather than data.
+pub fn is_color(file: &str) -> bool {
     file.rsplit('/')
         .next()
         .and_then(|name| name.rsplit_once('.'))
@@ -326,10 +326,10 @@ mod tests {
     }
 
     #[test]
-    fn colour_textures_are_known_by_name() {
-        assert!(is_colour("textures/wood/teak_albedo.jpg"));
-        assert!(!is_colour("textures/wood/teak_normal.jpg"));
-        assert!(!is_colour("textures/wood/teak_arm.jpg"));
-        assert!(!is_colour("albedo"));
+    fn color_textures_are_known_by_name() {
+        assert!(is_color("textures/wood/teak_albedo.jpg"));
+        assert!(!is_color("textures/wood/teak_normal.jpg"));
+        assert!(!is_color("textures/wood/teak_arm.jpg"));
+        assert!(!is_color("albedo"));
     }
 }

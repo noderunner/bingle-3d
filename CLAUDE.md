@@ -151,7 +151,9 @@ defines these four, used the same way here as in Bingle:
 A field, variable or parameter called `color` holds a name, and a value to draw with is called
 `paint`; Bevy's `Color` type keeps its name. **One resolver turns a color into paint**
 (`look::seat_paint`, the standard look, and `appearance::seat_paint`, a game's look over it), and
-no other code reasons about hue. The word is spelled `color`.
+no other code reasons about hue. The word is spelled `color` everywhere, in code, comments, docs and
+data files; `tests/spelling.rs` fails on the other spelling and lists the few places that keep it
+(a copy of Bingle's schema, and the old key a data file is still read with).
 
 [ADR 0114](https://github.com/noderunner/bingle/blob/main/docs/decisions/0114-impulses-selections-moves-and-gestures.md)
 defines these; use them the same way in code, docs and names.
@@ -200,7 +202,7 @@ A game's own rules and its players' words keep their terms.
 - `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
   and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
   or the games being played (*Active*). Its `Action` is what every panel's buttons do. The
-  interface is blended in linear light: prefer opaque colours to faint see-through ones.
+  interface is blended in linear light: prefer opaque colors to faint see-through ones.
   `src/families.rs`: the games to start grouped by family, the names of a family and its
   members, and a card's marks and players, with no Bevy in it. `src/game_panel.rs`: the panel
   beside a watched game: what the seat on impulse is asked, in the server's words when its
@@ -260,10 +262,10 @@ A game's own rules and its players' words keep their terms.
   dark. **One unit is one metre, and the table top is at y = 0 with its middle at the origin,
   whatever the environment**, so boards are their real size (this is what makes VR work later)
   and nothing on the table knows where it stands.
-- `src/bowls.rs`: a bowl of each colour a seat plays beside the board (one at its right hand,
+- `src/bowls.rs`: a bowl of each color a seat plays beside the board (one at its right hand,
   or one at each hand), for games whose appearance has `[bowls]`, placed by the board's own
   outline; `places` and `width_at` have no Bevy in them. A click on a bowl makes its choice (a
-  stone of its colour: `play::Choice`); the stone waits over the bowl and is carried to the cell
+  stone of its color: `play::Choice`); the stone waits over the bowl and is carried to the cell
   it is placed on (`board::bowl_stones`).
 - `src/supply.rs`: what each seat has left to place (the definition's `reserves` and each
   piece's `pool`; the position's counts; or, for a game whose rules are written in Go, the
@@ -274,7 +276,7 @@ A game's own rules and its players' words keep their terms.
   model's smallest triangles, in metres), takes its plain piece (`board::show_supply`); it waits
   over its place and is carried where it goes, as from a bowl (`board::bowl_stones`, whose
   sources are both). In an opening where seats place each other's pieces (`opening.owner`), the
-  piece is shown in the other's colour.
+  piece is shown in the other's color.
 - `src/fences.rs`: the walls the view says stand between positions (`Position::walls`; Fendo's
   fences), drawn on the side two squares share; where one stands has no Bevy in it. A game whose
   look has `[fences]` has a bowl of them both seats take from, just off the board's side to the
@@ -301,7 +303,7 @@ A game's own rules and its players' words keep their terms.
   id, name, moves as its holder sees them, and its stamp's seat) is a tile of wood beside the
   board (`models/move_tile.glb`), the grid cut into it, its squares stamped in ink
   (`textures/stamp/square_albedo.png`), its name engraved (`coordinates::glyph_mesh`) and a
-  seal in its stamp's seat's colour. A seat's tiles in front of it, the side's at the right
+  seal in its stamp's seat's color. A seat's tiles in front of it, the side's at the right
   hand of the seat on impulse; a click on one makes the look's `choice` and its id
   (`play::Choice`), those that may be chosen glow, the one chosen is lifted, and they travel
   over the board as the cards change hands. `dealt`, `reach`, `stamps`, `grid`, `places` and
@@ -365,8 +367,8 @@ A game's own rules and its players' words keep their terms.
   one that stands out against it: an inlay; `metallic` makes it a metal); a wooden mesh needs texture coordinates in metres
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they
   are leaving the API. Each seat's `connect` goals are found along their regions' outer sides
-  (`goal_strips`): the rim there is stained, and the cells shaded, in its colour; a goal every
-  seat shares (Tak's roads) is nobody's to colour, and is not marked. The board also
+  (`goal_strips`): the rim there is stained, and the cells shaded, in its color; a goal every
+  seat shares (Tak's roads) is nobody's to color, and is not marked. The board also
   marks the positions a click would be taken on `highlight::Lit` (always while a piece is in
   hand), each with its `Outline`, and shows the
   move being built: what it places as see-through pieces (solid once the move is sent), a piece
@@ -430,7 +432,7 @@ A game's own rules and its players' words keep their terms.
   `places`, `words` and `card_at` have no Bevy in them.
 - `src/seat_markers.rs`: a piece that stands for each seat in front of it, for a game whose
   look has `[markers]` (`Marker`, dressed by `dress` wherever one is put): of its side's
-  material once the view puts seats on sides, the look's `seat_parts` in its seat's colour, a
+  material once the view puts seats on sides, the look's `seat_parts` in its seat's color, a
   ring round the one the view names. Clicks on them make the choices that name seats (a team
   picked by its members: `choices`, `click`, no Bevy in them; those chosen so far are
   `Picked`, kept by the client).

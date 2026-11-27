@@ -129,7 +129,7 @@ impl Rim {
 struct Builder {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
-    colours: Vec<[f32; 4]>,
+    colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
 }
 
@@ -160,8 +160,8 @@ impl Builder {
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
         .with_inserted_indices(Indices::U32(self.indices));
-        if !self.colours.is_empty() {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colours);
+        if !self.colors.is_empty() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         }
         mesh
     }
@@ -320,7 +320,7 @@ pub fn shading(
     let mut b = Builder::default();
     let add = |b: &mut Builder, v: Vec2| -> u32 {
         let alpha = shade_at(apothem - v.dot(toward), fade, strength);
-        b.colours.push([paint.red, paint.green, paint.blue, alpha]);
+        b.colors.push([paint.red, paint.green, paint.blue, alpha]);
         b.vertex(centre + Vec3::new(v.x, 0.0, v.y), Vec3::Y)
     };
     // The outline of the cell, its sides cut into equal pieces.
@@ -519,15 +519,15 @@ mod tests {
             0.8,
         );
         faces_its_normals(&mesh);
-        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colours)) =
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
             mesh.attribute(Mesh::ATTRIBUTE_COLOR)
         else {
-            panic!("colours");
+            panic!("colors");
         };
         let p = positions(&mesh);
         let alpha_at = |x: f32| {
             p.iter()
-                .zip(colours)
+                .zip(colors)
                 .filter(|(v, _)| (v.x - x).abs() < 0.02)
                 .map(|(_, c)| c[3])
                 .fold(0.0f32, f32::max)

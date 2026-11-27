@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button, observe};
 
 use crate::board::ShowLegalMoves;
-use crate::browser::colours;
+use crate::browser::colors;
 use crate::coordinates::ShowCoordinates;
 use crate::environment::{Chosen, Environments};
 use crate::escape_menu::{self, EscapeMenu, MenuOverlay};
@@ -45,7 +45,7 @@ impl Plugin for VrPanelsPlugin {
                 Update,
                 (
                     show_menu,
-                    colour_items,
+                    color_items,
                     move_game_panel.run_if(resource_changed::<InHeadset>),
                     show_game_panel,
                     (move_to_screen, show_screen).chain(),
@@ -282,7 +282,7 @@ fn heading(f: &UiFonts, text: &str, size: f32) -> impl Bundle {
     (
         Text::new(text),
         f.semibold(size),
-        TextColor(colours::TEXT),
+        TextColor(colors::TEXT),
         Pickable::IGNORE,
     )
 }
@@ -309,12 +309,12 @@ fn item(f: &UiFonts, label: &str, what: Item) -> impl Bundle {
             align_items: AlignItems::Center,
             ..default()
         },
-        BackgroundColor(colours::BUTTON),
+        BackgroundColor(colors::BUTTON),
         observe(on_item),
         children![(
             Text::new(label),
             f.semibold(26.0),
-            TextColor(colours::TEXT),
+            TextColor(colors::TEXT),
             Pickable::IGNORE,
         )],
     )
@@ -545,16 +545,16 @@ fn show_game_panel(
     world_panel::show(hung.0, shown, &mut cameras, &mut visibilities);
 }
 
-fn colour_items(settings: Settings, mut items: Query<(&Item, &Hovered, &mut BackgroundColor)>) {
+fn color_items(settings: Settings, mut items: Query<(&Item, &Hovered, &mut BackgroundColor)>) {
     for (item, hovered, mut bg) in &mut items {
-        let colour = match (settings.is_on(item), hovered.0) {
-            (true, false) => colours::CHOSEN,
-            (true, true) => colours::CHOSEN_HOVER,
-            (false, false) => colours::BUTTON,
-            (false, true) => colours::BUTTON_HOVER,
+        let color = match (settings.is_on(item), hovered.0) {
+            (true, false) => colors::CHOSEN,
+            (true, true) => colors::CHOSEN_HOVER,
+            (false, false) => colors::BUTTON,
+            (false, true) => colors::BUTTON_HOVER,
         };
-        if bg.0 != colour {
-            bg.0 = colour;
+        if bg.0 != color {
+            bg.0 = color;
         }
     }
 }

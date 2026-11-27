@@ -60,15 +60,15 @@ impl Plugin for BrowserPlugin {
                     ),
                     show_while_not_watching.run_if(resource_changed::<WatchStatus>),
                     update_countdown,
-                    colour_buttons,
-                    colour_cards,
+                    color_buttons,
+                    color_cards,
                 )
                     .chain(),
             );
     }
 }
 
-pub(crate) mod colours {
+pub(crate) mod colors {
     use bevy::prelude::Color;
 
     pub const PANEL: Color = Color::srgba(0.07, 0.08, 0.10, 0.90);
@@ -89,7 +89,7 @@ pub(crate) mod colours {
     pub const FIELD_EDGE: Color = Color::srgb(0.30, 0.33, 0.38);
     pub const FIELD_HOVER: Color = Color::srgb(0.52, 0.56, 0.62);
     pub const FIELD_FOCUS: Color = Color::srgb(0.45, 0.62, 0.90);
-    /// What is selected in a field that has the keyboard (the cursor is the text's colour).
+    /// What is selected in a field that has the keyboard (the cursor is the text's color).
     pub const SELECTION: Color = Color::srgb(0.20, 0.32, 0.52);
     /// The main screen's lines and edges, its chosen tab, and what is not built yet, as the web
     /// page's dark theme has them.
@@ -303,12 +303,12 @@ fn spawn_panel(mut commands: Commands, fonts: Res<UiFonts>) {
             border_radius: BorderRadius::all(px(10)),
             ..default()
         },
-        BackgroundColor(colours::PANEL),
+        BackgroundColor(colors::PANEL),
         children![
             (
                 Text::new("Bingle"),
                 fonts.semibold(24.0),
-                TextColor(colours::TEXT)
+                TextColor(colors::TEXT)
             ),
             (
                 StatusArea,
@@ -355,15 +355,15 @@ fn rebuild_status(
         .entity(*status_area)
         .despawn_related::<Children>()
         .with_children(|area| {
-            area.spawn(line(f.semibold(16.0), colours::TEXT, &status.server));
+            area.spawn(line(f.semibold(16.0), colors::TEXT, &status.server));
             match &status.connection {
                 Connection::Connecting => {
-                    area.spawn(line(f.regular(14.0), colours::MUTED, "Connecting…"));
+                    area.spawn(line(f.regular(14.0), colors::MUTED, "Connecting…"));
                 }
                 Connection::Ready(snap) => {
                     area.spawn(line(
                         f.regular(14.0),
-                        colours::GOOD,
+                        colors::GOOD,
                         &format!(
                             "Connected: Bingle {} (API {})",
                             snap.version, snap.api_version
@@ -381,7 +381,7 @@ fn rebuild_status(
                 }
             }
             for notice in &status.notices {
-                area.spawn(line(f.regular(13.0), colours::WARN, notice));
+                area.spawn(line(f.regular(13.0), colors::WARN, notice));
             }
         });
 }
@@ -453,7 +453,7 @@ fn rebuild_list(
             _ => {
                 area.spawn(line(
                     f.regular(14.0),
-                    colours::MUTED,
+                    colors::MUTED,
                     "The server's games appear here once it is connected.",
                 ));
             }
@@ -469,14 +469,14 @@ fn tab_bar(head: &mut ChildSpawnerCommands, f: &UiFonts) {
             border: UiRect::bottom(px(1)),
             ..default()
         },
-        BorderColor::all(colours::BORDER),
+        BorderColor::all(colors::BORDER),
     ))
     .with_children(|bar| {
         for (name, built) in TABS {
-            let (background, edge, colour) = if built {
-                (colours::ACCENT_SOFT, colours::BORDER, colours::TEXT)
+            let (background, edge, color) = if built {
+                (colors::ACCENT_SOFT, colors::BORDER, colors::TEXT)
             } else {
-                (Color::NONE, Color::NONE, colours::DISABLED)
+                (Color::NONE, Color::NONE, colors::DISABLED)
             };
             bar.spawn((
                 Node {
@@ -495,7 +495,7 @@ fn tab_bar(head: &mut ChildSpawnerCommands, f: &UiFonts) {
                 children![(
                     Text::new(name),
                     f.semibold(15.0),
-                    TextColor(colour),
+                    TextColor(color),
                     Pickable::IGNORE,
                 )],
             ));
@@ -540,7 +540,7 @@ fn gallery(
 ) {
     area.spawn(line(
         f.regular(13.0),
-        colours::MUTED,
+        colors::MUTED,
         "Pick a game to set up a match.",
     ));
     area.spawn(Node {
@@ -569,8 +569,8 @@ fn gallery(
                     border_radius: BorderRadius::all(px(10)),
                     ..default()
                 },
-                BackgroundColor(colours::CARD),
-                BorderColor::all(colours::BORDER),
+                BackgroundColor(colors::CARD),
+                BorderColor::all(colors::BORDER),
                 observe(on_activate),
             ))
             .with_children(|card| {
@@ -578,7 +578,7 @@ fn gallery(
                 card.spawn((
                     Text::new(family.title.as_str()),
                     f.semibold(15.0),
-                    TextColor(colours::TEXT),
+                    TextColor(colors::TEXT),
                     Pickable::IGNORE,
                 ));
                 card.spawn(card_meta(f, family));
@@ -601,7 +601,7 @@ fn picture(parent: &mut ChildSpawnerCommands, image: Option<Handle<Image>>, size
     ));
     match image {
         Some(image) => square.insert(ImageNode::new(image)),
-        None => square.insert(BackgroundColor(colours::BLANK)),
+        None => square.insert(BackgroundColor(colors::BLANK)),
     };
 }
 
@@ -629,7 +629,7 @@ fn card_meta(f: &UiFonts, family: &Family) -> impl Bundle + use<> {
             Spawn((
                 Text::new(players),
                 f.regular(12.0),
-                TextColor(colours::MUTED),
+                TextColor(colors::MUTED),
                 Pickable::IGNORE,
             )),
         )),
@@ -639,10 +639,10 @@ fn card_meta(f: &UiFonts, family: &Family) -> impl Bundle + use<> {
 /// A mark on a card, as the web page draws it: a rounded tag, a prototype's blue and a beta's
 /// amber.
 fn badge(f: &UiFonts, badge: Badge) -> impl Bundle + use<> {
-    let (colour, edge, background) = match badge {
-        Badge::Prototype => (colours::PROTOTYPE, colours::PROTOTYPE, Color::NONE),
-        Badge::Beta => (colours::BETA, colours::BETA, Color::NONE),
-        Badge::Tutorial => (colours::TEXT, colours::BORDER, colours::TUTORIAL),
+    let (color, edge, background) = match badge {
+        Badge::Prototype => (colors::PROTOTYPE, colors::PROTOTYPE, Color::NONE),
+        Badge::Beta => (colors::BETA, colors::BETA, Color::NONE),
+        Badge::Tutorial => (colors::TEXT, colors::BORDER, colors::TUTORIAL),
     };
     (
         Node {
@@ -657,7 +657,7 @@ fn badge(f: &UiFonts, badge: Badge) -> impl Bundle + use<> {
         children![(
             Text::new(badge.label()),
             f.semibold(10.0),
-            TextColor(colour),
+            TextColor(color),
             Pickable::IGNORE,
         )],
     )
@@ -683,7 +683,7 @@ fn setup(
     })
     .with_children(|row| {
         row.spawn(button(f, "← All games", Action::AllGames));
-        row.spawn(line(f.semibold(22.0), colours::TEXT, &family.title));
+        row.spawn(line(f.semibold(22.0), colors::TEXT, &family.title));
     });
     area.spawn(Node {
         column_gap: px(16),
@@ -704,7 +704,7 @@ fn setup(
             side.spawn(card_meta(f, family));
             side.spawn(line(
                 f.semibold(15.0),
-                colours::TEXT,
+                colors::TEXT,
                 &describe_def(&family.title, def),
             ));
             if family.members.len() > 1 {
@@ -723,7 +723,7 @@ fn setup(
                 });
             }
             if !def.description.is_empty() {
-                side.spawn(line(f.regular(14.0), colours::MUTED, &def.description));
+                side.spawn(line(f.regular(14.0), colors::MUTED, &def.description));
             }
             setup_buttons(side, f, family, def);
         });
@@ -776,22 +776,22 @@ fn setup_actions(family: &Family, def: &GameDef) -> Vec<(&'static str, Action)> 
 }
 
 fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem) {
-    area.spawn(line(f.regular(14.0), colours::WARN, &problem.message()));
+    area.spawn(line(f.regular(14.0), colors::WARN, &problem.message()));
     match problem {
         Problem::Untrusted { fingerprint, .. } => {
             area.spawn(line(
                 f.regular(14.0),
-                colours::TEXT,
+                colors::TEXT,
                 "Its SHA-256 fingerprint is:",
             ));
             area.spawn(line(
                 f.semibold(13.0),
-                colours::TEXT,
+                colors::TEXT,
                 &fingerprint.two_lines(),
             ));
             area.spawn(line(
                 f.regular(13.0),
-                colours::MUTED,
+                colors::MUTED,
                 "A Bingle server that made its own certificate prints its fingerprint when it \
                  starts. If it is the same as this one, you can trust this certificate for this \
                  server; only this exact certificate will be trusted.",
@@ -807,7 +807,7 @@ fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem
         }
         _ => {
             if problem.worth_retrying() {
-                area.spawn((Countdown, line(f.regular(13.0), colours::MUTED, "")));
+                area.spawn((Countdown, line(f.regular(13.0), colors::MUTED, "")));
             }
             area.spawn(buttons()).with_children(|row| {
                 row.spawn(button(f, "Try again", Action::Retry));
@@ -817,7 +817,7 @@ fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem
 }
 
 fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameList) {
-    area.spawn(line(f.regular(13.0), colours::MUTED, &describe_query(list)));
+    area.spawn(line(f.regular(13.0), colors::MUTED, &describe_query(list)));
     area.spawn(buttons()).with_children(|row| {
         let (label, open_seats) = if list.query.open_seats {
             ("Show full games too", false)
@@ -837,16 +837,16 @@ fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameL
         }
     });
     if let Some(problem) = &list.problem {
-        area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        area.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
     if list.games.is_empty() {
-        area.spawn(line(f.regular(14.0), colours::MUTED, "None right now."));
+        area.spawn(line(f.regular(14.0), colors::MUTED, "None right now."));
     }
     for game in &list.games {
         let (title, detail) = describe_game(game);
         area.spawn(card()).with_children(|card| {
-            card.spawn(line(f.semibold(15.0), colours::TEXT, &title));
-            card.spawn(line(f.regular(13.0), colours::MUTED, &detail));
+            card.spawn(line(f.semibold(15.0), colors::TEXT, &title));
+            card.spawn(line(f.regular(13.0), colors::MUTED, &detail));
             if game.status == "active" {
                 card.spawn(buttons()).with_children(|row| {
                     row.spawn(button(f, "Watch", Action::Watch(game.room_code.clone())));
@@ -921,8 +921,8 @@ fn describe_def(title: &str, def: &GameDef) -> String {
     out
 }
 
-pub(crate) fn line(font: TextFont, colour: Color, text: &str) -> impl Bundle {
-    (Text::new(text), font, TextColor(colour))
+pub(crate) fn line(font: TextFont, color: Color, text: &str) -> impl Bundle {
+    (Text::new(text), font, TextColor(color))
 }
 
 /// A seat's dot, in its paint, ringed so that a dark one still shows on a dark panel.
@@ -951,7 +951,7 @@ fn card() -> impl Bundle {
             flex_shrink: 0.0,
             ..default()
         },
-        BackgroundColor(colours::CARD),
+        BackgroundColor(colors::CARD),
     )
 }
 
@@ -974,10 +974,10 @@ pub(crate) fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
 pub(crate) struct Chosen(bool);
 
 fn button_in(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
-    let colour = if chosen {
-        colours::CHOSEN
+    let color = if chosen {
+        colors::CHOSEN
     } else {
-        colours::BUTTON
+        colors::BUTTON
     };
     (
         Button,
@@ -989,12 +989,12 @@ fn button_in(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bun
             border_radius: BorderRadius::all(px(6)),
             ..default()
         },
-        BackgroundColor(colour),
+        BackgroundColor(color),
         observe(on_activate),
         children![(
             Text::new(label),
             f.semibold(14.0),
-            TextColor(colours::TEXT),
+            TextColor(colors::TEXT),
             // Clicks land on the button, not its label.
             Pickable::IGNORE,
         )],
@@ -1197,13 +1197,13 @@ fn show_while_not_watching(
 
 type HoverChanged = (With<Action>, Changed<Hovered>);
 
-fn colour_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor, &Chosen), HoverChanged>) {
+fn color_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor, &Chosen), HoverChanged>) {
     for (hovered, mut bg, chosen) in &mut buttons {
         bg.0 = match (chosen.0, hovered.0) {
-            (true, true) => colours::CHOSEN_HOVER,
-            (true, false) => colours::CHOSEN,
-            (false, true) => colours::BUTTON_HOVER,
-            (false, false) => colours::BUTTON,
+            (true, true) => colors::CHOSEN_HOVER,
+            (true, false) => colors::CHOSEN,
+            (false, true) => colors::BUTTON_HOVER,
+            (false, false) => colors::BUTTON,
         };
     }
 }
@@ -1211,17 +1211,17 @@ fn colour_buttons(mut buttons: Query<(&Hovered, &mut BackgroundColor, &Chosen), 
 type CardHoverChanged = (With<GameCard>, Changed<Hovered>);
 
 /// A card's edge lightens under the pointer, as on the web page.
-fn colour_cards(mut cards: Query<(&Hovered, &mut BorderColor), CardHoverChanged>) {
+fn color_cards(mut cards: Query<(&Hovered, &mut BorderColor), CardHoverChanged>) {
     for (hovered, mut edge) in &mut cards {
         *edge = BorderColor::all(if hovered.0 {
-            colours::BORDER_HOVER
+            colors::BORDER_HOVER
         } else {
-            colours::BORDER
+            colors::BORDER
         });
     }
 }
 
-/// A button for one choice among several, coloured when it is the one made.
+/// A button for one choice among several, colored when it is the one made.
 pub(crate) fn chip(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
     button_in(f, label, action, chosen)
 }

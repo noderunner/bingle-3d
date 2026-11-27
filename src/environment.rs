@@ -76,8 +76,9 @@ pub struct Sun {
     pub from: [f32; 3],
     /// In lux.
     pub illuminance: f32,
-    /// sRGB; white when not given.
-    pub colour: Option<[f32; 3]>,
+    /// sRGB; white when not given. Files written before 2026-11-27 call it `colour`.
+    #[serde(alias = "colour")]
+    pub color: Option<[f32; 3]>,
     /// How far from the camera shadows are drawn, in metres.
     pub shadows_to: f32,
 }
@@ -101,8 +102,9 @@ pub struct Sky {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fog {
-    /// sRGB.
-    pub colour: [f32; 3],
+    /// sRGB. Files written before 2026-11-27 call it `colour`.
+    #[serde(alias = "colour")]
+    pub color: [f32; 3],
     /// Where it starts and where nothing is seen through it, in metres from the eye.
     pub start: f32,
     pub end: f32,
@@ -397,7 +399,7 @@ mod tests {
             specular = "environment/none.ktx2"
             intensity = 1.0
             [fog]
-            colour = [0.0, 0.0, 0.0]
+            color = [0.0, 0.0, 0.0]
             start = 1.0
             end = 2.0
             [shadows]
@@ -409,6 +411,34 @@ mod tests {
         assert!(
             Environment::parse("x", "name = \"X\"\nweather = 1").is_err(),
             "unknown keys are refused, so a misspelling is not ignored"
+        );
+    }
+    /// An environment file written before the word was spelled `color` still says `colour` for
+    /// the sun's and the fog's, and is read the same; both spellings at once are refused.
+    #[test]
+    fn the_suns_and_fogs_color_is_read_from_the_old_spelling_too() {
+        let text = |sun: &str, fog: &str| {
+            format!(
+                "name = \"X\"\n[sun]\nfrom = [0, 1, 0]\nilluminance = 1\nshadows_to = 1\n{sun}\n\
+                 [sky]\ndiffuse = \"d\"\nspecular = \"s\"\nintensity = 1\n\
+                 [fog]\n{fog}\nstart = 1\nend = 2\n"
+            )
+        };
+        let new = Environment::parse("x", &text("color = [1, 0.5, 0.25]", "color = [0, 0.5, 1]"));
+        let old = Environment::parse(
+            "x",
+            &text("colour = [1, 0.5, 0.25]", "colour = [0, 0.5, 1]"),
+        );
+        let (new, old) = (new.unwrap(), old.unwrap());
+        assert_eq!(old, new);
+        assert_eq!(new.sun.color, Some([1.0, 0.5, 0.25]));
+        assert_eq!(new.fog.color, [0.0, 0.5, 1.0]);
+        assert!(
+            Environment::parse(
+                "x",
+                &text("color = [1, 0, 0]\ncolour = [0, 1, 0]", "color = [0, 0, 0]")
+            )
+            .is_err()
         );
     }
 }

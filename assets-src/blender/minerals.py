@@ -1,4 +1,4 @@
-"""Polished minerals for stones, drawn with numpy alone: a texture's colour, in linear light,
+"""Polished minerals for stones, drawn with numpy alone: a texture's color, in linear light,
 for a stone mapped flat from above (`stones.py`). Each is the look of a mineral, not a copy of
 one; numpy only, so a texture can be tried outside Blender:
 
@@ -64,7 +64,7 @@ def smoothstep(lo, hi, v):
 
 
 def mix(a, b, t):
-    """Colours a and b (each (3,) or an image) mixed by t (an image)."""
+    """Colors a and b (each (3,) or an image) mixed by t (an image)."""
     t = t[..., None]
     return np.asarray(a) * (1 - t) + np.asarray(b) * t
 
@@ -86,14 +86,14 @@ def lapis(size, span_mm, seed=21):
     deep = np.array([0.010, 0.020, 0.17])
     bright = np.array([0.030, 0.060, 0.40])
     cloud = 0.5 + 0.5 * fbm(rng, x, y, 7.0, octaves=5)
-    colour = mix(deep, bright, smoothstep(0.2, 0.8, cloud))
+    color = mix(deep, bright, smoothstep(0.2, 0.8, cloud))
     # Calcite: pale grey-white blotches, soft at the edge, here and there.
     speckle = smoothstep(-0.2, 0.5, fbm(rng, x, y, 0.4, octaves=2))
     calcite = smoothstep(0.45, 0.68, fbm(rng, x, y, 3.0, octaves=5)) * speckle * 0.6
-    colour = mix(colour, np.array([0.42, 0.46, 0.52]), calcite)
+    color = mix(color, np.array([0.42, 0.46, 0.52]), calcite)
     # A few thin pale veins, as sodalite has, only in some places.
     where = smoothstep(0.2, 0.6, noise(rng, x, y, 9.0))
-    colour = mix(colour, np.array([0.30, 0.36, 0.48]), veins(rng, x, y, 7.0, 0.02) * where * 0.7)
+    color = mix(color, np.array([0.30, 0.36, 0.48]), veins(rng, x, y, 7.0, 0.02) * where * 0.7)
     # Pyrite: gold flecks, in small clusters, each a fraction of a millimetre.
     gold = np.zeros_like(x)
     for _ in range(46):
@@ -103,9 +103,9 @@ def lapis(size, span_mm, seed=21):
             r = rng.uniform(0.03, 0.11)
             d = np.hypot(x - px, y - py)
             gold = np.maximum(gold, smoothstep(r, r * 0.4, d))
-    colour = mix(colour, np.array([0.72, 0.52, 0.16]), gold)
+    color = mix(color, np.array([0.72, 0.52, 0.16]), gold)
     grain = rng.normal(0.0, 1.0, x.shape)
-    return np.clip(colour * (1.0 + 0.04 * grain)[..., None], 0.0, 1.0)
+    return np.clip(color * (1.0 + 0.04 * grain)[..., None], 0.0, 1.0)
 
 
 def jasper(size, span_mm, seed=31):
@@ -115,16 +115,16 @@ def jasper(size, span_mm, seed=31):
     brick = np.array([0.45, 0.050, 0.016])
     orange = np.array([0.58, 0.100, 0.026])
     m = fbm(rng, x, y, 8.0, octaves=5)
-    colour = mix(mix(dark, brick, smoothstep(-0.5, 0.0, m)), orange, smoothstep(0.15, 0.7, m))
+    color = mix(mix(dark, brick, smoothstep(-0.5, 0.0, m)), orange, smoothstep(0.15, 0.7, m))
     # Fine mottling, as a fine-grained stone has.
     speck = fbm(rng, x, y, 0.35, octaves=2)
-    colour = colour * (1.0 + 0.10 * speck)[..., None]
+    color = color * (1.0 + 0.10 * speck)[..., None]
     # A few cream veins, and darker hairline cracks.
     where = smoothstep(0.1, 0.5, noise(rng, x, y, 10.0))
-    colour = mix(colour, np.array([0.60, 0.46, 0.32]), veins(rng, x, y, 9.0, 0.018) * where)
-    colour = mix(colour, np.array([0.10, 0.015, 0.006]), veins(rng, x, y, 6.0, 0.01) * 0.5)
+    color = mix(color, np.array([0.60, 0.46, 0.32]), veins(rng, x, y, 9.0, 0.018) * where)
+    color = mix(color, np.array([0.10, 0.015, 0.006]), veins(rng, x, y, 6.0, 0.01) * 0.5)
     grain = rng.normal(0.0, 1.0, x.shape)
-    return np.clip(colour * (1.0 + 0.05 * grain)[..., None], 0.0, 1.0)
+    return np.clip(color * (1.0 + 0.05 * grain)[..., None], 0.0, 1.0)
 
 
 def tiger_eye(size, span_mm, seed=41):
@@ -140,13 +140,13 @@ def tiger_eye(size, span_mm, seed=41):
     brown = np.array([0.035, 0.015, 0.005])
     # Bands a millimetre or two wide, with soft but definite edges.
     band = noise(rng, s, np.zeros_like(s), 1.5) + 0.4 * noise(rng, s, np.full_like(s, 7.0), 0.6)
-    colour = mix(brown, honey, smoothstep(-0.35, -0.1, band))
-    colour = mix(colour, gold, smoothstep(0.05, 0.35, band))
+    color = mix(brown, honey, smoothstep(-0.35, -0.1, band))
+    color = mix(color, gold, smoothstep(0.05, 0.35, band))
     # The silk: fine fibres along the bands, and a brighter sheen down the middle of each gold one.
     fibre = noise(rng, s * 14.0, t * 0.6, 1.0)
     sheen = smoothstep(0.25, 0.6, band)
-    colour = colour * (1.0 + 0.12 * fibre + 0.25 * sheen)[..., None]
-    return np.clip(colour, 0.0, 1.0)
+    color = color * (1.0 + 0.12 * fibre + 0.25 * sheen)[..., None]
+    return np.clip(color, 0.0, 1.0)
 
 
 def black_slate(size, span_mm, seed=51):
@@ -158,11 +158,11 @@ def black_slate(size, span_mm, seed=51):
     s = y + 1.2 * fbm(rng, x, y, 10.0, octaves=3)
     layers = 0.5 + 0.5 * fbm(rng, s * 2.0, x * 0.08, 1.6, octaves=3)
     fade = 0.5 + 0.5 * noise(rng, x, y, 8.0)
-    colour = mix(base, grey, 0.45 * smoothstep(0.55, 0.9, layers) * fade)
+    color = mix(base, grey, 0.45 * smoothstep(0.55, 0.9, layers) * fade)
     mottle = fbm(rng, x, y, 5.0, octaves=4)
     grain = rng.normal(0.0, 1.0, x.shape)
-    colour = colour * (1.0 + 0.15 * mottle + 0.06 * grain)[..., None]
-    return np.clip(colour, 0.0, 1.0)
+    color = color * (1.0 + 0.15 * mottle + 0.06 * grain)[..., None]
+    return np.clip(color, 0.0, 1.0)
 
 
 def tiling_noise(rng, x, y, cells_x, cells_y, span_mm):
@@ -219,17 +219,17 @@ def marble_white(size, span_mm, seed=61):
     rng = np.random.default_rng(seed)
     # Faint clouds of grey, broad and soft.
     cloud = 0.5 + 0.5 * tiling_fbm(rng, x, y, 5, 5, span_mm, octaves=4)
-    colour = mix(white, shade, 0.5 * smoothstep(0.45, 0.85, cloud))
+    color = mix(white, shade, 0.5 * smoothstep(0.45, 0.85, cloud))
     # The bold veins, each in a haze of grey; then fine ones, in some places.
     for width, cover, tone in ((1.6, 0.45, shade), (0.38, 0.85, vein)):
         rng = np.random.default_rng(seed + 1)
-        colour = mix(colour, tone, cover * marble_veins(rng, x, y, span_mm, 2, 9, width, wander=2.0, swell=0.7))
+        color = mix(color, tone, cover * marble_veins(rng, x, y, span_mm, 2, 9, width, wander=2.0, swell=0.7))
     rng = np.random.default_rng(seed + 2)
     fine = marble_veins(rng, x, y, span_mm, 4, 26, 0.13, wander=1.2, swell=0.8)
     where = smoothstep(-0.3, 0.2, tiling_noise(rng, x, y, 7, 7, span_mm))
-    colour = mix(colour, vein, 0.6 * fine * where)
+    color = mix(color, vein, 0.6 * fine * where)
     grain = rng.normal(0.0, 1.0, x.shape)
-    return np.clip(colour * (1.0 + 0.012 * grain)[..., None], 0.0, 1.0)
+    return np.clip(color * (1.0 + 0.012 * grain)[..., None], 0.0, 1.0)
 
 
 def marble_black(size, span_mm, seed=71):
@@ -240,14 +240,14 @@ def marble_black(size, span_mm, seed=71):
     vein = np.array([0.74, 0.73, 0.69])
     # Faint smoke in the black.
     cloud = 0.5 + 0.5 * tiling_fbm(rng, x, y, 6, 6, span_mm, octaves=4)
-    colour = mix(black, grey, 0.6 * smoothstep(0.5, 0.9, cloud))
+    color = mix(black, grey, 0.6 * smoothstep(0.5, 0.9, cloud))
     # Bold veins, broken: there in some places and gone in others. Fine ones branch from them.
     here = smoothstep(-0.55, -0.15, tiling_noise(rng, x, y, 5, 5, span_mm))
-    colour = mix(colour, vein, 0.95 * marble_veins(rng, x, y, span_mm, 2, 7, 0.30, wander=2.0, swell=0.8) * here)
+    color = mix(color, vein, 0.95 * marble_veins(rng, x, y, span_mm, 2, 7, 0.30, wander=2.0, swell=0.8) * here)
     there = smoothstep(-0.1, 0.4, tiling_noise(rng, x, y, 8, 8, span_mm))
-    colour = mix(colour, vein, 0.55 * marble_veins(rng, x, y, span_mm, 3, 15, 0.10, wander=1.2, swell=0.8) * there)
+    color = mix(color, vein, 0.55 * marble_veins(rng, x, y, span_mm, 3, 15, 0.10, wander=1.2, swell=0.8) * there)
     grain = rng.normal(0.0, 1.0, x.shape)
-    return np.clip(colour * (1.0 + 0.03 * grain)[..., None], 0.0, 1.0)
+    return np.clip(color * (1.0 + 0.03 * grain)[..., None], 0.0, 1.0)
 
 
 MINERALS = {

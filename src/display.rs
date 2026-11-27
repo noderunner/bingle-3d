@@ -98,7 +98,7 @@ pub fn offered(
         .collect()
 }
 
-/// The monitor's mode of this size with the highest refresh rate (and the deepest colour).
+/// The monitor's mode of this size with the highest refresh rate (and the deepest color).
 pub fn mode_for(modes: &[VideoMode], size: (u32, u32)) -> Option<VideoMode> {
     modes
         .iter()

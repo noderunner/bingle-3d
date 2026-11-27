@@ -30,11 +30,11 @@ WHITE = [(1, -2), (-1, 2), (2, 1), (-2, -3), (3, -1), (0, 1)]
 SIZE = 512
 
 
-def dark(name, colour):
+def dark(name, color):
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = [previews.srgb_to_linear(c) for c in colour] + [1.0]
+    bsdf.inputs["Base Color"].default_value = [previews.srgb_to_linear(c) for c in color] + [1.0]
     bsdf.inputs["Roughness"].default_value = 0.7
     return mat
 

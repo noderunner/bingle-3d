@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::Activate;
 
-use crate::browser::{Action, button, buttons, chip, colours, line};
+use crate::browser::{Action, button, buttons, chip, colors, line};
 use crate::call::{Call, DirectCalling, Phase};
 use crate::fonts::UiFonts;
 use crate::net::api::{DirectMessage, FriendSettings, FriendsList};
@@ -509,7 +509,7 @@ fn spawn_panel(mut commands: Commands) {
             overflow: Overflow::scroll_y(),
             ..default()
         },
-        BackgroundColor(colours::PANEL),
+        BackgroundColor(colors::PANEL),
         TabGroup::new(1),
     ));
 }
@@ -547,7 +547,7 @@ fn act(f: &UiFonts, label: &str, action: FriendAction) -> impl Bundle {
 /// The call, above everything, the panel open or not: a ring must be seen.
 fn call_bar(p: &mut ChildSpawnerCommands, f: &UiFonts, call: &Call) {
     if let Some(error) = &call.error {
-        p.spawn(line(f.regular(13.0), colours::WARN, error));
+        p.spawn(line(f.regular(13.0), colors::WARN, error));
     }
     let text = match call.phase {
         Phase::Idle => return,
@@ -557,7 +557,7 @@ fn call_bar(p: &mut ChildSpawnerCommands, f: &UiFonts, call: &Call) {
         Phase::Live if call.speaking => format!("In a call with {}  ·  speaking", call.name),
         Phase::Live => format!("In a call with {}", call.name),
     };
-    p.spawn(line(f.semibold(14.0), colours::TEXT, &text));
+    p.spawn(line(f.semibold(14.0), colors::TEXT, &text));
     p.spawn(buttons()).with_children(|row| match call.phase {
         Phase::Ringing => {
             row.spawn(act(
@@ -605,10 +605,10 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
         return;
     }
     if let Some(problem) = &friends.problem {
-        p.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+        p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
     let Some(list) = &friends.list else {
-        p.spawn(line(f.regular(13.0), colours::MUTED, "Reading the list…"));
+        p.spawn(line(f.regular(13.0), colors::MUTED, "Reading the list…"));
         return;
     };
     if let Some(address) = &friends.talking {
@@ -618,9 +618,9 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
 
     for invite in &list.invites {
         let text = format!("{} invites you to {}", invite.from, invite.game);
-        p.spawn(line(f.semibold(14.0), colours::TEXT, &text));
+        p.spawn(line(f.semibold(14.0), colors::TEXT, &text));
         if !invite.notice.is_empty() {
-            p.spawn(line(f.regular(13.0), colours::MUTED, &invite.notice));
+            p.spawn(line(f.regular(13.0), colors::MUTED, &invite.notice));
         }
         p.spawn(buttons()).with_children(|row| {
             if invite.pending() {
@@ -646,7 +646,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
     for asker in &list.incoming {
         p.spawn(line(
             f.regular(14.0),
-            colours::TEXT,
+            colors::TEXT,
             &format!("{} asks to be your friend", asker.name),
         ));
         p.spawn(buttons()).with_children(|row| {
@@ -666,7 +666,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
     if list.friends.is_empty() {
         p.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             "No friends yet: ask somebody by their handle below.",
         ));
     }
@@ -690,20 +690,20 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
                     ..default()
                 },
                 BackgroundColor(if friend.online {
-                    colours::GOOD
+                    colors::GOOD
                 } else {
-                    colours::FIELD_EDGE
+                    colors::FIELD_EDGE
                 }),
             ));
-            let (font, colour) = if friend.online {
-                (f.semibold(14.0), colours::TEXT)
+            let (font, color) = if friend.online {
+                (f.semibold(14.0), colors::TEXT)
             } else {
-                (f.regular(14.0), colours::MUTED)
+                (f.regular(14.0), colors::MUTED)
             };
-            row.spawn(line(font, colour, &friend.name));
+            row.spawn(line(font, color, &friend.name));
             if let Some(room) = &friends.invite_room {
                 if friends.invited.contains(&friend.handle) {
-                    row.spawn(line(f.regular(13.0), colours::MUTED, "invited"));
+                    row.spawn(line(f.regular(13.0), colors::MUTED, "invited"));
                 } else {
                     row.spawn(act(
                         f,
@@ -749,7 +749,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
         if friends.removing.as_ref() == Some(&friend.handle) {
             p.spawn(line(
                 f.regular(13.0),
-                colours::WARN,
+                colors::WARN,
                 &format!("No longer friends with {}?", friend.name),
             ));
         }
@@ -759,7 +759,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
         p.spawn(buttons()).with_children(|row| {
             row.spawn(line(
                 f.regular(13.0),
-                colours::MUTED,
+                colors::MUTED,
                 &format!("Asked {}", asked.name),
             ));
             row.spawn(act(
@@ -770,7 +770,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
         });
     }
 
-    p.spawn(line(f.semibold(14.0), colours::TEXT, "Ask a friend"));
+    p.spawn(line(f.semibold(14.0), colors::TEXT, "Ask a friend"));
     let mut field = p.spawn((AskField, text_field(f, &friends.asking), TabIndex(0)));
     field.observe(on_ask_key);
     if friends.typing == Typing::Ask {
@@ -781,7 +781,7 @@ fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, friends: &Friends, call: &Cal
     });
 
     if let Some(settings) = friends.settings {
-        p.spawn(line(f.semibold(14.0), colours::TEXT, "Settings"));
+        p.spawn(line(f.semibold(14.0), colors::TEXT, "Settings"));
         let toggles = [
             (
                 "Friends see when I'm here",
@@ -834,7 +834,7 @@ fn talk(
     p.spawn(buttons()).with_children(|row| {
         row.spawn(act(f, "Back to friends", FriendAction::StopTalking));
     });
-    p.spawn(line(f.semibold(15.0), colours::TEXT, name));
+    p.spawn(line(f.semibold(15.0), colors::TEXT, name));
     let messages = friends
         .talks
         .get(address)
@@ -842,7 +842,7 @@ fn talk(
     if messages.is_empty() {
         p.spawn(line(
             f.regular(13.0),
-            colours::MUTED,
+            colors::MUTED,
             "Nothing said yet. Messages are kept for two hours.",
         ));
     }
@@ -857,16 +857,16 @@ fn talk(
         .with_children(|block| {
             block.spawn(line(
                 f.semibold(12.0),
-                if mine { colours::MUTED } else { colours::GOOD },
+                if mine { colors::MUTED } else { colors::GOOD },
                 who,
             ));
-            block.spawn(line(f.regular(14.0), colours::TEXT, &message.text));
+            block.spawn(line(f.regular(14.0), colors::TEXT, &message.text));
         });
     }
     if friend.is_some_and(|x| !x.can_write) {
         p.spawn(line(
             f.regular(13.0),
-            colours::WARN,
+            colors::WARN,
             &format!("{name} is not here, so a message would not reach them."),
         ));
     }
@@ -881,7 +881,7 @@ fn talk(
     }
     p.spawn(buttons()).with_children(|row| {
         if friends.sending {
-            row.spawn(line(f.regular(13.0), colours::MUTED, "Sending…"));
+            row.spawn(line(f.regular(13.0), colors::MUTED, "Sending…"));
         } else {
             row.spawn(act(f, "Send", FriendAction::Send));
         }

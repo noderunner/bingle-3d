@@ -98,7 +98,7 @@ def light(env):
     lamp = bpy.data.lights.new("Sun", "SUN")
     # A value of 1 in the sky is `intensity` cd/m² in the client, and the sun `illuminance` lux.
     lamp.energy = env["sun"]["illuminance"] / env["sky"]["intensity"]
-    lamp.color = env["sun"]["colour"]
+    lamp.color = env["sun"]["color"]
     lamp.angle = math.radians(2.5)
     obj = bpy.data.objects.new("Sun", lamp)
     bpy.context.scene.collection.objects.link(obj)
@@ -204,7 +204,7 @@ def run():
     cap = 4.0 * SUN_CLIP * float(np.median(lum[: h // 2]))
     backdrop = whole * np.minimum(1.0, cap / np.maximum(lum, 1e-6))[..., None]
     backdrop = np.roll(backdrop, w // 4, axis=1)
-    fog = np.array([common.srgb_to_linear(np.array(c)) for c in env["fog"]["colour"]], np.float32)
+    fog = np.array([common.srgb_to_linear(np.array(c)) for c in env["fog"]["color"]], np.float32)
     horizon = backdrop[h // 2 - 8 : h // 2].mean((0, 1))
     lat = (0.5 - (np.arange(h) + 0.5) / h) * 180.0
     t = np.clip(-lat / 4.0 + 0.5, 0.0, 1.0)[:, None, None]

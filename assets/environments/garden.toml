@@ -4,7 +4,7 @@
 # An environment is this client's own choice, as a board's wood is: the server knows nothing of
 # it, and each player may sit somewhere else. Data only. The model is made by the asset pipeline
 # (`assets-src/blender/garden.py`), which reads this file too, so its previews are lit and
-# coloured as the client's picture is.
+# colored as the client's picture is.
 
 name = "Garden"
 
@@ -16,11 +16,11 @@ model = "environments/garden.glb"
 exposure = 11.8
 
 # The sun: where it shines from (x to the right, y up, z towards the player), its strength in
-# lux and its colour. Low and warm, through the mist.
+# lux and its color. Low and warm, through the mist.
 [sun]
 from = [0.67, 0.47, -0.575]
 illuminance = 27000.0
-colour = [1.0, 0.86, 0.70]
+color = [1.0, 0.86, 0.70]
 # How far shadows are drawn, in metres.
 shadows_to = 30.0
 
@@ -34,9 +34,9 @@ intensity = 6800.0
 backdrop = "environment/garden_sky.ktx2"
 backdrop_brightness = 6800.0
 
-# Mist: its colour, and where it starts and ends, in metres from the eye.
+# Mist: its color, and where it starts and ends, in metres from the eye.
 [fog]
-colour = [0.74, 0.76, 0.76]
+color = [0.74, 0.76, 0.76]
 start = 10.0
 end = 150.0
 

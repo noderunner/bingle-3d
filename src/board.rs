@@ -1,27 +1,27 @@
 //! The board and pieces of the game being watched, built from the game definition and the
 //! position alone (Bingle's ADR 0124): the board's kind and its positions' layout coordinates say
-//! where every cell is, and each stack's pieces are drawn in their seat's colour.
+//! where every cell is, and each stack's pieces are drawn in their seat's color.
 //!
 //! Nothing here names a game. A hex board's cells are hexagons and a grid's squares, and any other
 //! board's positions are round spots; the same code draws every board of each kind.
 //!
 //! How it looks comes from `look.rs`: one slab of wood with a rounded rim (`slab.rs`), the cells
-//! cut into it with dark lines between them, and stones in each seat's colour. Along each goal's
-//! edge the rim is stained in the seat's colour and the cells are shaded towards it. A game's
+//! cut into it with dark lines between them, and stones in each seat's color. Along each goal's
+//! edge the rim is stained in the seat's color and the cells are shaded towards it. A game's
 //! appearance file (`appearance.rs`) may choose each kind of piece's model and how it stands,
-//! what each seat's pieces and rim are made of, and its colour. The board's wood is the player's
+//! what each seat's pieces and rim are made of, and its color. The board's wood is the player's
 //! choice (`BoardWood`).
 //!
 //! A piece stands by its model's foot, and what is on it in a stack is raised by its model's
 //! height, so a stack may be of pieces of several kinds (flat blocks under one on its edge).
 //!
 //! A seat's goal is drawn from the game's `goals` and the board's `regions`: a strip in the seat's
-//! colour along the outer sides of each region the seat must connect (a hex board's edges), and a
+//! color along the outer sides of each region the seat must connect (a hex board's edges), and a
 //! neutral one for a goal every seat shares. Only `connect` goals are drawn; any other type is
 //! skipped, as the API asks.
 //!
 //! While this client's seat is on impulse, the positions a click would be taken on are lit, and
-//! the move being built is shown as see-through pieces in the seat's colour: where its selections
+//! the move being built is shown as see-through pieces in the seat's color: where its selections
 //! put something, and under the pointer, where a click would. A piece picked up is lifted and
 //! bobs over its space, and once put somewhere stands there (`hand.rs`); what the move then aims
 //! (an arrow) is held under the pointer. A game's appearance may lay the cells in two materials
@@ -549,7 +549,7 @@ struct PieceKit {
 }
 
 /// A part of a piece's model after its first: its mesh, the material its look gives it
-/// whoever's piece it is, and the one each seat's look gives it, by colour word. A part given
+/// whoever's piece it is, and the one each seat's look gives it, by color word. A part given
 /// neither is of the piece's own material.
 #[derive(Debug, Clone)]
 struct PartKit {
@@ -566,7 +566,7 @@ struct PartMaterial {
 }
 
 impl PartKit {
-    /// The material of this part on a piece wearing `piece`, which is the colour word's
+    /// The material of this part on a piece wearing `piece`, which is the color word's
     /// (`Kit::dress`), see-through or not, if it is any seat's.
     fn material(
         &self,
@@ -587,7 +587,7 @@ impl PartKit {
 struct Parts(Vec<Entity>);
 
 /// A piece of two sides as the board draws it: its model's lower half (the upper is
-/// `PieceKit::mesh`), each part's material, solid and see-through, and whether each colour
+/// `PieceKit::mesh`), each part's material, solid and see-through, and whether each color
 /// word's pieces have the second part's side up.
 #[derive(Debug, Clone)]
 struct SidesKit {
@@ -627,11 +627,11 @@ struct Kit {
     pieces: HashMap<String, PieceKit>,
     /// The models are made for the full pitch; a smaller board's pieces are smaller.
     scale: f32,
-    /// Each colour word's material, and the way its seat looks across the board (a turn about
+    /// Each color word's material, and the way its seat looks across the board (a turn about
     /// the vertical from the first seat's, which looks to the far side).
     materials: HashMap<String, Handle<StandardMaterial>>,
     facing: HashMap<String, f32>,
-    /// A piece of the move being built, in this client's seat's colour.
+    /// A piece of the move being built, in this client's seat's color.
     ghost: Handle<StandardMaterial>,
     /// The materials made of the board's wood, to build again when another is chosen.
     woodwork: Vec<(Handle<StandardMaterial>, MaterialSpec)>,
@@ -642,9 +642,9 @@ struct Kit {
     /// The kind of piece a move of each kind leaves where it started, where the game's look
     /// says (a disc dropped in a ring that moves on).
     leaves: HashMap<String, String>,
-    /// Where a stone taken from each colour's bowl waits, by colour word.
+    /// Where a stone taken from each color's bowl waits, by color word.
     bowls: HashMap<String, Vec3>,
-    /// Each seat's supply beside the board, by its colour word, and each kind of piece's pool;
+    /// Each seat's supply beside the board, by its color word, and each kind of piece's pool;
     /// how far the supply reaches to either side, for the camera.
     supply: HashMap<String, Vec<SupplyPool>>,
     pools: HashMap<String, String>,
@@ -663,11 +663,11 @@ struct Kit {
     /// A game with no board: its cells, unseen, are raised to the top of what stands on them,
     /// so a cell lit there is lit on top (`raise_cells`).
     on_table: bool,
-    /// Each kind of piece's colour word, for a game whose pieces have their own (Blooms').
-    piece_colour: HashMap<String, String>,
-    /// Each colour word's see-through material.
+    /// Each kind of piece's color word, for a game whose pieces have their own (Blooms').
+    piece_color: HashMap<String, String>,
+    /// Each color word's see-through material.
     ghosts: HashMap<String, Handle<StandardMaterial>>,
-    /// Which colour word each of the materials a piece is given is, and whether it is the
+    /// Which color word each of the materials a piece is given is, and whether it is the
     /// see-through one: how a piece of two sides is dressed (`dress_sides`), wherever it was
     /// made.
     dress: HashMap<AssetId<StandardMaterial>, (String, bool)>,
@@ -783,30 +783,30 @@ struct SupplyPool {
 }
 
 impl SupplyPool {
-    /// How many the seat of colour word `colour` has in it, as the position says.
-    fn count(&self, table: &Table, colour: &str) -> usize {
+    /// How many the seat of color word `color` has in it, as the position says.
+    fn count(&self, table: &Table, color: &str) -> usize {
         let state = &table.state.state;
         match &self.counter {
             Some(id) => state.view_counter(self.seat, id).unwrap_or(0) as usize,
-            None => state.count(colour, &self.id) as usize,
+            None => state.count(color, &self.id) as usize,
         }
     }
 }
 
-/// A piece of a seat's supply (by its colour word), of a pool, and its place in the line.
+/// A piece of a seat's supply (by its color word), of a pool, and its place in the line.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct InSupply {
-    colour: String,
+    color: String,
     pool: String,
     index: usize,
 }
 
-/// A seat's tray of what it captured: the colour word its count is kept under, the colours it
+/// A seat's tray of what it captured: the color word its count is kept under, the colors it
 /// plays, and where each square's middle is.
 struct Tray {
     seat: String,
     number: u32,
-    colours: Vec<String>,
+    colors: Vec<String>,
     squares: Vec<Vec3>,
 }
 
@@ -826,33 +826,33 @@ const CAPTURE_ACROSS: f32 = 0.32;
 const CAPTURE_OVER: f32 = 0.018;
 
 impl Kit {
-    /// The colour word a piece of kind `id` is played in: its own, or else the player's.
-    fn colour_of<'a>(&'a self, id: &str, yours: &'a str) -> &'a str {
-        self.piece_colour.get(id).map_or(yours, String::as_str)
+    /// The color word a piece of kind `id` is played in: its own, or else the player's.
+    fn color_of<'a>(&'a self, id: &str, yours: &'a str) -> &'a str {
+        self.piece_color.get(id).map_or(yours, String::as_str)
     }
 
-    /// Where a stone of kind `id` is taken from, if it comes from a bowl: its colour word.
+    /// Where a stone of kind `id` is taken from, if it comes from a bowl: its color word.
     fn bowl_of<'a>(&'a self, id: &str, yours: &'a str) -> Option<&'a str> {
-        let colour = self.colour_of(id, yours);
-        self.bowls.contains_key(colour).then_some(colour)
+        let color = self.color_of(id, yours);
+        self.bowls.contains_key(color).then_some(color)
     }
 
     fn piece(&self, id: &str) -> &PieceKit {
         self.pieces.get(id).unwrap_or(&self.stone)
     }
 
-    /// Where a piece of kind `id` that this client's seat (of colour word `yours`) places is
-    /// taken from, if from somewhere to see: its colour's bowl (the colour word), or its pool of
-    /// the seat's supply (`colour/pool`).
-    /// Where what a choice places comes from (its colour's bowl, or `colour/pool` of the seat's
+    /// Where a piece of kind `id` that this client's seat (of color word `yours`) places is
+    /// taken from, if from somewhere to see: its color's bowl (the color word), or its pool of
+    /// the seat's supply (`color/pool`).
+    /// Where what a choice places comes from (its color's bowl, or `color/pool` of the seat's
     /// supply), and the kind of piece it is: a
     /// choice of piece from its bowl or its pool of the seat's supply, or the choice a pool of
     /// the supply is taken with (Fendo's `add`).
     fn source_for(&self, choice: &Gesture, yours: &str) -> Option<(String, String)> {
         let pools = self.supply.get(yours).map_or(&[][..], Vec::as_slice);
         let pool = if choice.kind == "piece" {
-            if let Some(colour) = self.bowl_of(&choice.value, yours) {
-                return Some((colour.to_string(), choice.value.clone()));
+            if let Some(color) = self.bowl_of(&choice.value, yours) {
+                return Some((color.to_string(), choice.value.clone()));
             }
             let id = self.pools.get(&choice.value)?;
             let pool = pools.iter().find(|p| p.counter.is_none() && &p.id == id)?;
@@ -896,18 +896,18 @@ impl Kit {
 
     /// The pool of a seat's supply a source names.
     fn supply_pool(&self, source: &str) -> Option<&SupplyPool> {
-        let (colour, pool) = source.split_once('/')?;
-        self.supply.get(colour)?.iter().find(|p| p.id == pool)
+        let (color, pool) = source.split_once('/')?;
+        self.supply.get(color)?.iter().find(|p| p.id == pool)
     }
 
     /// Where a piece of kind `id` lies in seat `seat`'s tray, the `index`th in: in its square,
     /// as loose as on the board, and on the first ones in once every square has one.
-    fn in_tray(&self, id: &str, colour: &str, seat: usize, index: usize) -> Option<Transform> {
+    fn in_tray(&self, id: &str, color: &str, seat: usize, index: usize) -> Option<Transform> {
         let squares = &self.trays.get(seat)?.squares;
         let centre = *squares.get(index % squares.len().max(1))?;
         let layer = index / squares.len();
         let kind = self.piece(id);
-        let facing = self.facing.get(colour).copied().unwrap_or(0.0);
+        let facing = self.facing.get(color).copied().unwrap_or(0.0);
         let stance = stance(kind.stands, &format!("tray {seat}"), index, facing);
         let y = centre.y + (layer as f32 * kind.height - kind.foot * stance.size) * self.tray_scale;
         Some(
@@ -917,12 +917,12 @@ impl Kit {
         )
     }
 
-    /// The kind of piece of colour word `colour`, for one nobody saw captured: the kind played in
-    /// it, if its pieces have their own colours, or the generic stone.
-    fn kind_in(&self, colour: &str) -> &str {
-        self.piece_colour
+    /// The kind of piece of color word `color`, for one nobody saw captured: the kind played in
+    /// it, if its pieces have their own colors, or the generic stone.
+    fn kind_in(&self, color: &str) -> &str {
+        self.piece_color
             .iter()
-            .find(|(_, c)| *c == colour)
+            .find(|(_, c)| *c == color)
             .map_or("", |(id, _)| id.as_str())
     }
 
@@ -945,13 +945,13 @@ impl Kit {
     fn set_down(
         &self,
         id: &str,
-        colour: &str,
+        color: &str,
         centre: Vec3,
         (cell, layer): (&str, usize),
         under: f32,
     ) -> Transform {
         let kind = self.piece(id);
-        let facing = self.facing.get(colour).copied().unwrap_or(0.0);
+        let facing = self.facing.get(color).copied().unwrap_or(0.0);
         let stance = stance(kind.stands, cell, layer, facing);
         let y = self.surface + (under - kind.foot * stance.size) * self.scale;
         let aside = stance.aside * self.scale;
@@ -1468,7 +1468,7 @@ fn fill_trays(
             None => table.state.state.count(&t.seat, &kit.counter),
         })
         .collect();
-    let colours: Vec<Vec<String>> = kit.trays.iter().map(|t| t.colours.clone()).collect();
+    let colors: Vec<Vec<String>> = kit.trays.iter().map(|t| t.colors.clone()).collect();
     // A score kept with the seats' own pieces takes only its kind (a ring, not the row's
     // discs that went with it).
     let gone: Vec<(Entity, &PieceAt)> = gone
@@ -1481,13 +1481,13 @@ fn fill_trays(
         .copied()
         .collect();
     let gone = gone.as_slice();
-    let gone_colours: Vec<&str> = gone
+    let gone_colors: Vec<&str> = gone
         .iter()
-        .map(|(_, at)| kit.colour_of(&at.piece.piece, &at.piece.color))
+        .map(|(_, at)| kit.color_of(&at.piece.piece, &at.piece.color))
         .collect();
     let mut taken = Vec::new();
     let own = kit.score.is_some();
-    for (seat, change) in trays::fill(&had, &counts, &colours, &gone_colours, own)
+    for (seat, change) in trays::fill(&had, &counts, &colors, &gone_colors, own)
         .into_iter()
         .enumerate()
     {
@@ -1523,22 +1523,22 @@ fn fill_trays(
                         ));
                     taken.push(entity);
                 }
-                trays::Source::Unseen(colour) => {
+                trays::Source::Unseen(color) => {
                     let id = match &kit.score {
                         Some((_, piece)) => piece.as_str(),
-                        None => kit.kind_in(&colour),
+                        None => kit.kind_in(&color),
                     };
-                    let Some(to) = kit.in_tray(id, &colour, seat, index) else {
+                    let Some(to) = kit.in_tray(id, &color, seat, index) else {
                         continue;
                     };
                     let kind = kit.piece(id);
                     let material = kind
                         .material
                         .clone()
-                        .or_else(|| kit.materials.get(&colour).cloned())
+                        .or_else(|| kit.materials.get(&color).cloned())
                         .unwrap_or_default();
                     commands.spawn((
-                        Name::new(format!("{colour} captured by seat {}", seat + 1)),
+                        Name::new(format!("{color} captured by seat {}", seat + 1)),
                         Mesh3d(kind.mesh.clone()),
                         MeshMaterial3d(material),
                         to,
@@ -2045,7 +2045,7 @@ fn build_board(
     ghost.alpha_mode = AlphaMode::Blend;
     let materials = piece_materials(table, tools);
     let ghost = tools.materials.add(ghost);
-    // Each colour word's see-through material, for what the move being built would put down.
+    // Each color word's see-through material, for what the move being built would put down.
     let ghosts: HashMap<String, Handle<StandardMaterial>> = materials
         .iter()
         .filter_map(|(word, handle)| {
@@ -2066,15 +2066,15 @@ fn build_board(
     for (word, handle) in &ghosts {
         dress.insert(handle.id(), (word.clone(), true));
     }
-    let piece_colour: HashMap<String, String> = table
+    let piece_color: HashMap<String, String> = table
         .info
         .pieces
         .iter()
         .filter(|p| !p.color.is_empty())
         .map(|p| (p.id.clone(), p.color.clone()))
         .collect();
-    // A bowl of each colour's stones beside the board, for a game whose look has them: a click
-    // on one takes a stone of the piece in that colour.
+    // A bowl of each color's stones beside the board, for a game whose look has them: a click
+    // on one takes a stone of the piece in that color.
     let edge: Vec<Vec2> = outline.iter().map(|(point, _)| *point).collect();
     let mut bowls_at = HashMap::new();
     if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
@@ -2094,15 +2094,14 @@ fn build_board(
                 words
                     .iter()
                     .map(|word| crate::bowls::Filled {
-                        colour: word.clone(),
+                        color: word.clone(),
                         stones: materials.get(word).cloned().unwrap_or_default(),
-                        choice: piece_colour
-                            .iter()
-                            .find(|(_, c)| *c == word)
-                            .map(|(id, _)| Gesture {
+                        choice: piece_color.iter().find(|(_, c)| *c == word).map(|(id, _)| {
+                            Gesture {
                                 kind: "piece".into(),
                                 value: id.clone(),
-                            }),
+                            }
+                        }),
                     })
                     .collect()
             })
@@ -2153,7 +2152,7 @@ fn build_board(
             seat_trays.push(Tray {
                 seat: s.color.clone(),
                 number: s.seat,
-                colours: if s.colors.is_empty() {
+                colors: if s.colors.is_empty() {
                     vec![s.color.clone()]
                 } else {
                     s.colors.clone()
@@ -2200,7 +2199,7 @@ fn build_board(
             seat_trays.push(Tray {
                 seat: s.color.clone(),
                 number: s.seat,
-                colours: if s.colors.is_empty() {
+                colors: if s.colors.is_empty() {
                     vec![s.color.clone()]
                 } else {
                     s.colors.clone()
@@ -2495,7 +2494,7 @@ fn build_board(
             })
             .unwrap_or_default(),
         bowls: bowls_at,
-        piece_colour,
+        piece_color,
         dress,
         ghosts,
         trays: seat_trays,
@@ -2533,7 +2532,7 @@ fn rim_owner(outline: &[(Vec2, Vec2)], i: usize, strips: &[GoalStrip]) -> Option
 }
 
 /// What the rim along a seat's goal is made of: the appearance's material, or a stain in the
-/// seat's colour (a plain dark one for a goal every seat shares).
+/// seat's color (a plain dark one for a goal every seat shares).
 fn goal_material(tools: &Tools, table: &Table, seat: Option<u32>) -> MaterialSpec {
     let seat = seat.and_then(|s| table.info.seats.iter().find(|d| d.seat == s));
     seat.and_then(|seat| {
@@ -2566,7 +2565,7 @@ const STRIP_WIDTH: f32 = 0.16;
 
 /// Where the strips of the game's `connect` goals go. Each region's cells' sides that face off the
 /// board are marked; a side of a corner cell that is in two regions (Hex's corners) goes to the
-/// region it faces most, so each edge of the board shows one colour.
+/// region it faces most, so each edge of the board shows one color.
 pub fn goal_strips(info: &GameInfo, layout: &Layout, shape: CellShape) -> Vec<GoalStrip> {
     // Which seat each region is the goal of.
     let mut owners: BTreeMap<&str, Option<u32>> = BTreeMap::new();
@@ -2592,7 +2591,7 @@ pub fn goal_strips(info: &GameInfo, layout: &Layout, shape: CellShape) -> Vec<Go
         cells: Vec<Vec2>,
         outward: Vec2,
     }
-    // A region every seat shares (both of Tak's pairs of sides) is nobody's to colour: shading it
+    // A region every seat shares (both of Tak's pairs of sides) is nobody's to color: shading it
     // would say nothing, so only a seat's own goals are marked.
     let regions: Vec<Region> = owners
         .iter()
@@ -2719,7 +2718,7 @@ fn outward(cells: &[Vec2], middle: Vec2) -> Option<Vec2> {
     Some(if out.dot(away) < 0.0 { -out } else { out })
 }
 
-/// Shades each goal's cells towards the board's edge they lie along, in the seat's colour: one
+/// Shades each goal's cells towards the board's edge they lie along, in the seat's color: one
 /// see-through layer over the cells per seat, so a corner cell on two seats' edges is shaded from
 /// both, each from its own side.
 fn shade_goals(
@@ -2768,7 +2767,7 @@ fn shade_goals(
     }
     for (_, mesh) in by_seat {
         let material = tools.materials.add(StandardMaterial {
-            // The colour and how much of it are the mesh's own, vertex by vertex.
+            // The color and how much of it are the mesh's own, vertex by vertex.
             base_color: Color::WHITE,
             alpha_mode: AlphaMode::Blend,
             perceptual_roughness: 0.4,
@@ -2783,9 +2782,9 @@ fn shade_goals(
     }
 }
 
-/// One material per colour word: each seat's, each the game's look gives one though no seat
+/// One material per color word: each seat's, each the game's look gives one though no seat
 /// plays it (a piece that is nobody's), and each a piece on the board has now. A piece in any
-/// other colour is drawn in the default material, which none of these is.
+/// other color is drawn in the default material, which none of these is.
 fn piece_materials(table: &Table, tools: &mut Tools) -> HashMap<String, Handle<StandardMaterial>> {
     let mut words: Vec<(String, u32)> = table
         .info
@@ -2801,7 +2800,7 @@ fn piece_materials(table: &Table, tools: &mut Tools) -> HashMap<String, Handle<S
         .chain(table.state.state.cells.values().flatten().map(|p| &p.color));
     for word in others {
         if !words.iter().any(|(known, _)| known == word) {
-            // Past the seats, so a word that is not a colour gets one of its own.
+            // Past the seats, so a word that is not a color gets one of its own.
             words.push((word.clone(), words.len() as u32 + 1));
         }
     }
@@ -2815,7 +2814,7 @@ fn piece_materials(table: &Table, tools: &mut Tools) -> HashMap<String, Handle<S
         .collect()
 }
 
-/// The way each seat looks across the board, by its colour word: the first from the player's
+/// The way each seat looks across the board, by its color word: the first from the player's
 /// side to the far side, the others from their places round the table
 /// (`environment::seat_places`).
 fn facings(info: &GameInfo) -> HashMap<String, f32> {
@@ -3183,7 +3182,7 @@ fn show_turn(
         }
     }
 
-    let colour = table.yours().map_or("", |s| s.color.as_str());
+    let color = table.yours().map_or("", |s| s.color.as_str());
     // What the move aims, held under the pointer while it is next: what the game's look says
     // it puts down. The server says only where it aims; without the look, nothing is put
     // there (Fist's pin captures the piece aimed at where it stands), and nothing is held.
@@ -3195,7 +3194,7 @@ fn show_turn(
             let material = kind
                 .material
                 .clone()
-                .or_else(|| kit.materials.get(colour).cloned())
+                .or_else(|| kit.materials.get(color).cloned())
                 .unwrap_or_default();
             commands.spawn((
                 Name::new("Held"),
@@ -3257,7 +3256,7 @@ fn show_turn(
     // supply: it is shown once it is taken.
     let in_hand = turn
         .in_hand_choice()
-        .and_then(|g| kit.source_for(g, colour))
+        .and_then(|g| kit.source_for(g, color))
         .map(|(_, piece)| piece)
         .or_else(|| turn.auto_hand().map(String::from));
     // Nor where a click could place one of several kinds (Courtfall's tiles, chosen on the panel
@@ -3278,14 +3277,14 @@ fn show_turn(
             || (one_kind(cell)
                 && !turn
                     .could_place(cell)
-                    .any(|s| kit.source_of_placing(s, colour).is_some())))
+                    .any(|s| kit.source_of_placing(s, color).is_some())))
     {
         shown.push(cell);
     }
     // What is placed from a bowl is carried there solid (`bowl_stones`), not shown see-through.
     let from_bowls: Vec<&str> = turn
         .placings()
-        .filter(|s| kit.source_of_placing(s, colour).is_some())
+        .filter(|s| kit.source_of_placing(s, color).is_some())
         .filter_map(|s| s.to.as_deref())
         .collect();
     // Nor is what the stone held under the pointer is carried to (it is about to be, this frame).
@@ -3346,13 +3345,13 @@ fn show_turn(
         let stack = after.get(cell).map_or(&[][..], Vec::as_slice);
         let at = kit.set_down(
             id,
-            colour,
+            color,
             *centre,
             (cell, stack.len()),
             kit.floor(&tints, cell) + kit.stack_height(stack),
         );
         let kind = kit.piece(id);
-        let word = kit.colour_of(id, placing_colour(table));
+        let word = kit.color_of(id, placing_color(table));
         // Once the move is sent it is shown as played, solid, without waiting for the server.
         let sent = turn.stage == Stage::Sending;
         let material = if sent {
@@ -3388,7 +3387,7 @@ struct Taken;
 #[derive(Component)]
 struct Arriving;
 
-/// A piece the move being built turns over where it stands, shown see-through in the colour
+/// A piece the move being built turns over where it stands, shown see-through in the color
 /// word it turns to.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 struct Turning(String);
@@ -3411,7 +3410,7 @@ type TakenOffBoard = (With<Taken>, Without<PieceAt>);
 
 /// While a move is being built, what it is sure to take is not drawn, each piece it moves is
 /// see-through where it lands, whether it takes anything there or not, and each it turns over is
-/// see-through in the colour it turns to: the player sees the position the move they confirm
+/// see-through in the color it turns to: the player sees the position the move they confirm
 /// leaves. The others as they are.
 fn show_taken(
     mut commands: Commands,
@@ -3443,7 +3442,7 @@ fn show_taken(
                 .collect()
         })
         .unwrap_or_default();
-    // What it turns over (`Turn::turning`), and the colour word each turns to.
+    // What it turns over (`Turn::turning`), and the color word each turns to.
     let turning = watch.turn.as_ref().map(|t| t.turning()).unwrap_or_default();
     for (entity, at, carry, mut material, was_taken, was_arriving, was_turning) in &mut pieces {
         let carried = carry.is_some();
@@ -3475,22 +3474,22 @@ fn show_taken(
         };
         let see_through = arriving || turning_to.is_some();
         let kind = kit.piece(&at.piece.piece);
-        let colour = turning_to.as_ref().unwrap_or(&at.piece.color);
+        let color = turning_to.as_ref().unwrap_or(&at.piece.color);
         let wanted = if see_through {
             kind.ghost
                 .clone()
-                .or_else(|| kit.ghosts.get(colour).cloned())
+                .or_else(|| kit.ghosts.get(color).cloned())
                 .unwrap_or_else(|| kit.ghost.clone())
         } else {
             kind.material
                 .clone()
-                .or_else(|| kit.materials.get(colour).cloned())
+                .or_else(|| kit.materials.get(color).cloned())
                 .unwrap_or_default()
         };
         // A piece of two sides wears its upper side's own once dressed (`dress_sides`).
         let dressed = kind.sides.as_ref().map(|s| {
             let parts = if see_through { &s.ghost } else { &s.solid };
-            crate::sides::halves(parts, s.turned.get(colour).copied().unwrap_or(false)).0
+            crate::sides::halves(parts, s.turned.get(color).copied().unwrap_or(false)).0
         });
         if material.0 != wanted && dressed.as_ref() != Some(&material.0) {
             material.0 = wanted;
@@ -3510,9 +3509,9 @@ struct FromBowl {
 /// The source of the stone a turn holds by itself in a game with no bowl to take it from.
 const HAND: &str = "hand";
 
-/// The colour word the pieces this client's seat places are played in: its own, but in an
+/// The color word the pieces this client's seat places are played in: its own, but in an
 /// opening in which each seat places another's (Tak's first stones), the other seat's.
-fn placing_colour(table: &Table) -> &str {
+fn placing_color(table: &Table) -> &str {
     let yours = table.yours().map_or("", |s| s.color.as_str());
     let opening = table
         .info
@@ -3569,7 +3568,7 @@ fn bowl_stones(
         return;
     };
     let yours = table.yours().map_or("", |s| s.color.as_str());
-    let placing = placing_colour(table);
+    let placing = placing_color(table);
     let layout = Layout::of(&table.info.board);
     let cells = &table.state.state.cells;
     let had_hand = left.iter().any(|(_, f)| f.source == HAND);
@@ -3579,11 +3578,11 @@ fn bowl_stones(
     };
     let looks = |id: &str| {
         let kind = kit.piece(id);
-        let colour = kit.colour_of(id, placing);
+        let color = kit.color_of(id, placing);
         let material = kind
             .material
             .clone()
-            .or_else(|| kit.materials.get(colour).cloned())
+            .or_else(|| kit.materials.get(color).cloned())
             .unwrap_or_default();
         (Mesh3d(kind.mesh.clone()), MeshMaterial3d(material))
     };
@@ -3592,8 +3591,8 @@ fn bowl_stones(
     let over = |source: &str| {
         let at = match kit.supply_pool(source) {
             Some(pool) => {
-                let colour = source.split_once('/').map_or("", |(c, _)| c);
-                let have = pool.count(table, colour);
+                let color = source.split_once('/').map_or("", |(c, _)| c);
+                let have = pool.count(table, color);
                 let shown = have.saturating_sub(taken_from(Some(turn), kit, yours, source));
                 let slot = pool
                     .slots
@@ -3624,7 +3623,7 @@ fn bowl_stones(
         let stack = cells.get(cell).map_or(&[][..], Vec::as_slice);
         let to = kit.set_down(
             id,
-            kit.colour_of(id, placing),
+            kit.color_of(id, placing),
             *centre,
             (cell, stack.len()),
             kit.floor(&table.state.state.tints(), cell) + kit.stack_height(stack),
@@ -3665,7 +3664,7 @@ fn bowl_stones(
     }
     // What a move leaves where it started, as the game's look says (a disc dropped in the
     // ring that then moves on): put down there from the hand as the piece is picked up, in the
-    // mover's colour, and see-through while a later selection of the move takes it off again
+    // mover's color, and see-through while a later selection of the move takes it off again
     // (in a row that the move made).
     let tints = table.state.state.tints();
     let taking = turn.taking();
@@ -3826,16 +3825,16 @@ fn show_supply(
     let yours = table.yours().map_or("", |s| s.color.as_str());
     let turn = watch.turn.as_ref();
     let mut have: Vec<&InSupply> = Vec::new();
-    for (colour, pools) in &kit.supply {
+    for (color, pools) in &kit.supply {
         for pool in pools {
-            let mut count = pool.count(table, colour);
-            if colour == yours {
-                let source = format!("{colour}/{}", pool.id);
+            let mut count = pool.count(table, color);
+            if color == yours {
+                let source = format!("{color}/{}", pool.id);
                 count = count.saturating_sub(taken_from(turn, kit, yours, &source));
             }
             let count = count.min(pool.slots.len());
             for (entity, piece) in &shown {
-                if piece.colour == *colour && piece.pool == pool.id {
+                if piece.color == *color && piece.pool == pool.id {
                     if piece.index >= count {
                         commands.entity(entity).despawn();
                     } else {
@@ -3847,11 +3846,11 @@ fn show_supply(
             let material = kind
                 .material
                 .clone()
-                .or_else(|| kit.materials.get(colour).cloned())
+                .or_else(|| kit.materials.get(color).cloned())
                 .unwrap_or_default();
             for index in 0..count {
                 let there = InSupply {
-                    colour: colour.clone(),
+                    color: color.clone(),
                     pool: pool.id.clone(),
                     index,
                 };
@@ -3859,14 +3858,14 @@ fn show_supply(
                     continue;
                 }
                 let mut piece = commands.spawn((
-                    Name::new(format!("{} of {colour}'s supply", pool.piece)),
+                    Name::new(format!("{} of {color}'s supply", pool.piece)),
                     Mesh3d(kind.mesh.clone()),
                     MeshMaterial3d(material.clone()),
                     pool.slots[index].with_scale(Vec3::splat(kit.scale)),
                     there,
                     ChildOf(root),
                 ));
-                if colour == yours {
+                if color == yours {
                     piece.insert((
                         Pickable::default(),
                         Choice(pool.take.clone()),
@@ -4412,10 +4411,10 @@ fn change_wood(
 }
 
 /// Dresses each piece of two sides, wherever it was made and whatever it was given: a piece is
-/// made, like any other, as its upper half in its colour word's material (or the see-through
-/// one), and here that half is given the material of the side its colour has up, and a child the
+/// made, like any other, as its upper half in its color word's material (or the see-through
+/// one), and here that half is given the material of the side its color has up, and a child the
 /// lower half in the other's. Again whenever its material is changed (a piece the move takes
-/// made see-through, a piece turned over given its new colour's).
+/// made see-through, a piece turned over given its new color's).
 #[allow(clippy::type_complexity)]
 fn dress_sides(
     mut commands: Commands,
@@ -4447,10 +4446,10 @@ fn dress_sides(
             continue;
         };
         // Given one of its sides' own: dressed already.
-        let Some((colour, see_through)) = kit.dress.get(&material.0.id()) else {
+        let Some((color, see_through)) = kit.dress.get(&material.0.id()) else {
             continue;
         };
-        let turned = sides.turned.get(colour).copied().unwrap_or(false);
+        let turned = sides.turned.get(color).copied().unwrap_or(false);
         let parts = if *see_through {
             &sides.ghost
         } else {
@@ -4881,7 +4880,7 @@ mod tests {
         }
 
         /// A game on a 3×3 grid for two seats, white then black, by a game's id, with these
-        /// stacks: each piece as (kind, colour word), bottom first.
+        /// stacks: each piece as (kind, color word), bottom first.
         fn grid_table(id: &str, cells: &[(&str, &[(&str, &str)])]) -> Table {
             let mut t = table();
             t.info.id = id.into();
@@ -5039,7 +5038,7 @@ mod tests {
         }
 
         #[test]
-        fn a_piece_with_no_look_is_a_stone_and_one_that_is_nobodys_has_a_colour() {
+        fn a_piece_with_no_look_is_a_stone_and_one_that_is_nobodys_has_a_color() {
             let mut app = with_looks();
             let cells: &[(&str, &[(&str, &str)])] = &[
                 ("a1", &[("king", "white")]),
@@ -5052,8 +5051,8 @@ mod tests {
             let shown = drawn(&mut app);
             let at = |cell: &str| shown[&(cell.to_string(), 0)].clone();
             let nothing = Handle::<StandardMaterial>::default();
-            // The pawn that is neither seat's has the look its game gives its colour word; a
-            // piece the look does not know, in a colour no seat plays, is a stone of some colour.
+            // The pawn that is neither seat's has the look its game gives its color word; a
+            // piece the look does not know, in a color no seat plays, is a stone of some color.
             for cell in ["a1", "b2", "c3", "a3"] {
                 assert_ne!(at(cell).3, nothing, "{cell}");
             }
@@ -5309,7 +5308,7 @@ wood = "contrast"
         }
 
         #[test]
-        fn a_move_being_built_shows_what_it_turns_over_see_through_in_the_colour_it_turns_to() {
+        fn a_move_being_built_shows_what_it_turns_over_see_through_in_the_color_it_turns_to() {
             use crate::net::api::{Gesture, LegalSelection, Selections};
             use crate::play::Turn;
 
@@ -5827,18 +5826,18 @@ wood = "contrast"
         }
 
         /// Blooms on a 3×3 grid, Warm (red, yellow) against Cool (blue, black), a capture's
-        /// count of four winning, with these stones (each a cell and a colour) and counts.
+        /// count of four winning, with these stones (each a cell and a color) and counts.
         fn captures_table(stones: &[(&str, &str)], warm: u32, cool: u32) -> Table {
             let mut table = grid_table("blooms", &[]);
             table.info.seats = [
                 (1, "red", ["red", "yellow"]),
                 (2, "blue", ["blue", "black"]),
             ]
-            .map(|(seat, word, colours)| SeatDef {
+            .map(|(seat, word, colors)| SeatDef {
                 seat,
                 color: word.into(),
                 label: word.into(),
-                colors: colours.map(String::from).to_vec(),
+                colors: colors.map(String::from).to_vec(),
             })
             .to_vec();
             table.info.pieces = ["red", "yellow", "blue", "black"]
@@ -5860,8 +5859,8 @@ wood = "contrast"
         fn captures_state(seq: u64, stones: &[(&str, &str)], warm: u32, cool: u32) -> GameState {
             let cells: Vec<(&str, &[(&str, &str)])> = stones
                 .iter()
-                .map(|(cell, colour)| {
-                    let one: &[(&str, &str)] = match *colour {
+                .map(|(cell, color)| {
+                    let one: &[(&str, &str)] = match *color {
                         "red" => &[("red", "red")],
                         "yellow" => &[("yellow", "yellow")],
                         "blue" => &[("blue", "blue")],
@@ -5977,7 +5976,7 @@ wood = "contrast"
             assert_eq!(
                 names,
                 [(0, "blue"), (0, "black"), (0, "blue"), (1, "red")],
-                "the other seat's colours by turns"
+                "the other seat's colors by turns"
             );
             // Lying in them, not on their way.
             let mut q = app
@@ -6095,7 +6094,7 @@ wood = "contrast"
                 .iter(app.world())
                 .map(|(s, c)| {
                     (
-                        s.colour.clone(),
+                        s.color.clone(),
                         s.pool.clone(),
                         s.index,
                         c.map(|c| c.0.value.clone()),
@@ -6113,11 +6112,8 @@ wood = "contrast"
                 Some(tak_table(&[], (3, 1), (2, 0)));
             app.update();
             let shown = supply(&mut app);
-            let count = |colour: &str, pool: &str| {
-                shown
-                    .iter()
-                    .filter(|s| s.0 == colour && s.1 == pool)
-                    .count()
+            let count = |color: &str, pool: &str| {
+                shown.iter().filter(|s| s.0 == color && s.1 == pool).count()
             };
             assert_eq!(
                 [
@@ -6129,13 +6125,13 @@ wood = "contrast"
                 [3, 1, 2, 0]
             );
             // The player's own take a flat stone, or the capstone; the other seat's nothing.
-            for (colour, pool, _, choice) in &shown {
-                let wanted = match (colour.as_str(), pool.as_str()) {
+            for (color, pool, _, choice) in &shown {
+                let wanted = match (color.as_str(), pool.as_str()) {
                     ("white", "stone") => Some("flat"),
                     ("white", "cap") => Some("cap"),
                     _ => None,
                 };
-                assert_eq!(choice.as_deref(), wanted, "{colour} {pool}");
+                assert_eq!(choice.as_deref(), wanted, "{color} {pool}");
             }
             // Beside the board, not on it.
             let mut q = app.world_mut().query::<(&InSupply, &Transform)>();
@@ -6151,10 +6147,10 @@ wood = "contrast"
                 .query::<(&InSupply, Option<&SimplifiedMesh>)>();
             let boxes: Vec<(String, String, Option<Handle<Mesh>>)> = q
                 .iter(app.world())
-                .map(|(s, m)| (s.colour.clone(), s.pool.clone(), m.map(|m| m.0.clone())))
+                .map(|(s, m)| (s.color.clone(), s.pool.clone(), m.map(|m| m.0.clone())))
                 .collect();
-            for (colour, pool, hit) in &boxes {
-                assert_eq!(hit.is_some(), colour == "white", "{colour} {pool}");
+            for (color, pool, hit) in &boxes {
+                assert_eq!(hit.is_some(), color == "white", "{color} {pool}");
                 if let (Some(hit), "stone") = (hit, pool.as_str()) {
                     let meshes = app.world().resource::<Assets<Mesh>>();
                     let aabb = meshes.get(hit).unwrap().get_aabb().unwrap();
@@ -6875,11 +6871,11 @@ wood = "contrast"
                 (1, "red", ["red", "yellow"]),
                 (2, "blue", ["blue", "black"]),
             ]
-            .map(|(seat, word, colours)| SeatDef {
+            .map(|(seat, word, colors)| SeatDef {
                 seat,
                 color: word.into(),
                 label: word.into(),
-                colors: colours.map(String::from).to_vec(),
+                colors: colors.map(String::from).to_vec(),
             })
             .to_vec();
             table.info.pieces = ["red", "yellow", "blue", "black"]
@@ -6899,7 +6895,7 @@ wood = "contrast"
             app.world_mut().resource_mut::<WatchStatus>().table = Some(table);
             app.update();
 
-            // A bowl for each colour, each taking a stone of its own.
+            // A bowl for each color, each taking a stone of its own.
             let mut q = app
                 .world_mut()
                 .query::<(&crate::bowls::Bowl, Option<&Choice>)>();
@@ -7190,7 +7186,7 @@ wood = "contrast"
             assert_eq!(
                 (turned.0, turned.1),
                 (black.0, black.1),
-                "its colour's side up"
+                "its color's side up"
             );
             let rest = app.world().get::<Flipping>(turned.2).unwrap().rest;
             assert!(app.world().get::<Rest>(turned.2).is_none());
@@ -7691,7 +7687,7 @@ piece = "ring"
             });
             app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
             app.update();
-            let colour_at = |app: &mut App, cell: &str| {
+            let color_at = |app: &mut App, cell: &str| {
                 let mut q = app.world_mut().query::<(&PieceAt, Has<Flipping>)>();
                 q.iter(app.world())
                     .find(|(at, _)| at.cell == cell)
@@ -7699,16 +7695,16 @@ piece = "ring"
                     .unwrap()
             };
             assert_eq!(
-                colour_at(&mut app, "a2"),
+                color_at(&mut app, "a2"),
                 ("white".into(), true),
                 "turned over"
             );
-            assert_eq!(colour_at(&mut app, "c3").0, "black", "the rest as they are");
+            assert_eq!(color_at(&mut app, "c3").0, "black", "the rest as they are");
             // Taken back: turned back.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             watch.turn.as_mut().unwrap().back();
             app.update();
-            assert_eq!(colour_at(&mut app, "a2"), ("black".into(), true));
+            assert_eq!(color_at(&mut app, "a2"), ("black".into(), true));
         }
 
         #[test]
@@ -7815,7 +7811,7 @@ piece = "ring"
     }
 
     #[test]
-    fn each_edge_of_a_hex_board_is_marked_once_in_its_seats_colour() {
+    fn each_edge_of_a_hex_board_is_marked_once_in_its_seats_color() {
         let info = hex3_with_goals();
         let layout = Layout::new(&info.board.positions);
         let strips = goal_strips(&info, &layout, CellShape::Hexagon);

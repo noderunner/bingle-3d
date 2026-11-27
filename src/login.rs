@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::{Activate, Button};
 
-use crate::browser::{Action, button, buttons, colours, line};
+use crate::browser::{Action, button, buttons, colors, line};
 use crate::fonts::UiFonts;
 use crate::net::session::{Account, Probe, Problem};
 use crate::net::tls::Fingerprint;
@@ -97,12 +97,12 @@ impl Light {
         }
     }
 
-    pub fn colour(&self) -> Color {
+    pub fn color(&self) -> Color {
         match self {
-            Light::Checking => colours::MUTED,
-            Light::Good(_) => colours::GOOD,
-            Light::Mismatch(_) => colours::WARN,
-            Light::Down(_) => colours::BAD,
+            Light::Checking => colors::MUTED,
+            Light::Good(_) => colors::GOOD,
+            Light::Mismatch(_) => colors::WARN,
+            Light::Down(_) => colors::BAD,
         }
     }
 }
@@ -365,7 +365,7 @@ fn spawn_panel(mut commands: Commands) {
             },
             // Opaque: the interface is blended in linear light (see `browser.rs`).
             BackgroundColor(Color::srgb(0.07, 0.08, 0.10)),
-            BorderColor::all(colours::BORDER),
+            BorderColor::all(colors::BORDER),
         )],
     ));
 }
@@ -415,14 +415,14 @@ fn rebuild_panel(
             panel.spawn((
                 Text::new("Bingle"),
                 f.semibold(34.0),
-                TextColor(colours::TEXT),
+                TextColor(colors::TEXT),
                 Node {
                     align_self: AlignSelf::Center,
                     margin: UiRect::bottom(px(8)),
                     ..default()
                 },
             ));
-            panel.spawn(line(f.regular(14.0), colours::TEXT, "Server"));
+            panel.spawn(line(f.regular(14.0), colors::TEXT, "Server"));
             panel
                 .spawn(Node {
                     align_items: AlignItems::Center,
@@ -446,7 +446,7 @@ fn rebuild_panel(
                             flex_shrink: 0.0,
                             ..default()
                         },
-                        BackgroundColor(login.light.colour()),
+                        BackgroundColor(login.light.color()),
                     ));
                 });
             panel.spawn((
@@ -478,14 +478,14 @@ fn rebuild_panel(
                 sign_in::code_choice(row, f, form);
             });
             if matches!(form.step, Step::Password) {
-                panel.spawn(line(f.regular(14.0), colours::TEXT, "Guest key (optional)"));
+                panel.spawn(line(f.regular(14.0), colors::TEXT, "Guest key (optional)"));
                 panel
                     .spawn((GuestKeyField, text_field(f, &login.guest_key), TabIndex(3)))
                     .observe(on_guest_key_key);
-                panel.spawn((GuestKeyHint, line(f.regular(12.0), colours::MUTED, "")));
+                panel.spawn((GuestKeyHint, line(f.regular(12.0), colors::MUTED, "")));
             }
             panel.spawn(auto_login_box(f, login.auto_login));
-            panel.spawn(line(f.regular(12.0), colours::MUTED, AUTO_LOGIN_HINT));
+            panel.spawn(line(f.regular(12.0), colors::MUTED, AUTO_LOGIN_HINT));
         });
 }
 
@@ -531,21 +531,21 @@ fn auto_login_box(f: &UiFonts, on: bool) -> impl Bundle {
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                BackgroundColor(colours::FIELD),
-                BorderColor::all(colours::FIELD_EDGE),
+                BackgroundColor(colors::FIELD),
+                BorderColor::all(colors::FIELD_EDGE),
                 Pickable::IGNORE,
                 children![(
                     Tick,
                     Text::new(if on { "✓" } else { "" }),
                     f.semibold(14.0),
-                    TextColor(colours::GOOD),
+                    TextColor(colors::GOOD),
                     Pickable::IGNORE,
                 )],
             ),
             (
                 Text::new("Auto-login"),
                 f.regular(14.0),
-                TextColor(colours::TEXT),
+                TextColor(colors::TEXT),
                 Pickable::IGNORE,
             ),
         ],
@@ -580,8 +580,8 @@ fn rebuild_light(
         return;
     }
     for mut light in &mut lights {
-        if light.0 != login.light.colour() {
-            light.0 = login.light.colour();
+        if light.0 != login.light.color() {
+            light.0 = login.light.color();
         }
     }
     let hint = match &login.light {
@@ -608,24 +608,24 @@ fn rebuild_light(
 fn server_line(area: &mut ChildSpawnerCommands, f: &UiFonts, light: &Light) {
     match light {
         Light::Checking => {
-            area.spawn(line(f.regular(12.0), colours::MUTED, "Checking…"));
+            area.spawn(line(f.regular(12.0), colors::MUTED, "Checking…"));
         }
         Light::Good(probe) => {
             area.spawn(line(
                 f.regular(12.0),
-                colours::GOOD,
+                colors::GOOD,
                 &format!("Bingle {} (API {})", probe.version, probe.api_version),
             ));
             if let Some(account) = &probe.account {
                 area.spawn(line(
                     f.regular(12.0),
-                    colours::MUTED,
+                    colors::MUTED,
                     &format!("Still signed in here as {}.", account.handle),
                 ));
             }
         }
         Light::Mismatch(problem) | Light::Down(problem) => {
-            area.spawn(line(f.regular(12.0), light.colour(), &problem.message()));
+            area.spawn(line(f.regular(12.0), light.color(), &problem.message()));
             area.spawn(buttons()).with_children(|row| {
                 if let Problem::Untrusted { fingerprint, .. } = problem {
                     area_fingerprint(row, f, fingerprint);
@@ -639,7 +639,7 @@ fn server_line(area: &mut ChildSpawnerCommands, f: &UiFonts, light: &Light) {
 fn area_fingerprint(row: &mut ChildSpawnerCommands, f: &UiFonts, fingerprint: &Fingerprint) {
     row.spawn(line(
         f.regular(12.0),
-        colours::TEXT,
+        colors::TEXT,
         &format!("SHA-256: {}", fingerprint.two_lines()),
     ));
     row.spawn(button(
@@ -670,20 +670,20 @@ fn rebuild_messages(
             .despawn_related::<Children>()
             .with_children(|area| {
                 if let Some(problem) = form.and_then(|form| form.problem.as_ref()) {
-                    area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+                    area.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
                 }
                 if let Some(problem) = &login.problem {
-                    area.spawn(line(f.regular(13.0), colours::WARN, &problem.message()));
+                    area.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
                 }
                 // What the client could not read or keep, a setup file among it: said here
                 // too, since this is the screen a file that was not taken leaves the player on.
                 for notice in &status.notices {
-                    area.spawn(line(f.regular(13.0), colours::WARN, notice));
+                    area.spawn(line(f.regular(13.0), colors::WARN, notice));
                 }
                 if form.is_some_and(|form| form.busy) {
-                    area.spawn(line(f.regular(13.0), colours::MUTED, "Logging in…"));
+                    area.spawn(line(f.regular(13.0), colors::MUTED, "Logging in…"));
                 } else if login.entering {
-                    area.spawn(line(f.regular(13.0), colours::MUTED, "Connecting…"));
+                    area.spawn(line(f.regular(13.0), colors::MUTED, "Connecting…"));
                 }
                 if let Some(account) = login.kept_account()
                     && !login.entering
@@ -785,17 +785,17 @@ mod tests {
 
     #[test]
     fn the_light_is_green_yellow_or_red() {
-        assert_eq!(Light::from(Ok(probe(None))).colour(), colours::GOOD);
+        assert_eq!(Light::from(Ok(probe(None))).color(), colors::GOOD);
         let old = Problem::Incompatible("too old".into());
-        assert_eq!(Light::from(Err(old)).colour(), colours::WARN);
+        assert_eq!(Light::from(Err(old)).color(), colors::WARN);
         for down in [
             Problem::Unreachable("nothing".into()),
             Problem::NotBingle("a web page".into()),
             Problem::BadAddress("ftp://x".into()),
         ] {
-            assert_eq!(Light::from(Err(down)).colour(), colours::BAD);
+            assert_eq!(Light::from(Err(down)).color(), colors::BAD);
         }
-        assert_eq!(Light::Checking.colour(), colours::MUTED);
+        assert_eq!(Light::Checking.color(), colors::MUTED);
     }
 
     #[test]

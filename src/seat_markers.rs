@@ -5,7 +5,7 @@
 //!
 //! A marker's first part is made of the look's `material`, or, once the view puts the seats on
 //! sides (`sides`, the seats on one of them), of the material of its side, so partners are
-//! seen to be; the parts the look names (`seat_parts`) are its seat's own colour. The seat the
+//! seen to be; the parts the look names (`seat_parts`) are its seat's own color. The seat the
 //! view names (`ringed`) has a ring round its marker's foot.
 //!
 //! Clicks on the markers make the choices that name seats (`choose`: a team picked by its
@@ -194,7 +194,7 @@ fn markers_of<'a>(table: &Table, appearances: &'a Appearances) -> Option<&'a App
         .filter(|a| a.markers.is_some())
 }
 
-/// The model of a seat's marker, by the seat's colour word.
+/// The model of a seat's marker, by the seat's color word.
 fn model<'a>(look: &'a Appearance, word: &str) -> Option<&'a str> {
     let id = look.markers.as_ref()?.pieces.get(word)?;
     Some(look.pieces.get(id)?.model.as_str())

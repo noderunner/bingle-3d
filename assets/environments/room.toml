@@ -37,7 +37,7 @@ window = [0.242, 0.851, -0.467]
 
 # The dim room beyond the table, which the felt fades into with distance rather than ending.
 [fog]
-colour = [0.035, 0.045, 0.045]
+color = [0.035, 0.045, 0.045]
 start = 1.2
 end = 4.0
 

@@ -4,7 +4,7 @@ over the wood (`src/coordinates.rs`).
 Blender sets each glyph (Fira Sans SemiBold, the client's own font) as a text object and renders
 them all, white on black, from straight above: the glyph's shape, antialiased. From that shape:
 
-- `glyphs_albedo.png`: the cut's colour, a mid brown on its walls (the wood, cut across, which
+- `glyphs_albedo.png`: the cut's color, a mid brown on its walls (the wood, cut across, which
   the light shows up or leaves in shade) darkening to the bottom of the groove, and how much of
   it covers the wood (alpha), so the grain still shows a little through it;
 - `glyphs_normal.png`: the groove's walls, sloping down from the surface into the cut, so the
@@ -28,7 +28,7 @@ FONT = os.path.join(common.ASSETS, "fonts", "FiraSans-SemiBold.ttf")
 # The glyph's size against its cell, and its baseline's height (in cells, from the middle).
 SIZE = 0.8
 BASELINE = -0.22
-# The cut's colour (sRGB) on its walls and at its bottom, how much it covers, and how wide its
+# The cut's color (sRGB) on its walls and at its bottom, how much it covers, and how wide its
 # walls are (in pixels).
 WALLS = (0.46, 0.33, 0.22)
 BOTTOM = (0.07, 0.045, 0.03)
@@ -123,11 +123,11 @@ def run():
     # between, and darken going down.
     depth = np.clip(-height, 0.0, 1.0)
     bottom = np.clip((depth - 0.35) / 0.5, 0.0, 1.0)[..., None]
-    colour = np.array(WALLS) * (1.0 - bottom) + np.array(BOTTOM) * bottom
+    color = np.array(WALLS) * (1.0 - bottom) + np.array(BOTTOM) * bottom
     # It covers the whole cut, walls and all, fading out at the very lip.
     cover = np.clip(blur(mask, WALL / 2.0) * 2.5, 0.0, 1.0) * COVER
     albedo = np.empty(mask.shape + (4,), np.float32)
-    albedo[..., :3] = colour
+    albedo[..., :3] = color
     albedo[..., 3] = cover
     common.write_png(common.output("textures", "engraving", "glyphs_albedo.png"), albedo)
     common.write_png(common.output("textures", "engraving", "glyphs_normal.png"), normal_rgb)

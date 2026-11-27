@@ -2,7 +2,7 @@
 saved as JPEG.
 
 Each wood is three images, as glTF and Bevy's `StandardMaterial` read them:
-- `albedo`: the colour, in sRGB, resized in linear light;
+- `albedo`: the color, in sRGB, resized in linear light;
 - `normal`: OpenGL convention (green up), as Bevy expects;
 - `arm`: ambient occlusion in red, roughness in green, metalness in blue, so one image serves as
   both the occlusion and the metallic-roughness texture.

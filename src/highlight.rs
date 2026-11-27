@@ -323,17 +323,17 @@ pub struct GlowMaterial {
 /// What the shader is told (`cell_glow.wesl` says what each part means).
 #[derive(ShaderType, Debug, Clone, Copy, PartialEq)]
 pub struct Glow {
-    pub colour: Vec4,
+    pub color: Vec4,
     pub ring: Vec4,
     pub ring_motion: Vec4,
     pub ribbon: Vec4,
     pub part: Vec4,
 }
 
-/// The light's colour, linear: a warm candlelight, and for a piece a click takes, red, a little
+/// The light's color, linear: a warm candlelight, and for a piece a click takes, red, a little
 /// stronger, as red alone is darker to the eye.
-const GLOW_COLOUR: Vec4 = Vec4::new(1.0, 0.55, 0.16, 1.0);
-const TAKE_COLOUR: Vec4 = Vec4::new(1.25, 0.1, 0.06, 1.0);
+const GLOW_COLOR: Vec4 = Vec4::new(1.0, 0.55, 0.16, 1.0);
+const TAKE_COLOR: Vec4 = Vec4::new(1.25, 0.1, 0.06, 1.0);
 
 impl Glow {
     /// The ring's or the ribbon's, of a space or a point, where the camera blooms or does not.
@@ -354,9 +354,9 @@ impl Glow {
             Trace::Point => (0.5, 0.45),
         };
         Glow {
-            colour: match tone {
-                Tone::Plain => GLOW_COLOUR,
-                Tone::Take => TAKE_COLOUR,
+            color: match tone {
+                Tone::Plain => GLOW_COLOR,
+                Tone::Take => TAKE_COLOR,
             },
             ring: Vec4::new(line, at, width, halo),
             // Two brighter stretches go round every 5 s; the whole breathes every 3.
@@ -619,7 +619,7 @@ mod tests {
         // A point's line is drawn in from its edge, to fill its ring.
         assert!(Glow::tuned(false, Trace::Point, true, plain).ring.y > 0.3);
         // Where a click takes a piece, red.
-        let red = Glow::tuned(false, Trace::Space, true, Tone::Take).colour;
+        let red = Glow::tuned(false, Trace::Space, true, Tone::Take).color;
         assert!(red.x > 4.0 * red.y && red.x > 4.0 * red.z, "{red}");
     }
 
@@ -656,8 +656,8 @@ mod tests {
         assert_eq!(parts(&mut app), 0);
     }
 
-    /// The colour of each glow drawn.
-    fn colours(app: &mut App) -> Vec<Vec4> {
+    /// The color of each glow drawn.
+    fn colors(app: &mut App) -> Vec<Vec4> {
         let mut q = app
             .world_mut()
             .query_filtered::<&MeshMaterial3d<GlowMaterial>, With<EffectPart>>();
@@ -665,7 +665,7 @@ mod tests {
         let materials = app.world().resource::<Assets<GlowMaterial>>();
         handles
             .iter()
-            .map(|h| materials.get(h).unwrap().glow.colour)
+            .map(|h| materials.get(h).unwrap().glow.color)
             .collect()
     }
 
@@ -679,11 +679,11 @@ mod tests {
         app.update();
         app.world_mut().entity_mut(cell).insert((Lit, Tone::Take));
         app.update();
-        assert_eq!(colours(&mut app), [TAKE_COLOUR; 2]);
+        assert_eq!(colors(&mut app), [TAKE_COLOR; 2]);
         // Plain now, still lit: drawn again, once, in candlelight.
         app.world_mut().entity_mut(cell).insert(Tone::Plain);
         app.update();
-        assert_eq!(colours(&mut app), [GLOW_COLOUR; 2]);
+        assert_eq!(colors(&mut app), [GLOW_COLOR; 2]);
         app.world_mut().entity_mut(cell).remove::<(Lit, Tone)>();
         app.update();
         assert_eq!(parts(&mut app), 0);

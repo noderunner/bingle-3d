@@ -2,7 +2,7 @@
 # client decides how they look). Data only: nothing here changes the rules.
 #
 # Stones of polished minerals (`assets-src/blender/minerals.py`): red jasper and tiger's eye for
-# Warm, lapis lazuli and black slate for Cool. Each colour is kept in a small wooden bowl beside
+# Warm, lapis lazuli and black slate for Cool. Each color is kept in a small wooden bowl beside
 # the board, the seat's two at its two hands; a stone is taken from its bowl with a click.
 
 games = ["blooms", "blooms-4", "blooms-6", "blooms-8", "blooms-10"]
@@ -19,7 +19,7 @@ model = "models/stone.glb"
 [pieces.black]
 model = "models/stone.glb"
 
-# A bowl for each colour a seat plays, smaller than Go's.
+# A bowl for each color a seat plays, smaller than Go's.
 [bowls]
 model = "models/bowl.glb"
 stones = "models/bowl_stones.glb"

@@ -47,7 +47,7 @@ NUMBERED = ["1", "11", "12", "13"]
 # Fira's J hangs below the line the other letters stand on, into the suit under it.
 HANGS = {"j"}
 
-# Colours (sRGB). The paper is the card's own (`look::paper`).
+# Colors (sRGB). The paper is the card's own (`look::paper`).
 PAPER = playing_cards.PAPER
 INKS = {
     "spades": (0.075, 0.075, 0.085),
@@ -254,17 +254,17 @@ WEARS = {"k": CROWN, "q": CORONET, "j": CAP}
 
 
 class Sheet:
-    """A face being drawn: layers of ink, each a colour and where it is, on the fine grid."""
+    """A face being drawn: layers of ink, each a color and where it is, on the fine grid."""
 
     def __init__(self):
         self.per_mm = SIZE[0] * OVER / WIDTH
         self.shape = (SIZE[1] * OVER, SIZE[0] * OVER)
         self.layers = []
 
-    def ink(self, colour):
+    def ink(self, color):
         """A new layer over the others; returns it, to fill."""
         mask = np.zeros(self.shape, bool)
-        self.layers.append((colour, mask))
+        self.layers.append((color, mask))
         return mask
 
     def fill(self, mask, contours):
@@ -309,9 +309,9 @@ class Sheet:
         linear light by how much of each pixel it covers."""
         linear = np.empty((SIZE[1], SIZE[0], 3))
         linear[:] = common.srgb_to_linear(np.array(PAPER))
-        for colour, mask in self.layers:
+        for color, mask in self.layers:
             cover = mask.reshape(SIZE[1], OVER, SIZE[0], OVER).mean((1, 3))[..., None]
-            linear = linear * (1.0 - cover) + common.srgb_to_linear(np.array(colour)) * cover
+            linear = linear * (1.0 - cover) + common.srgb_to_linear(np.array(color)) * cover
         return common.linear_to_srgb(linear)
 
 
@@ -364,10 +364,10 @@ def lettering(ranks, corner=True):
 def face(suit, rank, letters, figures):
     """One card's face, as sRGB values: `letters` for its corners, `figures` for its middle."""
     sheet = Sheet()
-    shape, colour = SHAPES[suit], INKS[suit]
+    shape, color = SHAPES[suit], INKS[suit]
     if rank in WEARS:
         court(sheet, suit, rank)
-    ink = sheet.ink(colour)
+    ink = sheet.ink(color)
 
     # The index, and the same turned round in the opposite corner.
     for turn in (1.0, -1.0):
@@ -392,17 +392,17 @@ def face(suit, rank, letters, figures):
 def court(sheet, suit, rank):
     """A court card's middle: a tinted panel in a frame, what the rank wears at each end of it,
     and the suit between."""
-    shape, colour = SHAPES[suit], INKS[suit]
+    shape, color = SHAPES[suit], INKS[suit]
     frame = rounded_box(FRAME, FRAME_CORNER)
     sheet.fill(sheet.ink(PANEL), [frame])
-    ink = sheet.ink(colour)
+    ink = sheet.ink(color)
     sheet.line(ink, frame)
     sheet.line(ink, rounded_box((FRAME[0] - 1.5, FRAME[1] - 1.5), FRAME_CORNER - 0.9), LINE * 0.6)
     for end in (False, True):
         for part in placed(WEARS[rank], (0.0, -19.0 if end else 19.0), 19.0, end):
             sheet.fill(sheet.ink(GOLD), [part])
-            sheet.line(sheet.ink(colour), part, LINE * 0.8)
-    ink = sheet.ink(colour)
+            sheet.line(sheet.ink(color), part, LINE * 0.8)
+    ink = sheet.ink(color)
     for part in placed(shape, (0.0, 0.0), 17.0):
         sheet.fill(ink, [part])
     # The suit again, small, in the frame's two free corners.

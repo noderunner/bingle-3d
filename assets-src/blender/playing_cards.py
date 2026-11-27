@@ -28,7 +28,7 @@ CORNER = 0.0032
 CORNER_STEPS = 6
 PARTS = ["face", "back", "edge"]
 
-# The back's picture, in pixels (5 to 7), and its colours (sRGB).
+# The back's picture, in pixels (5 to 7), and its colors (sRGB).
 BACK_SIZE = (640, 896)
 PAPER = (0.955, 0.945, 0.915)
 INK = (0.06, 0.15, 0.44)

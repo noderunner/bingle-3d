@@ -19,7 +19,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// several side by side (`Board::boards`: Alice chess), 1.17 the files a game offers each
 /// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), 1.18 the
 /// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`), and 1.20 the pieces
-/// a legal selection turns over and the colour each becomes (`converts_to`).
+/// a legal selection turns over and the color each becomes (`converts_to`).
 pub const API_VERSION: Version = Version {
     major: 1,
     minor: 20,
@@ -526,7 +526,7 @@ pub struct OpenGame {
 pub struct Player {
     #[serde(rename = "Seat")]
     pub seat: u32,
-    /// The seat's colour word: an identifier, not a colour to draw (Bingle's ADR 0124).
+    /// The seat's color word: an identifier, not a color to draw (Bingle's ADR 0124).
     #[serde(rename = "Color")]
     pub color: String,
     #[serde(rename = "Name")]
@@ -550,7 +550,7 @@ pub struct GameInfo {
     /// The regions of the board each seat must connect, as data (API 1.2).
     #[serde(default, deserialize_with = "null_as_default")]
     pub goals: Vec<Goal>,
-    /// The kinds of piece, and the colour word of each that has one.
+    /// The kinds of piece, and the color word of each that has one.
     #[serde(default, deserialize_with = "null_as_default")]
     pub pieces: Vec<PieceDef>,
     /// Numbers each seat keeps that hold no pieces (Blooms' captured stones), and the count a win
@@ -587,7 +587,7 @@ impl GameInfo {
 }
 
 /// What a card game's cards are (`GameInfo.cards`). Only what the client draws from: not the
-/// colours of the web page's own drawing (Bingle's ADR 0124).
+/// colors of the web page's own drawing (Bingle's ADR 0124).
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Cards {
     /// Each suit by its id.
@@ -656,7 +656,7 @@ pub struct PieceDef {
     /// Its id, as a selection's `piece` names it.
     #[serde(rename = "type")]
     pub id: String,
-    /// The colour word it is played in, when it has one (Blooms' stones each have their own).
+    /// The color word it is played in, when it has one (Blooms' stones each have their own).
     #[serde(default)]
     pub color: String,
     /// The reserve pool it is taken from (Tak's flat and standing stones share one).
@@ -724,11 +724,11 @@ pub struct ActionDef {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SeatDef {
     pub seat: u32,
-    /// An identifier, not a colour to draw (Bingle's ADR 0124).
+    /// An identifier, not a color to draw (Bingle's ADR 0124).
     pub color: String,
     /// What the seat is called, in words ("Red (top – bottom)").
     pub label: String,
-    /// Every colour word the seat plays, when it plays several (Bingle's ADR 0117).
+    /// Every color word the seat plays, when it plays several (Bingle's ADR 0117).
     #[serde(default, deserialize_with = "null_as_default")]
     pub colors: Vec<String>,
 }
@@ -1033,7 +1033,7 @@ pub struct LegalSelection {
     /// game with secrets or for a selection that rolls or draws.
     #[serde(default, deserialize_with = "null_as_default")]
     pub captures: Vec<String>,
-    /// The positions whose pieces it turns over where they stand, and the colour word each
+    /// The positions whose pieces it turns over where they stand, and the color word each
     /// turns to (API 1.20): absent as `captures` are.
     #[serde(default, deserialize_with = "null_as_default")]
     pub converts_to: BTreeMap<String, String>,
@@ -1128,7 +1128,7 @@ pub struct GameState {
 pub struct Position {
     #[serde(default, deserialize_with = "null_as_default")]
     pub cells: BTreeMap<String, Vec<PieceOnBoard>>,
-    /// What each seat holds off the board, by the seat's colour word: a number for each pool.
+    /// What each seat holds off the board, by the seat's color word: a number for each pool.
     /// Kept as it came, since each game has its own; read with [`Position::count`].
     #[serde(default)]
     pub reserves: serde_json::Value,
@@ -1174,7 +1174,7 @@ impl CardOnTable {
 }
 
 impl Position {
-    /// How many the seat of colour word `seat` has in its pool `pool`; 0 when it has none.
+    /// How many the seat of color word `seat` has in its pool `pool`; 0 when it has none.
     pub fn count(&self, seat: &str, pool: &str) -> u32 {
         self.reserves
             .get(seat)
@@ -1366,7 +1366,7 @@ impl Position {
 pub struct PieceOnBoard {
     /// The piece's type.
     pub piece: String,
-    /// The colour word of the seat it belongs to.
+    /// The color word of the seat it belongs to.
     pub color: String,
 }
 
@@ -1616,7 +1616,7 @@ mod tests {
         assert_eq!(
             compatibility(Some("1.19.0")),
             ServerTooOld(Some("1.19.0".into())),
-            "1.19 does not say what colour a piece turned over becomes"
+            "1.19 does not say what color a piece turned over becomes"
         );
         assert_eq!(
             compatibility(Some("1.18.0")),

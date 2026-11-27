@@ -9,8 +9,8 @@ reads, filtered here once rather than by the GPU every frame.
 
 Before filtering, the panorama is graded for a table top (`grade`):
 - below the horizon is the room's floor, which the board would reflect where in the scene there
-  is a dark table: it is made dim, the colour of the felt in shadow;
-- its colours are halved in saturation, so a stone reflects a window as a highlight and not as
+  is a dark table: it is made dim, the color of the felt in shadow;
+- its colors are halved in saturation, so a stone reflects a window as a highlight and not as
   the green of the trees outside it.
 
 Bevy samples a cubemap with the world direction's z negated, so face texels are given the world
@@ -25,7 +25,7 @@ import common
 SPECULAR_SIZE = 256
 DIFFUSE_SIZE = 32
 SAMPLES = 128
-# How much colour the room keeps, and how bright the table below the horizon is, against the
+# How much color the room keeps, and how bright the table below the horizon is, against the
 # average of the room above it.
 SATURATION = 0.5
 TABLE = np.array([0.05, 0.065, 0.065])

@@ -39,9 +39,9 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def image(path, colour):
+def image(path, color):
     img = bpy.data.images.load(os.path.join(common.ASSETS, path), check_existing=True)
-    img.colorspace_settings.name = "sRGB" if colour else "Non-Color"
+    img.colorspace_settings.name = "sRGB" if color else "Non-Color"
     return img
 
 
@@ -64,9 +64,9 @@ def material(name, spec, object_mapped):
     bsdf.inputs["Coat Weight"].default_value = spec.get("clearcoat", 0.0)
     bsdf.inputs["Coat Roughness"].default_value = spec.get("clearcoat_roughness", 0.03)
 
-    def texture(path, colour):
+    def texture(path, color):
         node = nodes.new("ShaderNodeTexImage")
-        node.image = image(path, colour)
+        node.image = image(path, color)
         if object_mapped:
             # Woods: mapped by position, in metres, from every side, as the client maps them.
             coords = nodes.new("ShaderNodeTexCoord")
@@ -92,16 +92,16 @@ def material(name, spec, object_mapped):
         links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
     else:
         albedo = texture(spec["albedo"], True)
-    colour = albedo.outputs["Color"]
+    color = albedo.outputs["Color"]
     if "tint" in spec:
         mix = nodes.new("ShaderNodeMix")
         mix.data_type = "RGBA"
         mix.blend_type = "MULTIPLY"
         mix.inputs["Factor"].default_value = 1.0
-        links.new(colour, mix.inputs["A"])
+        links.new(color, mix.inputs["A"])
         mix.inputs["B"].default_value = [srgb_to_linear(c) for c in spec["tint"]] + [1.0]
-        colour = mix.outputs["Result"]
-    links.new(colour, bsdf.inputs["Base Color"])
+        color = mix.outputs["Result"]
+    links.new(color, bsdf.inputs["Base Color"])
     return mat
 
 

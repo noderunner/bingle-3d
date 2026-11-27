@@ -22,7 +22,7 @@ And the garden's:
 - **Rock Moss Set 01** (the rocks, scanned): Kless Gyzen
 - **Kloofendal 28d Misty (Pure Sky)** (the sky): Greg Zaal, Jenelle van Heerden
 
-The stone's model and the stones' colours are made by the pipeline's own scripts, as are the
+The stone's model and the stones' colors are made by the pipeline's own scripts, as are the
 bowls, the chessmen, the checkers, Tak's pieces, the playing card, its back and the faces of the
 usual deck (their ranks lettered in Fira Sans), the die, and
 everything in the garden but its rocks: the table, the cushions, the platform, the

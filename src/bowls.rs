@@ -1,9 +1,9 @@
-//! A bowl of stones for each colour a seat plays, on the table beside the board, as Go stones
+//! A bowl of stones for each color a seat plays, on the table beside the board, as Go stones
 //! are kept: for the games whose appearance file says so (`[bowls]`), in every environment.
 //!
-//! A seat of one colour has its bowl at its right hand, by the board's corner on that seat's
-//! side; a seat of two (Blooms') has one at each hand, its first colour on the left. Each holds a
-//! heap of stones in its colour's material. A click on a bowl takes a stone of its colour, when
+//! A seat of one color has its bowl at its right hand, by the board's corner on that seat's
+//! side; a seat of two (Blooms') has one at each hand, its first color on the left. Each holds a
+//! heap of stones in its color's material. A click on a bowl takes a stone of its color, when
 //! the move lets the player choose one (`play::Choice`); the stone then waits over the bowl. The
 //! models are the asset pipeline's (`assets-src/blender/tableware.py`), made smaller by the
 //! appearance's `size`.
@@ -79,20 +79,20 @@ pub fn places(seats: &[usize], outline: &[Vec2], radius: f32) -> Vec<Vec<(Vec2, 
         .collect()
 }
 
-/// A bowl, by the colour word of the stones in it.
+/// A bowl, by the color word of the stones in it.
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct Bowl(pub String);
 
-/// One bowl to stand: its colour word, the material of its stones, and what a click on it
+/// One bowl to stand: its color word, the material of its stones, and what a click on it
 /// chooses, if anything.
 pub struct Filled {
-    pub colour: String,
+    pub color: String,
     pub stones: Handle<StandardMaterial>,
     pub choice: Option<crate::net::api::Gesture>,
 }
 
 /// Stands the bowls beside the board, as children of `root`: each seat's, in seat order. Says
-/// where a stone taken from each bowl waits, by its colour: over the bowl's rim.
+/// where a stone taken from each bowl waits, by its color: over the bowl's rim.
 pub fn spawn(
     commands: &mut Commands,
     root: Entity,
@@ -126,10 +126,10 @@ pub fn spawn(
             // Each heap turned its own way, so no two bowls are alike.
             let yaw = turn + 1.9 * n as f32;
             n += 1;
-            over.insert(one.colour.clone(), Vec3::new(at.x, rim, at.y));
+            over.insert(one.color.clone(), Vec3::new(at.x, rim, at.y));
             let mut bowl = commands.spawn((
-                Name::new(format!("Bowl of {} (seat {})", one.colour, seat + 1)),
-                Bowl(one.colour),
+                Name::new(format!("Bowl of {} (seat {})", one.color, seat + 1)),
+                Bowl(one.color),
                 Mesh3d(bowl_mesh.clone()),
                 MeshMaterial3d(bowl.clone()),
                 Transform::from_xyz(at.x, 0.0, at.y)
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn a_seat_of_two_colours_has_a_bowl_at_each_hand_the_first_on_the_left() {
+    fn a_seat_of_two_colors_has_a_bowl_at_each_hand_the_first_on_the_left() {
         let half = Vec2::new(0.15, 0.12);
         let r = BOWL_RADIUS * 0.7;
         let all = places(&[2, 2], &rectangle(half), r);

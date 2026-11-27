@@ -196,7 +196,7 @@ const BEAM_HEIGHT: f32 = 18.0;
 const BEAM_SERIF: f32 = 7.0;
 const BEAM_STROKE: f32 = 2.0;
 const BEAM_RIM: f32 = 1.0;
-/// The glove's colour, and its rim's.
+/// The glove's color, and its rim's.
 const GLOVE: Color = Color::srgb(0.96, 0.95, 0.92);
 const GLOVE_RIM: Color = Color::srgb(0.04, 0.035, 0.03);
 
@@ -583,7 +583,7 @@ fn spawn_hand(
     ));
     // The text cursor: a node of no size at the pointer, its parts about it, the rim's under
     // the glove's.
-    let rect = |r: Rect, colour: Color| {
+    let rect = |r: Rect, color: Color| {
         (
             Node {
                 position_type: PositionType::Absolute,
@@ -593,7 +593,7 @@ fn spawn_hand(
                 height: px(r.height()),
                 ..default()
             },
-            BackgroundColor(colour),
+            BackgroundColor(color),
             Pickable::IGNORE,
         )
     };
