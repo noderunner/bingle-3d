@@ -173,6 +173,9 @@ pub struct Turn {
     /// there are, and the move is played as soon as it is whole: a patience's, where a click
     /// puts the cards in hand where they go (`patience.rs`).
     pub clicks_only: bool,
+    /// Whether the move is sent as soon as the server says it is whole: its last choice was
+    /// made by *Play* (`Turn::end`), which stands for it.
+    ends: bool,
 }
 
 impl Turn {
@@ -194,6 +197,7 @@ impl Turn {
             lifted: false,
             auto_take: Vec::new(),
             clicks_only: false,
+            ends: false,
         }
     }
 
@@ -706,13 +710,14 @@ impl Turn {
         if self.stage != Stage::Asking {
             return Outcome::Ignored;
         }
+        let ends = std::mem::take(&mut self.ends);
         self.ply = Some(selections.ply);
         self.problem = None;
         self.after = selections.state;
         self.may_end = selections.may_end && !selections.made.is_empty();
         if selections.complete {
             self.stage = Stage::Ready;
-            return if self.clicks_only {
+            return if self.clicks_only || ends {
                 Outcome::Submit
             } else {
                 Outcome::Changed
@@ -807,6 +812,7 @@ impl Turn {
     /// selections made, one at a time, each to just before its last click (a piece moved and
     /// its arrow not yet shot). Nothing is sent, so nothing needs undoing on the server.
     pub fn back(&mut self) -> bool {
+        self.ends = false;
         // What is taken up, or picked up, goes back first.
         if self.taken.take().is_some() {
             return true;
@@ -866,6 +872,11 @@ impl Turn {
     /// Whether the move may be sent now: it is whole, or it may end where it is (what is half
     /// entered towards another selection is let go).
     pub fn can_play(&self) -> bool {
+        self.can_send() || self.ending_choice().is_some()
+    }
+
+    /// Whether the selections made are a move that may be sent as they are.
+    fn can_send(&self) -> bool {
         match self.stage {
             Stage::Ready => true,
             Stage::Choosing => self.may_end && !self.made.is_empty(),
@@ -876,12 +887,51 @@ impl Turn {
     /// The player confirms the move: what to send, and the ply it was made at.
     pub fn submit(&mut self) -> Option<(String, u64)> {
         let ply = self.ply?;
-        if !self.can_play() {
+        if !self.can_send() {
             return None;
         }
         self.gestures.clear();
         self.stage = Stage::Sending;
         Some((self.notation(), ply))
+    }
+
+    /// The one choice that *Play* makes, when something has been chosen towards the selection
+    /// being entered (not at its start, where the one choice may be a pass or a swap), exactly
+    /// one choice that is not a click on the board is offered, and making it completes the
+    /// selection: the choice that ends a chain, or a step that pins nothing. The game's own
+    /// words for it are never read.
+    pub fn ending_choice(&self) -> Option<Gesture> {
+        let n = self.gestures.len();
+        if self.stage != Stage::Choosing
+            || self.clicks_only
+            || n <= self.forced
+            || self.taken.is_some()
+        {
+            return None;
+        }
+        let mut choices = self.choices().into_iter();
+        let (Some(choice), None) = (choices.next(), choices.next()) else {
+            return None;
+        };
+        let mut leading = self
+            .matching()
+            .filter(|o| o.gestures.get(n) == Some(&choice));
+        match (leading.next(), leading.next()) {
+            (Some(only), None) if only.gestures.len() == n + 1 => Some(choice),
+            _ => None,
+        }
+    }
+
+    /// *Play* where it ends the selection: makes the choice `ending_choice` names, and the move
+    /// is sent once the server says it is whole. If it does not, nothing is sent and the turn
+    /// goes on as it would have after that choice's button.
+    pub fn end(&mut self) -> Outcome {
+        let Some(choice) = self.ending_choice() else {
+            return Outcome::Ignored;
+        };
+        let outcome = self.enter(&choice);
+        self.ends = outcome == Outcome::Ask;
+        outcome
     }
 
     /// The positions a click on would be taken, for the board to show. With something taken up
@@ -1022,6 +1072,14 @@ impl Turn {
                 out.push(g.clone());
             }
         }
+        out
+    }
+
+    /// The choices the panel offers as buttons: `choices`, but for the one *Play* makes.
+    pub fn panel_choices(&self) -> Vec<Gesture> {
+        let ending = self.ending_choice();
+        let mut out = self.choices();
+        out.retain(|c| Some(c) != ending.as_ref());
         out
     }
 
@@ -1417,6 +1475,12 @@ pub fn submit(net: &Net, watch: &mut ResMut<WatchStatus>) {
     let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
         return;
     };
+    // Where one choice ends the selection, *Play* makes it, and the move goes once whole.
+    let ended = turn.end();
+    if ended != Outcome::Ignored {
+        watch.set_changed();
+        return follow(net, watch, ended);
+    }
     if let Some((notation, ply)) = turn.submit() {
         watch.set_changed();
         net::play(net, watch, notation, ply);
@@ -3026,5 +3090,128 @@ mod tests {
         button(&mut app, true, 1.5);
         button(&mut app, false, 0.0);
         assert_eq!(gestures(&app), 0);
+    }
+
+    /// Fist's chains from a1: one jump that may end there, or go on to a second.
+    fn chains() -> Vec<LegalSelection> {
+        let mut all = Vec::new();
+        for first in ["capture", "spare"] {
+            all.push(jump(&[("c3", first, "b2")]));
+            for second in ["capture", "spare"] {
+                all.push(jump(&[("c3", first, "b2"), ("e5", second, "d4")]));
+            }
+        }
+        all.push(jump(&[
+            ("c3", "capture", "b2"),
+            ("e5", "capture", "d4"),
+            ("g7", "capture", "f6"),
+        ]));
+        all
+    }
+
+    fn click(t: &mut Turn, cell: &str) {
+        assert_eq!(t.gesture(&Gesture::pos(cell)), Outcome::Changed);
+    }
+
+    #[test]
+    fn play_ends_a_chain_that_may_end_or_go_on_and_sends_it_once_whole() {
+        let mut t = Turn::new(1);
+        t.answered(answer(1, chains()));
+        assert_eq!(t.end(), Outcome::Ignored, "nothing chosen yet");
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        // What happens to the piece jumped: two choices, so Play waits.
+        assert_eq!(t.choices().len(), 2);
+        assert_eq!(t.ending_choice(), None);
+        assert_eq!(t.end(), Outcome::Ignored);
+        assert!(!t.can_play());
+        assert_eq!(t.gesture(&g("action", "capture")), Outcome::Changed);
+        // Ending is the one choice that is no click; Play stands for it.
+        assert_eq!(t.ending_choice(), Some(g("action", "end")));
+        assert!(t.panel_choices().is_empty());
+        assert_eq!(t.choices(), [g("action", "end")]);
+        assert!(t.can_play());
+        assert_eq!(t.submit(), None, "Play is not the plain submit here");
+        assert_eq!(t.end(), Outcome::Ask);
+        assert_eq!(t.answered(complete(1)), Outcome::Submit);
+        assert_eq!(t.submit(), Some(("jump".to_string(), 1)));
+    }
+
+    #[test]
+    fn a_chain_goes_on_by_a_click_and_play_ends_the_last_leg() {
+        let mut t = Turn::new(1);
+        t.answered(answer(1, chains()));
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        t.gesture(&g("action", "capture"));
+        click(&mut t, "e5");
+        assert_eq!(t.ending_choice(), None, "the second leg still asks");
+        t.gesture(&g("action", "capture"));
+        assert_eq!(t.ending_choice(), Some(g("action", "end")));
+        assert_eq!(t.end(), Outcome::Ask);
+        assert_eq!(t.answered(complete(1)), Outcome::Submit);
+    }
+
+    #[test]
+    fn if_the_move_is_not_whole_after_play_s_choice_nothing_is_sent() {
+        let mut t = Turn::new(1);
+        t.answered(answer(1, chains()));
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        t.gesture(&g("action", "capture"));
+        assert_eq!(t.end(), Outcome::Ask);
+        // The server leads somewhere else: the turn goes on, and nothing is sent.
+        assert_eq!(
+            t.answered(answer(1, vec![place("a1"), place("b1")])),
+            Outcome::Changed
+        );
+        assert_eq!(t.stage, Stage::Choosing);
+        // A later whole answer is not sent by an old Play.
+        t.gesture(&Gesture::pos("a1"));
+        assert_eq!(t.answered(complete(1)), Outcome::Changed);
+        assert_eq!(t.stage, Stage::Ready);
+    }
+
+    #[test]
+    fn a_step_that_may_pin_or_not_is_played_without_pinning() {
+        let step = |last: (&str, &str)| LegalSelection {
+            from: Some("a1".into()),
+            ..sel("step", Some("b2"), &[("pos", "a1"), ("pos", "b2"), last])
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![step(("action", "move")), step(("pos", "c3"))],
+        ));
+        click(&mut t, "a1");
+        assert_eq!(t.ending_choice(), None, "no choice yet");
+        click(&mut t, "b2");
+        assert_eq!(t.ending_choice(), Some(g("action", "move")));
+        assert_eq!(t.end(), Outcome::Ask);
+        assert_eq!(t.answered(complete(1)), Outcome::Submit);
+    }
+
+    #[test]
+    fn a_lone_pass_or_swap_at_the_start_of_a_selection_is_not_taken_by_play() {
+        let pass = sel("pass", None, &[("action", "pass")]);
+        let mut t = Turn::new(1);
+        t.answered(answer(1, vec![pass, place("a1")]));
+        assert_eq!(t.choices(), [g("action", "pass")]);
+        assert_eq!(t.ending_choice(), None);
+        assert_eq!(t.end(), Outcome::Ignored);
+        assert!(!t.can_play());
+        let mut t = turn();
+        assert_eq!(t.end(), Outcome::Ignored);
+    }
+
+    #[test]
+    fn a_turn_that_plays_on_a_click_has_no_choice_for_play_to_make() {
+        let mut t = Turn::new(1);
+        t.clicks_only = true;
+        t.answered(answer(1, chains()));
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        t.gesture(&g("action", "capture"));
+        assert_eq!(t.ending_choice(), None);
     }
 }
