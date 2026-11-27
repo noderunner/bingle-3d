@@ -3392,8 +3392,14 @@ struct Taken;
 #[derive(Component)]
 struct Arriving;
 
+/// A piece the move being built turns over where it stands, shown see-through in the colour
+/// word it turns to.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+struct Turning(String);
+
 /// A piece on the board as `show_taken` sees it: where it is, whether the move being built
-/// carries it, how it is drawn, and whether it is hidden as taken or see-through as arriving.
+/// carries it, how it is drawn, and whether it is hidden as taken, see-through as arriving or
+/// see-through as turned over.
 type PreviewedPiece = (
     Entity,
     &'static PieceAt,
@@ -3401,14 +3407,16 @@ type PreviewedPiece = (
     &'static mut MeshMaterial3d<StandardMaterial>,
     Has<Taken>,
     Has<Arriving>,
+    Option<&'static Turning>,
 );
 
 /// A piece hidden as taken that is no longer on the board (carried to a tray).
 type TakenOffBoard = (With<Taken>, Without<PieceAt>);
 
-/// While a move is being built, what it is sure to take is not drawn, and each piece it moves
-/// is see-through where it lands, whether it takes anything there or not: the player sees the
-/// position the move they confirm leaves. The others as they are.
+/// While a move is being built, what it is sure to take is not drawn, each piece it moves is
+/// see-through where it lands, whether it takes anything there or not, and each it turns over is
+/// see-through in the colour it turns to: the player sees the position the move they confirm
+/// leaves. The others as they are.
 fn show_taken(
     mut commands: Commands,
     watch: Res<WatchStatus>,
@@ -3439,7 +3447,9 @@ fn show_taken(
                 .collect()
         })
         .unwrap_or_default();
-    for (entity, at, carry, mut material, was_taken, was_arriving) in &mut pieces {
+    // What it turns over (`Turn::turning`), and the colour word each turns to.
+    let turning = watch.turn.as_ref().map(|t| t.turning()).unwrap_or_default();
+    for (entity, at, carry, mut material, was_taken, was_arriving, was_turning) in &mut pieces {
         let carried = carry.is_some();
         let hide = !carried && taken.contains(&at.cell.as_str());
         if hide && !was_taken {
@@ -3450,17 +3460,26 @@ fn show_taken(
                 .insert(Visibility::Inherited)
                 .remove::<Taken>();
         }
-        let see_through = matches!(carry, Some(Carry::Put(_)));
-        if see_through == was_arriving {
+        let arriving = matches!(carry, Some(Carry::Put(_)));
+        let turning_to = turning
+            .get(at.cell.as_str())
+            .filter(|to| !carried && !hide && **to != at.piece.color)
+            .map(|to| to.to_string());
+        if arriving == was_arriving && turning_to.as_ref() == was_turning.map(|t| &t.0) {
             continue;
         }
-        if see_through {
+        if arriving {
             commands.entity(entity).insert(Arriving);
         } else {
             commands.entity(entity).remove::<Arriving>();
         }
+        match &turning_to {
+            Some(to) => commands.entity(entity).insert(Turning(to.clone())),
+            None => commands.entity(entity).remove::<Turning>(),
+        };
+        let see_through = arriving || turning_to.is_some();
         let kind = kit.piece(&at.piece.piece);
-        let colour = &at.piece.color;
+        let colour = turning_to.as_ref().unwrap_or(&at.piece.color);
         let wanted = if see_through {
             kind.ghost
                 .clone()
@@ -5079,6 +5098,7 @@ mod tests {
                     Gesture::pos("c3"),
                 ],
                 captures: Vec::new(),
+                converts_to: Default::default(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5247,6 +5267,7 @@ wood = "contrast"
                     Gesture::pos(to),
                 ],
                 captures: Vec::new(),
+                converts_to: Default::default(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5292,6 +5313,81 @@ wood = "contrast"
         }
 
         #[test]
+        fn a_move_being_built_shows_what_it_turns_over_see_through_in_the_colour_it_turns_to() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use crate::play::Turn;
+
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("q", "white")]),
+                ("b1", &[("q", "black")]),
+                ("b2", &[("q", "black")]),
+            ];
+            // White places on c1, turning b1 over to white; a placement on c3 turns nothing.
+            let place = |to: &str, turns: &[&str]| LegalSelection {
+                notation: to.into(),
+                action: "place".into(),
+                to: Some(to.into()),
+                piece: Some("q".into()),
+                gestures: vec![Gesture::pos(to)],
+                converts_to: turns
+                    .iter()
+                    .map(|c| (c.to_string(), "white".to_string()))
+                    .collect(),
+                ..Default::default()
+            };
+            let mut app = with_looks();
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("g", cells));
+            app.update();
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 1,
+                made: vec![],
+                options: vec![place("c1", &["b1"]), place("c3", &[])],
+                complete: false,
+                may_end: false,
+                state: None,
+            });
+            turn.gesture(&Gesture::pos("c1"));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            app.update();
+            // Each piece by cell: its material.
+            let seen = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>)>();
+                q.iter(app.world())
+                    .map(|(at, m)| (at.cell.clone(), m.0.clone()))
+                    .collect::<HashMap<_, _>>()
+            };
+            let (ghosts, solids) = {
+                let mut kits = app.world_mut().query::<&Kit>();
+                let kit = kits.single(app.world()).unwrap();
+                (kit.ghosts.clone(), kit.materials.clone())
+            };
+            let ghost = |w: &str| ghosts[w].clone();
+            let solid = |w: &str| solids[w].clone();
+            let now = seen(&mut app);
+            assert_eq!(now["b1"], ghost("white"), "turned over: see-through, white");
+            assert_eq!(now["b2"], solid("black"), "the rest as they are");
+            assert_eq!(now["a1"], solid("white"));
+
+            // Taken back: as it was.
+            assert!(
+                app.world_mut()
+                    .resource_mut::<WatchStatus>()
+                    .turn
+                    .as_mut()
+                    .unwrap()
+                    .back()
+            );
+            app.update();
+            app.update();
+            assert_eq!(seen(&mut app)["b1"], solid("black"));
+        }
+
+        #[test]
         fn a_move_being_built_hides_what_it_takes_and_shows_the_mover_see_through_where_it_lands() {
             use crate::net::api::{Gesture, LegalSelection, Selections};
             use crate::play::Turn;
@@ -5316,6 +5412,7 @@ wood = "contrast"
                     aim: None,
                     gestures,
                     captures: takes.iter().map(|c| c.to_string()).collect(),
+                    converts_to: Default::default(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -5470,6 +5567,7 @@ wood = "contrast"
                     gestures,
                     // As the server says it (API 1.10): a pin takes the piece it aims at.
                     captures: aim.map(|a| vec![a.into()]).unwrap_or_default(),
+                    converts_to: Default::default(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -5571,6 +5669,7 @@ wood = "contrast"
                 aim: Some(aim.into()),
                 gestures: vec![Gesture::pos("a1"), Gesture::pos(to), Gesture::pos(aim)],
                 captures: Vec::new(),
+                converts_to: Default::default(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5990,6 +6089,7 @@ wood = "contrast"
                     })
                     .collect(),
                 captures: Vec::new(),
+                converts_to: Default::default(),
             }
         }
 
@@ -6843,6 +6943,7 @@ wood = "contrast"
                     Gesture::pos(cell),
                 ],
                 captures: Vec::new(),
+                converts_to: Default::default(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {

@@ -334,6 +334,7 @@ mod tests {
                 })
                 .collect(),
             captures: Vec::new(),
+            converts_to: Default::default(),
         };
         let mut turn = Turn::new(1);
         turn.answered(Selections {

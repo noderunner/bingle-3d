@@ -54,7 +54,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.18.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.20.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
@@ -944,12 +944,14 @@ this repository may not hold (decision 2). This repository names none of them, h
   material, so a model that gains a part is whole under a look written before it had one.
   Every piece of one kind is cut from the same place in the marble (a model has one mapping),
   told apart only by the way each is turned.
-- Not built for it, and generic when they are: what a selection turns over, shown before the
-  move is sent (the server says only what it takes, `captures`: a Bingle issue); a count of
+- Not built for it, and generic when they are: a count of
   the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup
   beside the board when nothing counts it; and the piece held under the pointer when a
-  selection does not name it (a disc is shown where a ring is placed); and bingle#293's
-  `converts`, now asked for.
+  selection does not name it (a disc is shown where a ring is placed).
+- **What a move turns over** is shown before it is sent: each piece is see-through in the colour
+  it turns to, as a piece placed is (`board::show_taken`, `Turn::turning`; 2026-11-27). The
+  server says which pieces and what colour (API 1.20's `converts_to`, bingle#293), so the client
+  never guesses: a move may turn over the mover's own pieces as well as another seat's.
 - **The second** is played with move cards: each card shows where a piece may go, and a seat
   chooses one of its own, then a piece and where it goes. **Move tiles** (`move_tiles.rs`,
   the look's `[move_tiles]`): each card of the view's is a tile of pale wood beside the board,

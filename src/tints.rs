@@ -161,6 +161,7 @@ mod tests {
                 },
             ],
             captures: Vec::new(),
+            converts_to: Default::default(),
         };
         let options = [lay("b3", "green"), lay("c3", "green"), lay("b3", "red")];
         let action = |v: &str| Gesture {

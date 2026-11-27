@@ -17,11 +17,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// games built from the server's private overlay marked `private`, 1.10 the positions a
 /// legal selection takes pieces from (`captures`), 1.14 the boards of a game played on
 /// several side by side (`Board::boards`: Alice chess), 1.17 the files a game offers each
-/// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), and 1.18 the
-/// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`).
+/// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), 1.18 the
+/// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`), and 1.20 the pieces
+/// a legal selection turns over and the colour each becomes (`converts_to`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 18,
+    minor: 20,
     patch: 0,
 };
 
@@ -1032,6 +1033,10 @@ pub struct LegalSelection {
     /// game with secrets or for a selection that rolls or draws.
     #[serde(default, deserialize_with = "null_as_default")]
     pub captures: Vec<String>,
+    /// The positions whose pieces it turns over where they stand, and the colour word each
+    /// turns to (API 1.20): absent as `captures` are.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub converts_to: BTreeMap<String, String>,
 }
 
 /// One thing a player does to enter a selection: a click on a position (`pos`), a choice of
@@ -1606,8 +1611,18 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.18.0")), Compatible);
-        assert_eq!(compatibility(Some("1.19.2")), Compatible);
+        assert_eq!(compatibility(Some("1.20.0")), Compatible);
+        assert_eq!(compatibility(Some("1.21.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.19.0")),
+            ServerTooOld(Some("1.19.0".into())),
+            "1.19 does not say what colour a piece turned over becomes"
+        );
+        assert_eq!(
+            compatibility(Some("1.18.0")),
+            ServerTooOld(Some("1.18.0".into())),
+            "1.18 does not say what a selection turns over"
+        );
         assert_eq!(
             compatibility(Some("1.17.3")),
             ServerTooOld(Some("1.17.3".into())),
@@ -1752,7 +1767,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.18.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.20.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -2304,7 +2319,9 @@ mod tests {
              "gestures":[{"kind":"piece","value":"stone"},{"kind":"pos","value":"a1"}]},
             {"notation":"swap","action":"swap","gestures":[{"kind":"action","value":"swap"}]},
             {"notation":"c3^e5x","action":"jump","from":"c3","to":"e5","captures":["d4"],
-             "gestures":[{"kind":"pos","value":"c3"},{"kind":"pos","value":"e5"}]}],
+             "gestures":[{"kind":"pos","value":"c3"},{"kind":"pos","value":"e5"}]},
+            {"notation":"d3","action":"place","to":"d3","converts":["d4"],"converts_to":{"d4":"black"},
+             "gestures":[{"kind":"pos","value":"d3"}]}],
             "complete":false}"#,
         )
         .unwrap();
@@ -2312,6 +2329,14 @@ mod tests {
         assert_eq!(s.options[0].to.as_deref(), Some("a1"));
         assert!(s.options[0].captures.is_empty(), "absent: it takes nothing");
         assert_eq!(s.options[2].captures, ["d4"]);
+        assert!(
+            s.options[2].converts_to.is_empty(),
+            "absent: it turns nothing over"
+        );
+        assert_eq!(
+            s.options[3].converts_to,
+            BTreeMap::from([("d4".to_string(), "black".to_string())])
+        );
         assert!(s.options[0].gestures[1].is_pos());
         assert_eq!(s.options[1].to, None);
         let done: Selections = serde_json::from_str(
