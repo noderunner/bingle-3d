@@ -99,14 +99,12 @@ impl Moment {
         };
         let placements: Vec<&str> = turn.placements().map(|(cell, _)| cell).collect();
         Moment {
+            // A piece in hand on the board: picked up, or lifted again part-way through a
+            // chain once it may jump on.
             lifted: turn
-                .carried()
-                .into_iter()
-                .find(|c| c.to.is_none())
-                .map(|c| c.from.to_string())
+                .held_at()
+                .map(str::to_string)
                 .or_else(|| turn.in_hand().map(|piece| format!("piece {piece}")))
-                // A piece picked up that its selections do not have clicked.
-                .or_else(|| turn.lifted().map(str::to_string))
                 // Something taken up to put down (a fence from its bowl).
                 .or_else(|| turn.taken().map(|_| "taken".to_string()))
                 // A stack picked up, and each time the wheel changes how much of it.
@@ -335,6 +333,7 @@ mod tests {
                 .collect(),
             captures: Vec::new(),
             converts_to: Default::default(),
+            path: Vec::new(),
         };
         let mut turn = Turn::new(1);
         turn.answered(Selections {

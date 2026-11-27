@@ -41,7 +41,8 @@ use bevy::prelude::*;
 
 use crate::appearance::{self, Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, LIFT, PointerOnBoard, Rest, Route};
+use crate::drag::{Drag, Dragging};
+use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::highlight::{Lit, Outline, Tone};
 use crate::look::{self, MaterialSpec, seat_paint};
 use crate::net::WatchStatus;
@@ -62,11 +63,16 @@ impl Plugin for BoardPlugin {
         app.add_plugins(HandPlugin)
             .configure_sets(
                 Update,
-                Hands
-                    .after(show_turn)
-                    .after(bowl_stones)
-                    .after(show_fences)
-                    .after(show_tints),
+                (
+                    Hands
+                        .after(show_turn)
+                        .after(hold_dragged)
+                        .after(bowl_stones)
+                        .after(show_fences)
+                        .after(show_tints),
+                    // A drop is a click: the turn it makes is shown in the same frame.
+                    Dragging.before(show_turn),
+                ),
             )
             .add_message::<BoardBuilt>()
             // After everything that makes or changes a piece, and before where its parts are
@@ -87,6 +93,8 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<ShowLegalMoves>)
                             .or_eager(resource_changed::<LineAim>),
                     ),
+                    hold_dragged
+                        .run_if(resource_changed::<Drag>.or_eager(resource_changed::<WatchStatus>)),
                     show_taken.run_if(
                         resource_changed::<WatchStatus>
                             .or_eager(resource_changed::<Hovering>)
@@ -107,6 +115,7 @@ impl Plugin for BoardPlugin {
                     .chain(),
             )
             .init_resource::<BoardWood>()
+            .init_resource::<Drag>()
             .init_resource::<BoardOutline>()
             .init_resource::<SideAim>()
             .init_resource::<LineAim>()
@@ -3091,11 +3100,12 @@ fn show_turn(
             }
         }
     }
-    // The piece picked up to be moved where its selections do not have it clicked (Courtfall's
-    // unit, once activated): lifted over where it stands, as a piece clicked is, a click on it
-    // a click on its space. Over where the move being built has put it, if it has moved it
-    // already.
-    let lifted = turn.and_then(Turn::lifted).and_then(|from| {
+    // The piece in hand (`Turn::held_at`): one picked up to be moved where its selections do
+    // not have it clicked (Courtfall's unit, once activated), lifted over where it stands as a
+    // piece clicked is, a click on it a click on its space; or one part-way through a chain,
+    // over where it stands, while it may jump on. Over where the move being built has put it,
+    // if it has moved it already.
+    let lifted = turn.and_then(Turn::held_at).and_then(|from| {
         let top = (from.to_string(), after.get(from)?.len().checked_sub(1)?);
         Some(origin.get(&top).cloned().unwrap_or(top))
     });
@@ -3304,6 +3314,59 @@ fn show_turn(
         ));
         if sent {
             ghost.insert(Sent(cell.to_string()));
+        }
+    }
+}
+
+/// A piece on the board as a drag holds it: where it is, how the move being built carries it,
+/// whether it is held under the pointer, and its parts, picked as it is.
+type DraggedPiece = (
+    Entity,
+    &'static PieceAt,
+    &'static Spot,
+    Option<&'static Carry>,
+    Has<Held>,
+    Option<&'static Children>,
+);
+
+/// While a drag carries the piece in hand (`Drag::carried`), it is held under the pointer in
+/// place of the pointer's hand (`hand::Held`), out of picking's way with its parts, so the space
+/// under it is what the pointer is over. Let go, it goes where the turn now has it: carried from
+/// under the pointer to where it was put (`hand::Carry::Put`), or back over its space.
+fn hold_dragged(
+    mut commands: Commands,
+    drag: Res<Drag>,
+    kits: Query<&Kit, With<BoardRoot>>,
+    pieces: Query<DraggedPiece>,
+    parts: Query<(), With<Pickable>>,
+) {
+    let Ok(kit) = kits.single() else {
+        return;
+    };
+    let carried = drag.carried();
+    for (entity, at, spot, carry, held, children) in &pieces {
+        let in_hand = matches!(carry, Some(Carry::Held { .. } | Carry::Over { .. }));
+        let wanted = in_hand && carried == Some(spot.0.as_str());
+        if wanted == held {
+            continue;
+        }
+        let pick = if wanted {
+            let kind = kit.piece(&at.piece.piece);
+            commands.entity(entity).insert(Held {
+                board: kit.surface,
+                lift: (LIFT - kind.foot) * kit.scale,
+                scale: kit.scale,
+            });
+            Pickable::IGNORE
+        } else {
+            commands.entity(entity).remove::<Held>();
+            Pickable::default()
+        };
+        commands.entity(entity).insert(pick);
+        for part in children.into_iter().flatten() {
+            if parts.contains(*part) {
+                commands.entity(*part).try_insert(pick);
+            }
         }
     }
 }
@@ -4975,6 +5038,7 @@ mod tests {
                 ],
                 captures: Vec::new(),
                 converts_to: Default::default(),
+                path: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5144,6 +5208,7 @@ wood = "contrast"
                 ],
                 captures: Vec::new(),
                 converts_to: Default::default(),
+                path: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5289,6 +5354,7 @@ wood = "contrast"
                     gestures,
                     captures: takes.iter().map(|c| c.to_string()).collect(),
                     converts_to: Default::default(),
+                    path: Vec::new(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -5444,6 +5510,7 @@ wood = "contrast"
                     // As the server says it (API 1.10): a pin takes the piece it aims at.
                     captures: aim.map(|a| vec![a.into()]).unwrap_or_default(),
                     converts_to: Default::default(),
+                    path: Vec::new(),
                 }
             };
             let answer = |options: Vec<LegalSelection>| Selections {
@@ -5524,6 +5591,174 @@ wood = "contrast"
         }
 
         #[test]
+        fn a_dragged_piece_is_held_under_the_pointer_and_carried_from_there_where_it_is_let_go() {
+            use crate::drag::{Drag, Press};
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use bevy::picking::pointer::PointerId;
+
+            let mut app = app();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ));
+            let cells: &[(&str, &[(&str, &str)])] = &[("a1", &[("stone", "white")])];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("g", cells));
+            app.update();
+            let step = |to: &str| LegalSelection {
+                notation: format!("a1-{to}"),
+                action: "step".into(),
+                from: Some("a1".into()),
+                to: Some(to.into()),
+                gestures: vec![Gesture::pos("a1"), Gesture::pos(to)],
+                ..Default::default()
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options: vec![step("a2"), step("b2")],
+                complete: false,
+                may_end: false,
+                state: None,
+            });
+            turn.gesture(&Gesture::pos("a1"));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let piece = |app: &mut App| {
+                let mut q =
+                    app.world_mut()
+                        .query::<(&PieceAt, Option<&Carry>, Has<Held>, &Pickable, &Transform)>();
+                let (_, carry, held, pick, t) = q.single(app.world()).unwrap();
+                (carry.copied(), held, *pick, *t)
+            };
+            let (carry, held, pick, _) = piece(&mut app);
+            assert!(
+                matches!(carry, Some(Carry::Held { .. })),
+                "lifted by a click"
+            );
+            assert!(!held && pick == Pickable::default());
+
+            // Dragged: under the pointer, out of picking's way.
+            app.world_mut().resource_mut::<Drag>().0 = Some(Press {
+                pointer: PointerId::Mouse,
+                spot: "a1".into(),
+                before: None,
+                left: true,
+                carrying: true,
+            });
+            let under = Vec3::new(0.01, SURFACE, 0.02);
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((under, under + Vec3::Y));
+            for _ in 0..30 {
+                app.update();
+            }
+            let (_, held, pick, t) = piece(&mut app);
+            assert!(held && pick == Pickable::IGNORE);
+            assert!(t.translation.xz().distance(under.xz()) < 1e-3, "{t:?}");
+
+            // Let go on b2: the click there, and carried from under the pointer.
+            app.world_mut().resource_mut::<Drag>().0 = None;
+            app.world_mut()
+                .resource_mut::<WatchStatus>()
+                .turn
+                .as_mut()
+                .unwrap()
+                .gesture(&Gesture::pos("b2"));
+            app.update();
+            let (carry, held, pick, _) = piece(&mut app);
+            assert!(matches!(carry, Some(Carry::Put(_))));
+            assert!(!held && pick == Pickable::default());
+            let mut q = app.world_mut().query::<&crate::hand::Travel>();
+            let trip = q.single(app.world()).unwrap();
+            assert!(
+                trip.from.translation.xz().distance(under.xz()) < 1e-3,
+                "from where it was held: {trip:?}"
+            );
+        }
+
+        #[test]
+        fn a_jumper_stands_on_its_landing_and_hovers_there_once_it_may_jump_on() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+
+            let mut app = app();
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("stone", "white")]),
+                ("b2", &[("stone", "black")]),
+                ("c2", &[("stone", "black")]),
+            ];
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("g", cells));
+            app.update();
+            let act = |v: &str| Gesture {
+                kind: "action".into(),
+                value: v.into(),
+            };
+            // Each jump's piece captured or spared (the first leg's either way).
+            let jump = |legs: &[(&str, &str)]| {
+                let mut gestures = vec![Gesture::pos("a1")];
+                for (land, choice) in legs {
+                    gestures.extend([Gesture::pos(land), act(choice)]);
+                }
+                gestures.push(act("end"));
+                LegalSelection {
+                    notation: "jump".into(),
+                    action: "jump".into(),
+                    from: Some("a1".into()),
+                    to: legs.last().map(|(l, _)| l.to_string()),
+                    path: legs.iter().map(|(l, _)| l.to_string()).collect(),
+                    gestures,
+                    ..Default::default()
+                }
+            };
+            let mut turn = Turn::new(1);
+            turn.answered(Selections {
+                seat: 1,
+                ply: 3,
+                made: vec![],
+                options: vec![
+                    jump(&[("c3", "capture")]),
+                    jump(&[("c3", "spare")]),
+                    jump(&[("c3", "capture"), ("c1", "capture")]),
+                ],
+                complete: false,
+                may_end: false,
+                state: None,
+            });
+            turn.gesture(&Gesture::pos("a1"));
+            turn.gesture(&Gesture::pos("c3"));
+            app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            let jumper = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&PieceAt, Option<&Carry>, &Spot)>();
+                q.iter(app.world())
+                    .find(|(at, ..)| at.cell == "a1")
+                    .map(|(_, carry, spot)| (carry.copied(), spot.0.clone()))
+                    .unwrap()
+            };
+            let layout = Layout::new(&grid_table("g", cells).info.board.positions);
+            // Landed: it stands on c3 while what happens to the piece jumped is asked.
+            let (carry, spot) = jumper(&mut app);
+            let Some(Carry::Put(put)) = carry else {
+                panic!("not standing on its landing: {carry:?}");
+            };
+            assert_eq!(put.translation.xz(), layout.centres["c3"].xz());
+            assert_eq!(spot, "c3");
+            // Captured: it may jump on, so it hovers over c3, a press there its own.
+            app.world_mut()
+                .resource_mut::<WatchStatus>()
+                .turn
+                .as_mut()
+                .unwrap()
+                .gesture(&act("capture"));
+            app.update();
+            let (carry, spot) = jumper(&mut app);
+            let Some(Carry::Over { at, .. }) = carry else {
+                panic!("not lifted over c3: {carry:?}");
+            };
+            assert_eq!(at.translation.xz(), layout.centres["c3"].xz());
+            assert!(at.translation.y > put.translation.y);
+            assert_eq!(spot, "c3");
+        }
+
+        #[test]
         fn a_piece_picked_up_is_held_then_put_where_it_goes_and_its_arrow_shown_where_it_lands() {
             use crate::net::api::{Gesture, LegalSelection, Selections};
             use crate::play::Turn;
@@ -5546,6 +5781,7 @@ wood = "contrast"
                 gestures: vec![Gesture::pos("a1"), Gesture::pos(to), Gesture::pos(aim)],
                 captures: Vec::new(),
                 converts_to: Default::default(),
+                path: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {
@@ -5962,6 +6198,7 @@ wood = "contrast"
                     .collect(),
                 captures: Vec::new(),
                 converts_to: Default::default(),
+                path: Vec::new(),
             }
         }
 
@@ -6880,6 +7117,7 @@ wood = "contrast"
                 ],
                 captures: Vec::new(),
                 converts_to: Default::default(),
+                path: Vec::new(),
             };
             let mut turn = Turn::new(1);
             turn.answered(Selections {

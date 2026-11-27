@@ -1853,6 +1853,7 @@ pub(crate) mod tests {
             ],
             captures: Vec::new(),
             converts_to: Default::default(),
+            path: Vec::new(),
         }
     }
 

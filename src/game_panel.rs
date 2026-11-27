@@ -583,12 +583,19 @@ fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
         Stage::Choosing if turn.ending_choice().is_some() => {
             if turn.targets().is_empty() {
                 "Play (Enter) ends the move.".into()
+            } else if turn.held_at().is_some() {
+                "Click or drag it where it goes on, or Play (Enter) to end the move.".into()
             } else {
                 "Click where to go on, or Play (Enter) to end the move.".into()
             }
         }
         Stage::Choosing if turn.can_play() => {
             format!("Play {} as it is (Enter), or go on.", turn.notation())
+        }
+        // A piece in hand, or pieces to pick up: a click or a drag moves them (`drag.rs`).
+        Stage::Choosing if turn.held_at().is_some() => "Click or drag it where it goes.".into(),
+        Stage::Choosing if turn.unclicked_from().is_some() || !turn.moves_only().is_empty() => {
+            "Click or drag a piece to move it.".into()
         }
         Stage::Choosing if !turn.targets().is_empty() => "Click where to play.".into(),
         Stage::Choosing if !buttons.is_empty() => "Choose below.".into(),
@@ -681,6 +688,7 @@ mod tests {
             ],
             captures: Vec::new(),
             converts_to: Default::default(),
+            path: Vec::new(),
         };
         let mut turn = Turn::new(1);
         let asking = hint(&turn, Some("Choose a Court."), &[]);
@@ -709,6 +717,31 @@ mod tests {
         // for the position, not for the half-made move.
         turn.gesture(&Gesture::pos("b3"));
         assert_eq!(hint(&turn, said, &[]), "Choose below.");
+    }
+
+    #[test]
+    fn the_player_is_told_a_piece_may_be_clicked_or_dragged() {
+        let step = |from: &str, to: &str| LegalSelection {
+            notation: format!("{from}-{to}"),
+            action: "step".into(),
+            from: Some(from.into()),
+            to: Some(to.into()),
+            gestures: vec![Gesture::pos(from), Gesture::pos(to)],
+            ..Default::default()
+        };
+        let mut turn = Turn::new(1);
+        turn.answered(Selections {
+            seat: 1,
+            ply: 0,
+            made: vec![],
+            options: vec![step("a1", "a2"), step("a1", "a3")],
+            complete: false,
+            may_end: false,
+            state: None,
+        });
+        assert_eq!(hint(&turn, None, &[]), "Click or drag a piece to move it.");
+        turn.gesture(&Gesture::pos("a1"));
+        assert_eq!(hint(&turn, None, &[]), "Click or drag it where it goes.");
     }
 
     #[test]

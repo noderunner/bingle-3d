@@ -25,6 +25,7 @@ use bevy::prelude::*;
 
 use crate::camera::{PIXELS_PER_LINE, PointerOverUi, WheelTaken};
 use crate::cursor::{Feel, Sense, TableFeel, Under};
+use crate::drag::{self, Drag};
 use crate::escape_menu::{self, EscapeMenu};
 use crate::net::api::{Gesture, LegalSelection, Position, Selections};
 use crate::net::session::Problem;
@@ -35,6 +36,7 @@ pub struct PlayPlugin;
 impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovering>()
+            .init_resource::<Drag>()
             .init_resource::<WheelTaken>()
             .init_resource::<Under>()
             .init_resource::<TableFeel>()
@@ -236,8 +238,17 @@ impl Turn {
                 })
             })
             .collect();
+        out.extend(self.entering());
+        out
+    }
+
+    /// The piece the gestures towards the next selection have picked up, once every selection
+    /// they could still become moves it from where it was clicked: put where every one of them
+    /// puts it, once that has been clicked, or else where it stands part-way through a chain
+    /// (`stands_at`).
+    fn entering(&self) -> Option<Carried<'_>> {
         if self.stage != Stage::Choosing || StackMove::of(&self.gestures).is_some() {
-            return out;
+            return None;
         }
         let clicked = |at: &str| self.gestures.contains(&Gesture::pos(at));
         let agreed = |of: fn(&LegalSelection) -> Option<&String>| {
@@ -247,13 +258,113 @@ impl Turn {
                 .then_some(first.as_str())
                 .filter(|at| clicked(at))
         };
-        if let Some(from) = agreed(|s| s.from.as_ref()) {
-            out.push(Carried {
-                from,
-                to: agreed(|s| s.to.as_ref()),
-            });
+        let from = agreed(|s| s.from.as_ref())?;
+        Some(Carried {
+            from,
+            to: agreed(|s| s.to.as_ref()).or_else(|| self.stands_at()),
+        })
+    }
+
+    /// The landings the player has clicked so far of the piece the selection being entered
+    /// moves, in order, as far as every selection it could still become agrees on them: each
+    /// lists where its piece lands in its `path` (a chain of jumps: c3, then e5). Empty before
+    /// the first landing is clicked, and where the selections have no path. It reads no rules,
+    /// only the positions the server lists.
+    pub fn legs(&self) -> Vec<&str> {
+        if self.stage != Stage::Choosing {
+            return Vec::new();
         }
-        out
+        let mut matching = self.matching();
+        let Some(first) = matching.next() else {
+            return Vec::new();
+        };
+        let mut common: &[String] = &first.path;
+        for o in matching {
+            let same = common
+                .iter()
+                .zip(&o.path)
+                .take_while(|(a, b)| a == b)
+                .count();
+            common = &common[..same];
+        }
+        // Clicked in order: the piece's own position comes first, then each landing.
+        let mut clicked = 0;
+        for g in self.gestures.iter().filter(|g| g.is_pos()) {
+            if common.get(clicked) == Some(&g.value) {
+                clicked += 1;
+            }
+        }
+        common[..clicked].iter().map(String::as_str).collect()
+    }
+
+    /// Where the piece the selection being entered moves stands part-way through a chain: the
+    /// last of its [`Turn::legs`]. A piece dropped or clicked on its first landing stands
+    /// there, whether the chain may go on from there or end.
+    pub fn stands_at(&self) -> Option<&str> {
+        self.legs().last().copied()
+    }
+
+    /// Where the piece in hand on the board is, lifted over its space, while there is one: the
+    /// piece every click moves, picked up (`lifted`); a piece picked up by a click on it and
+    /// not yet put anywhere; or a piece part-way through a chain, over where it stands
+    /// (`stands_at`), while its next landing may be clicked. Never while only a choice that is
+    /// not a click may follow (what happens to the piece jumped): the piece then stands where
+    /// it landed. What a press there may drag on (`grabs`).
+    pub fn held_at(&self) -> Option<&str> {
+        if let Some(at) = self.lifted() {
+            return Some(at);
+        }
+        let entering = self.entering()?;
+        let Some(to) = entering.to else {
+            return Some(entering.from);
+        };
+        let legs = self.legs();
+        if legs.last() != Some(&to) {
+            return None;
+        }
+        let n = self.gestures.len();
+        self.matching()
+            .any(|o| {
+                o.gestures
+                    .get(n)
+                    .is_some_and(|g| g.is_pos() && o.path.get(legs.len()) == Some(&g.value))
+            })
+            .then_some(to)
+    }
+
+    /// Whether a press on `at` may carry a piece from there under the pointer, a drag: the
+    /// piece in hand stands there (`held_at`), or a click there would pick one up so (another
+    /// piece in place of the one in hand, too). What a click does decides it, by the same code.
+    pub fn grabs(&self, at: &str) -> bool {
+        if self.stage != Stage::Choosing {
+            return false;
+        }
+        if self.held_at() == Some(at) {
+            return true;
+        }
+        let mut clicked = self.clone();
+        clicked.gesture(&Gesture::pos(at)) == Outcome::Changed && clicked.held_at() == Some(at)
+    }
+
+    /// Whether a click on `cell` moves the piece in hand (`held_at`) there, so a drag may let
+    /// it go there: a selection the click could become puts the piece there (its `to`, or one
+    /// of its `path`'s landings), not only what it aims at (an arrow shot, a piece pinned).
+    /// `occupied`: something stands on `cell`, which the piece every click moves (Courtfall's
+    /// unit, `unclicked_from`) acts on (a strike, a shove) without going there.
+    pub fn carries_to(&self, cell: &str, occupied: bool) -> bool {
+        if self.held_at().is_none()
+            || (occupied && self.unclicked_from().is_some())
+            || !self.targets().contains(cell)
+        {
+            return false;
+        }
+        let n = self.gestures.len();
+        let click = Gesture::pos(cell);
+        self.matching().any(|o| {
+            o.gestures[n..].iter().find(|g| g.is_pos()) == Some(&click)
+                && o.aim.as_deref() != Some(cell)
+                && (o.to.as_deref() == Some(cell) || o.path.iter().any(|p| p == cell))
+        })
     }
 
     /// The stacks the move being built moves: each selection made that moves one, and the one
@@ -1431,28 +1542,54 @@ pub fn follow(net: &Net, watch: &mut ResMut<WatchStatus>, outcome: Outcome) {
 // These take the resource itself, so that one that changes nothing (a click on a cell that is
 // not lit, a key with no move shown) does not rebuild the panel and the board.
 
-/// A gesture, from the board or the panel.
-pub fn gesture(net: &Net, watch: &mut ResMut<WatchStatus>, gesture: &Gesture) {
+/// A gesture, from the board or the panel. What it did.
+pub fn gesture(net: &Net, watch: &mut ResMut<WatchStatus>, gesture: &Gesture) -> Outcome {
     let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
-        return;
+        return Outcome::Ignored;
     };
     let outcome = turn.gesture(gesture);
     if outcome != Outcome::Ignored {
         watch.set_changed();
     }
     follow(net, watch, outcome);
+    outcome
 }
 
-/// A whole selection's gestures at once (`Turn::enter_all`).
-pub fn enter_all(net: &Net, watch: &mut ResMut<WatchStatus>, gestures: &[Gesture]) {
+/// A whole selection's gestures at once (`Turn::enter_all`). What it did.
+pub fn enter_all(net: &Net, watch: &mut ResMut<WatchStatus>, gestures: &[Gesture]) -> Outcome {
     let Some(turn) = watch.bypass_change_detection().turn.as_mut() else {
-        return;
+        return Outcome::Ignored;
     };
     let outcome = turn.enter_all(gestures);
     if outcome != Outcome::Ignored {
         watch.set_changed();
     }
     follow(net, watch, outcome);
+    outcome
+}
+
+/// What a click on the space `at` of the board does (on its cell, or on a piece standing
+/// there), whether the click is a press and a release there or a drag let go there
+/// (`drag.rs`): the line pointed at is chosen whole, by all its clicks; with something taken
+/// up, it is put where it is aimed; else the click on the position. What it did.
+pub fn click_at(
+    net: &Net,
+    watch: &mut ResMut<WatchStatus>,
+    (aim, line): (&SideAim, &LineAim),
+    at: &str,
+) -> Outcome {
+    if let Some(chosen) = &line.0
+        && chosen.captures.iter().any(|c| c == at)
+    {
+        let n = watch.turn.as_ref().map_or(0, |t| t.gestures.len());
+        let clicks = chosen.gestures.get(n..).unwrap_or_default().to_vec();
+        return enter_all(net, watch, &clicks);
+    }
+    let taken = watch.turn.as_ref().is_some_and(|t| t.taken().is_some());
+    match (&aim.choice, taken) {
+        (Some(choice), true) => gesture(net, watch, &choice.clone()),
+        _ => gesture(net, watch, &Gesture::pos(at)),
+    }
 }
 
 /// The player confirms the move.
@@ -1488,38 +1625,23 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
     }
 }
 
+/// A click on what lies beside the board: a bowl's or a supply's choice, what a click takes
+/// up. A click on the board's own spaces is a press and a release there, which `drag.rs` reads
+/// (`click_at`), so that a drag and a click are told apart in one place.
 fn on_click(
     click: On<PointerClick>,
-    (spots, choices, takes, places): (
-        Query<&Spot>,
-        Query<&Choice>,
-        Query<&TakeUp>,
-        Query<&TakeToPlace>,
-    ),
-    (net, aim, line): (Res<Net>, Res<SideAim>, Res<LineAim>),
+    spots: Query<(), With<Spot>>,
+    (choices, takes, places): (Query<&Choice>, Query<&TakeUp>, Query<&TakeToPlace>),
+    net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
 ) {
-    if click.button != PointerButton::Primary {
+    // Clicks bubble up to the board; only the cell or piece itself is a position, and its
+    // click is the press's (`drag.rs`). A bowl's choice is the bowl's, whether the bowl or the
+    // stones in it were clicked.
+    if click.button != PointerButton::Primary || spots.contains(click.entity) {
         return;
     }
-    // Clicks bubble up to the board; only the cell or piece itself is a position. A bowl's
-    // choice is the bowl's, whether the bowl or the stones in it were clicked.
-    if let Ok(spot) = spots.get(click.entity)
-        && let Some(chosen) = &line.0
-        && chosen.captures.contains(&spot.0)
-    {
-        // A line pointed at is chosen whole, by all its clicks.
-        let n = watch.turn.as_ref().map_or(0, |t| t.gestures.len());
-        let clicks = chosen.gestures.get(n..).unwrap_or_default().to_vec();
-        enter_all(&net, &mut watch, &clicks);
-    } else if let Ok(spot) = spots.get(click.entity) {
-        // With something taken up, a click on the board puts it where it is aimed.
-        let taken = watch.turn.as_ref().is_some_and(|t| t.taken().is_some());
-        match (&aim.choice, taken) {
-            (Some(choice), true) => gesture(&net, &mut watch, &choice.clone()),
-            _ => gesture(&net, &mut watch, &Gesture::pos(&spot.0)),
-        }
-    } else if let Ok(choice) = choices.get(click.entity) {
+    if let Ok(choice) = choices.get(click.entity) {
         gesture(&net, &mut watch, &choice.0);
     } else if let Ok(take) = takes.get(click.entity)
         && let Some(turn) = watch.bypass_change_detection().turn.as_mut()
@@ -1566,7 +1688,8 @@ pub fn feel(turn: Option<&Turn>, what: Clickable, aimed: bool) -> Feel {
                 Feel::Open
             }
         }
-        Clickable::Spot(at) if turn.picks_up(at) => Feel::Grab,
+        // What a click picks up, or what is in hand there, which a press may drag on.
+        Clickable::Spot(at) if turn.picks_up(at) || turn.held_at() == Some(at) => Feel::Grab,
         Clickable::Spot(at) if turn.targets().contains(at) => Feel::Point,
         Clickable::Spot(_) => Feel::Open,
         Clickable::Choice(g) => takes(turn.clone().gesture(g)),
@@ -1625,15 +1748,23 @@ fn on_out(out: On<PointerOut>, spots: Query<&Spot>, mut hovering: ResMut<Hoverin
 }
 
 /// Enter plays the move shown; Backspace goes back (Esc is the escape menu's). Not while a text
-/// field has the keyboard, nor while the escape menu is open.
+/// field has the keyboard, nor while the escape menu is open. While the button is down after a
+/// press on the board, Enter waits, and Backspace lets the press go (`drag::cancel`): what a
+/// drag carries goes back as it was.
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     focus: Option<Res<InputFocus>>,
     menu: Option<Res<EscapeMenu>>,
     net: Res<Net>,
-    mut watch: ResMut<WatchStatus>,
+    (mut watch, mut drag): (ResMut<WatchStatus>, ResMut<Drag>),
 ) {
     if focus.is_some_and(|f| f.get().is_some()) || !escape_menu::closed(menu.as_deref()) {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Backspace) && drag::cancel(&mut drag, &mut watch) {
+        return;
+    }
+    if drag.pressed() {
         return;
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]) {
@@ -1649,15 +1780,16 @@ fn keys(
 const CLICK_SLOP: f32 = 6.0;
 
 /// A right-click over the table goes back, as Backspace does; not over a panel, nor while the
-/// escape menu is open. `pressed` is how far the pointer has moved since the button went down
-/// over the table.
+/// escape menu is open. While the primary button is down after a press on the board, it lets
+/// the press go instead (`drag::cancel`). `pressed` is how far the pointer has moved since the
+/// button went down over the table.
 fn right_click(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     pointer: PointerOverUi,
     menu: Option<Res<EscapeMenu>>,
     mut pressed: Local<Option<f32>>,
-    mut watch: ResMut<WatchStatus>,
+    (mut watch, mut drag): (ResMut<WatchStatus>, ResMut<Drag>),
 ) {
     if buttons.just_pressed(MouseButton::Right) {
         *pressed = (!pointer.is_over_ui() && escape_menu::closed(menu.as_deref())).then_some(0.0);
@@ -1668,6 +1800,7 @@ fn right_click(
     if buttons.just_released(MouseButton::Right)
         && let Some(moved) = pressed.take()
         && moved < CLICK_SLOP
+        && !drag::cancel(&mut drag, &mut watch)
     {
         back(&mut watch);
     }
@@ -1772,6 +1905,7 @@ mod tests {
             gestures: gestures.iter().map(|(k, v)| g(k, v)).collect(),
             captures: Vec::new(),
             converts_to: Default::default(),
+            path: Vec::new(),
         }
     }
 
@@ -3032,6 +3166,7 @@ mod tests {
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<HoverMap>()
             .init_resource::<WatchStatus>()
+            .init_resource::<Drag>()
             .add_systems(Update, right_click);
         let mut t = Turn::new(1);
         t.answered(answer(4, vec![step("a1", "a2"), step("a1", "b2")]));
