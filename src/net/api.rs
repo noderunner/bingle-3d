@@ -1046,6 +1046,10 @@ pub struct LegalSelection {
     /// turns to (API 1.20): absent as `captures` are.
     #[serde(default, deserialize_with = "null_as_default")]
     pub converts_to: BTreeMap<String, String>,
+    /// The positions a piece it moves lands on, in order, where it lands on more than one
+    /// (a chain of jumps; a stack's drops): absent otherwise.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub path: Vec<String>,
 }
 
 /// One thing a player does to enter a selection: a click on a position (`pos`), a choice of
@@ -2328,7 +2332,7 @@ mod tests {
              "gestures":[{"kind":"piece","value":"stone"},{"kind":"pos","value":"a1"}]},
             {"notation":"swap","action":"swap","gestures":[{"kind":"action","value":"swap"}]},
             {"notation":"c3^e5x","action":"jump","from":"c3","to":"e5","captures":["d4"],
-             "gestures":[{"kind":"pos","value":"c3"},{"kind":"pos","value":"e5"}]},
+             "path":["e5"],"gestures":[{"kind":"pos","value":"c3"},{"kind":"pos","value":"e5"}]},
             {"notation":"d3","action":"place","to":"d3","converts":["d4"],"converts_to":{"d4":"black"},
              "gestures":[{"kind":"pos","value":"d3"}]}],
             "complete":false}"#,
@@ -2338,6 +2342,11 @@ mod tests {
         assert_eq!(s.options[0].to.as_deref(), Some("a1"));
         assert!(s.options[0].captures.is_empty(), "absent: it takes nothing");
         assert_eq!(s.options[2].captures, ["d4"]);
+        assert_eq!(s.options[2].path, ["e5"], "where it lands");
+        assert!(
+            s.options[0].path.is_empty(),
+            "absent: it lands nowhere on the way"
+        );
         assert!(
             s.options[2].converts_to.is_empty(),
             "absent: it turns nothing over"

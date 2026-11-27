@@ -378,9 +378,9 @@ fn hold(
     edge: Res<BoardEdge>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>,
-    mut held: Query<(&Held, &mut Transform, &mut Visibility)>,
+    mut held: Query<(&Held, &mut Transform, Option<&mut Visibility>)>,
 ) {
-    for (held, mut t, mut vis) in &mut held {
+    for (held, mut t, vis) in &mut held {
         let at = match on.0 {
             Some((hit, eye)) => Some(on_surface(hit, eye, held.board)),
             // Off the board (over a panel, say): over the board's edge where the pointer is
@@ -407,14 +407,16 @@ fn hold(
         };
         let up = held.lift + bob(time.elapsed_secs()) * held.scale;
         let wanted = at + Vec3::Y * up;
-        if *vis == Visibility::Hidden {
+        if vis.as_deref() == Some(&Visibility::Hidden) {
             // Where the pointer comes onto the board, not sliding in from where it left.
             t.translation = wanted;
         } else {
             let k = approach(time.delta_secs()) * 2.0;
             t.translation = t.translation.lerp(wanted, k.min(1.0));
         }
-        vis.set_if_neq(Visibility::Inherited);
+        if let Some(mut vis) = vis {
+            vis.set_if_neq(Visibility::Inherited);
+        }
     }
 }
 

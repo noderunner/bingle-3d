@@ -478,7 +478,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   stone under the pointer still shows where a click would play. **Anything in hand is lifted
   over where it came from and bobs there, and the pointer stays a hand; a see-through copy
   shows where a click would put it. Something follows the pointer only while the button is
-  held down on it** (a drag, not built yet), in every game alike (2026-11-27, #97). Once a
+  held down on it** (a drag), in every game alike (2026-11-27, #97). Once a
   piece is picked up, the places it may go are lit whatever the setting, as a chess program
   shows them; it is lifted and bobs over its own space, and a click on it again puts it down. A click on where it goes carries it there: across the board at the
   height it was held, then lowered onto it (a third of a second in all), and it stands there
@@ -499,7 +499,33 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   position the confirming click leaves, a pin once chosen, and each piece a jump captures once
   the player says so rather than sparing it. Before the click, the copy under the pointer
   stands over the piece a click would take, which stays drawn: hiding what is under the
-  pointer would move what it is over. Both come from what each legal selection captures,
+  pointer would move what it is over.
+- **A piece on the board may also be dragged** (2026-11-27, #98; `drag.rs`): pressed, carried
+  under the pointer while the button is held down, and let go where it goes. Clicking still
+  works as it did, and nothing chooses between the two. A press becomes a drag only when the
+  pointer leaves the pressed piece's own space with the button down, with no count of pixels,
+  so a headset's ray drags as the mouse does; the piece is then picked up, if a click had not
+  done it, and held under the pointer (`hand::Held`, the pointer's hand hidden), its targets
+  lit. Let go over a space it goes to, it is the click there, by the same code
+  (`play::click_at`): the same see-through preview and the same confirming click, Enter or
+  *Play* (a game that plays on a click plays on the drop); it is carried from under the
+  pointer to where it is put. A drop does not play the move (the maintainer, #98). A target
+  the piece does not travel to stays a click: Fist's pin and Amazons' arrow are aimed at, and
+  a lifted unit (Courtfall's) acts on the piece where it strikes or shoves (`Turn::carries_to`).
+  Let go on its own space, the piece stays lifted there; anywhere else (a space it may not go
+  to, off the board, over a panel), or a right-click, Backspace or the escape menu while it is
+  carried, and the turn is as it was before the press. A press and release that never leaves
+  the space is the click it always was, a lifted piece put down included, and a piece lifted
+  by a click is dragged on from where it hovers. The hints say a piece may be clicked or
+  dragged. Dragging from the bowls, the supply and the stock, and a Tak stack, follows (#99),
+  then a patience's cards (#100).
+- **A piece part-way through a chain** (Fist's jumps) stands where it landed: on the last of
+  the landings every selection still possible agrees on and the player has clicked, read from
+  each selection's `path` (`Turn::legs`, `Turn::stands_at`), so a piece dropped or clicked on
+  its first landing stays there; before, it stayed lifted over where it started until the
+  chain was whole. It is never in hand while a choice on the panel is waited for (what happens
+  to the piece jumped); once another landing may follow, it hovers where it stands and may be
+  clicked on or dragged from there (`Turn::held_at`). `path` is API 1.20's already. Both come from what each legal selection captures,
   which the server says from API 1.10 (bingle#269; `Turn::takes_at`, `Turn::taking`), so the
   client reads no game's rules for them; it needs a server of 1.10 or newer (1.14 since Alice
   chess's boards were drawn apart: below). A region the
@@ -906,8 +932,8 @@ that declares a patience plays the same way.
 - Cards go where the position puts them by the hand's own carrying, one after another (a row
   dealt, a run off the table, *Finish*), over the piles and down; a card that was face down
   where it came from (drawn, turned up in its column, dealt) turns over on the way.
-- Not built: dragging (the server's own words mention it; a press, move and release could
-  make the same two gestures); the suit's mark on an empty foundation; lighting the cards that
+- Not built: dragging cards (the server's own words mention it; a press, move and release
+  make the same two gestures, as a piece on the board's do: #100); the suit's mark on an empty foundation; lighting the cards that
   move (L lights a board's legal moves, not a patience's); the web page's flight home and
   celebration when a game is won; a themed card set (ADR 0085); a headset's ray pointer is not
   tried. (Bowling Solitaire, below.)

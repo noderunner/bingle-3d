@@ -20,6 +20,7 @@ mod coordinates;
 mod cursor;
 mod display;
 mod downloads;
+mod drag;
 mod environment;
 mod environment_choice;
 mod escape_menu;
@@ -245,7 +246,7 @@ fn main() -> AppExit {
                 on: !opts.no_audio_devices,
             },
             escape_menu::EscapeMenuPlugin,
-            play::PlayPlugin,
+            (play::PlayPlugin, drag::DragPlugin),
             game_panel::GamePanelPlugin {
                 on_start: opts.watch.clone().map(|w| match w {
                     cli::Watch::Room(code) => net::Target::Room(code),

@@ -380,7 +380,8 @@ A game's own rules and its players' words keep their terms.
   shown see-through where it would land. `src/hand.rs` moves them every frame (a piece held
   bobs; one put down goes across, then is lowered: `travel`); `hand::Held`, something under the
   pointer in place of the pointer's hand, waiting over the board's edge where the pointer is
-  beyond it (`hand::within`, `BoardEdge`), is kept for what a drag holds. Where every click
+  beyond it (`hand::within`, `BoardEdge`), is what a drag holds (`board::hold_dragged`: the
+  piece in hand, out of picking's way while it is held). Where every click
   places one stone (Go, Hex, Othello: `Turn::auto_hand`), the stone waits over its bowl by
   itself and is carried from there to where it is placed; with no bowl, nothing is held. The pointer's place is read
   from a board's `Spot`s and from anything marked `hand::Surface` (a card, the cloth).
@@ -473,10 +474,22 @@ A game's own rules and its players' words keep their terms.
   ends): the one through the piece under the pointer whose middle is nearest it is aimed at
   (`nearest_line`, `LineAim`, set by `board::line_aim`), its pieces lit, and a click there
   makes all its clicks at once); its systems turn clicks on a `Spot` (a board cell or a
-  piece on it), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
+  piece on it, a press and a release that `drag.rs` reads), keys, the wheel (`Turn::wheel`: how many of a stack are carried, or another
   kind of piece of the same pool in hand; the camera leaves it alone then, `camera::WheelTaken`)
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
+- `src/drag.rs`: a piece on the board dragged: pressed, carried under the pointer while the
+  button is down, let go where it goes. **The one place that knows a drag is under way**
+  (`Drag`: the press, the turn as it was before it, whether the pointer has left the space
+  pressed, what is carried). Every click on the board's spaces is a press and a release here
+  too, made by `play::click_at`, the one function for what a click there does; `on_click` in
+  `play.rs` keeps what lies beside the board. A press becomes a drag when the pointer leaves
+  the space pressed (`Turn::grabs`: what a press there may carry); let go over a space the
+  piece goes to (`Turn::carries_to`) it is the click there, on its own space it stays lifted,
+  anywhere else (or a right-click, Backspace, the escape menu: `cancel`) the turn is as it was.
+  Bevy's `PointerPress` and the pointer's own `PointerInput`, so a headset's ray drags as the
+  mouse does. Where a piece stands part-way through a chain is `Turn::legs` and
+  `Turn::stands_at` (each selection's `path`), the piece in hand on the board `Turn::held_at`.
 - `src/coordinates.rs`: the board's coordinates along its edges (each board's own, for a game
   on several), toggled with C, from position names that are letters then a number
   (`edge_labels`, no Bevy); none for any other naming.

@@ -1240,7 +1240,9 @@ fn on_activate(
             screen.family = None;
             to_top();
         }
-        Action::Choose(g) => play::gesture(&net, &mut watching, g),
+        Action::Choose(g) => {
+            play::gesture(&net, &mut watching, g);
+        }
         Action::Submit => play::submit(&net, &mut watching),
         Action::Undo => play::back(&mut watching),
         Action::AskAgain => play::ask_again(&net, &mut watching),
