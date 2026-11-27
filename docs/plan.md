@@ -471,10 +471,14 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
   nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
   aimed at where it stands), and it was drawn as the generic stone. A target a click takes a
-  piece on (a pin's) glows red instead of in candlelight (`highlight::Tone`), and what the move
-  being built takes is see-through until the move is played (`board::show_taken`), so what the
-  confirming click captures is plain: a pin once chosen, and each piece a jump captures once
-  the player says so rather than sparing it. Both come from what each legal selection captures,
+  piece on (a pin's) glows red instead of in candlelight (`highlight::Tone`). What the move
+  being built is sure to take is not drawn until the move is played or taken back, and each
+  piece it moves is see-through where it lands, in its place when it takes the piece there,
+  whether it takes anything or not (`board::show_taken`, #76; 2026-11-27): the board shows the
+  position the confirming click leaves, a pin once chosen, and each piece a jump captures once
+  the player says so rather than sparing it. Before the click, the copy under the pointer
+  stands over the piece a click would take, which stays drawn: hiding what is under the
+  pointer would move what it is over. Both come from what each legal selection captures,
   which the server says from API 1.10 (bingle#269; `Turn::takes_at`, `Turn::taking`), so the
   client reads no game's rules for them; it needs a server of 1.10 or newer (1.14 since Alice
   chess's boards were drawn apart: below). A region the
