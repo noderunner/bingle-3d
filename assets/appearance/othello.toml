@@ -1,10 +1,11 @@
-# How this client draws Reversi (Bingle's ADR 0124: the server says what things are, and each
+# How this client draws Othello (Bingle's ADR 0124: the server says what things are, and each
 # client decides how they look). Data only: nothing here changes the rules.
 #
 # Discs light on one side and dark on the other, as the game is played with: each seat's lie its
 # own side up, and one that changes hands is turned over where it lies (`sides.rs`).
 
-games = ["reversi"]
+# `reversi` is the id servers before Bingle 0.140.0 gave the game.
+games = ["othello", "reversi"]
 
 [pieces.disc]
 model = "models/disc_large.glb"

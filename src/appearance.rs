@@ -1474,12 +1474,17 @@ mod tests {
     #[test]
     fn a_piece_of_two_sides_names_its_models_parts_and_each_seats_side_up() {
         let all = Appearances::built_in();
-        let reversi = all.for_game("reversi").expect("Reversi has one");
-        assert!(reversi.problems().is_empty(), "{:?}", reversi.problems());
-        let disc = &reversi.pieces["disc"];
+        let othello = all.for_game("othello").expect("Othello has one");
+        assert!(othello.problems().is_empty(), "{:?}", othello.problems());
+        assert!(
+            all.for_game("reversi")
+                .is_some_and(|a| std::ptr::eq(a, othello)),
+            "and an older server's id for it finds the same"
+        );
+        let disc = &othello.pieces["disc"];
         assert_eq!(disc.up["black"], "dark");
         assert_eq!(disc.up["white"], "light");
-        assert!(reversi.bowls.is_none(), "no bowls of stones for discs");
+        assert!(othello.bowls.is_none(), "no bowls of stones for discs");
 
         let wrong = |piece: &str| {
             let text =
