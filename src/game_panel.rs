@@ -524,7 +524,7 @@ fn your_turn(
     if !hint.is_empty() {
         p.spawn(line(f.regular(14.0), colors::TEXT, &hint));
     }
-    let (choices, _) = on_panel(turn.choices(), &drawn);
+    let (choices, _) = on_panel(turn.panel_choices(), &drawn);
     let can_go_back = turn.can_go_back();
     if choices.is_empty() && !can_go_back && !turn.can_play() && turn.stage != Stage::Failed {
         return;
@@ -569,7 +569,7 @@ fn on_panel(choices: Vec<Gesture>, drawn: &[&str]) -> (Vec<Gesture>, bool) {
 /// that, or without it, how to go on from here. `drawn` is what the view says is chosen on the
 /// table rather than on the panel.
 fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
-    let (buttons, on_table) = on_panel(turn.choices(), drawn);
+    let (buttons, on_table) = on_panel(turn.panel_choices(), drawn);
     match turn.stage {
         Stage::Asking => String::new(),
         Stage::Choosing if turn.untouched() && !turn.can_play() && said.is_some() => {
@@ -580,6 +580,13 @@ fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
             "Click where it goes; a right-click puts it back.".into()
         }
         Stage::Choosing if on_table && buttons.is_empty() => "Click what to move.".into(),
+        Stage::Choosing if turn.ending_choice().is_some() => {
+            if turn.targets().is_empty() {
+                "Play (Enter) ends the move.".into()
+            } else {
+                "Click where to go on, or Play (Enter) to end the move.".into()
+            }
+        }
         Stage::Choosing if turn.can_play() => {
             format!("Play {} as it is (Enter), or go on.", turn.notation())
         }

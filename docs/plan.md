@@ -152,7 +152,14 @@ README, this plan, `.gitignore`.
   and a choice that is not a position (swapping sides) is a button. Each selection made asks the
   server what may follow (`made`, `ply`); the move that ends the impulse is shown as see-through
   pieces and waits for a second click, Enter or *Play*, and Backspace goes back (Esc did too, until
-  the escape menu took it). The move is
+  the escape menu took it). Where something has been chosen towards a selection (not at its
+  start, where the one choice may be a pass or a swap) and exactly one choice that is no click
+  on the board is offered, and making it completes the selection (`Turn::ending_choice`: the
+  end of a chain of jumps, a step that pins nothing), *Play* and Enter make that choice and send
+  the move once the server says it is whole (`Turn::end`), and the choice has no button; with
+  two or more such choices they stay buttons and *Play* waits. If the server does not say the
+  move is whole, nothing is sent. A game that plays on a click is unchanged, and the hints line
+  says *Play* ends the move where it does. The move is
   sent whole, by notation, with its `ply`; it arrives on the socket like everyone else's. A move
   refused because the game moved on reads the state again. API 1.1 still covers all of it.
 - Each seat's goal on the board: the client targets API 1.2 for the game definition's `goals`
