@@ -85,7 +85,12 @@ impl Plugin for BoardPlugin {
                             .or_eager(resource_changed::<ShowLegalMoves>)
                             .or_eager(resource_changed::<LineAim>),
                     ),
-                    show_taken.run_if(resource_changed::<WatchStatus>),
+                    show_taken.run_if(
+                        resource_changed::<WatchStatus>
+                            .or_eager(resource_changed::<Hovering>)
+                            .or_eager(resource_changed::<ShowLegalMoves>)
+                            .or_eager(resource_changed::<LineAim>),
+                    ),
                     bowl_stones.run_if(resource_changed::<WatchStatus>),
                     show_supply.run_if(resource_changed::<WatchStatus>),
                     show_fences.run_if(resource_changed::<WatchStatus>),
@@ -2988,6 +2993,16 @@ fn show_turn(
     // The position as the move being built leaves it, so what it puts down stands on what will be
     // there: each piece it moves taken off its space, and on where it is put.
     let mut after = cells.clone();
+    // What it is sure to take is off the board already, so a piece arriving where one is taken
+    // stands in its place, not on it (`show_taken`).
+    if let Some(t) = turn {
+        let froms: Vec<&str> = t.carried().iter().map(|c| c.from).collect();
+        for cell in t.taking() {
+            if !froms.contains(&cell) {
+                after.remove(cell);
+            }
+        }
+    }
     let mut carried: HashMap<(String, usize), (Carry, String)> = HashMap::new();
     // Which piece of the position stands where the move being built has put it (by its place in
     // the position), so one moved again in the same impulse (a unit's second action) is the
@@ -3369,53 +3384,84 @@ fn show_turn(
     }
 }
 
-/// A piece the move being built takes, shown see-through.
+/// A piece the move being built takes, not drawn until the move is played or taken back.
 #[derive(Component)]
 struct Taken;
 
-/// The pieces the move being built takes are see-through, so the player sees what the move
-/// they confirm captures; the others as they are.
+/// A piece the move being built puts where it lands, shown see-through there.
+#[derive(Component)]
+struct Arriving;
+
+/// A piece on the board as `show_taken` sees it: where it is, whether the move being built
+/// carries it, how it is drawn, and whether it is hidden as taken or see-through as arriving.
+type PreviewedPiece = (
+    Entity,
+    &'static PieceAt,
+    Option<&'static Carry>,
+    &'static mut MeshMaterial3d<StandardMaterial>,
+    Has<Taken>,
+    Has<Arriving>,
+);
+
+/// A piece hidden as taken that is no longer on the board (carried to a tray).
+type TakenOffBoard = (With<Taken>, Without<PieceAt>);
+
+/// While a move is being built, what it is sure to take is not drawn, and each piece it moves
+/// is see-through where it lands, whether it takes anything there or not: the player sees the
+/// position the move they confirm leaves. The others as they are.
 fn show_taken(
     mut commands: Commands,
     watch: Res<WatchStatus>,
     kits: Query<&Kit, With<BoardRoot>>,
-    mut pieces: Query<(
-        Entity,
-        &PieceAt,
-        &mut MeshMaterial3d<StandardMaterial>,
-        Has<Taken>,
-    )>,
+    mut pieces: Query<PreviewedPiece>,
+    left: Query<Entity, TakenOffBoard>,
 ) {
-    let (Some(table), Ok(kit)) = (&watch.table, kits.single()) else {
+    // Hidden, then carried to a tray as the move is played: seen again on its way.
+    for entity in &left {
+        commands
+            .entity(entity)
+            .insert(Visibility::Inherited)
+            .remove::<Taken>();
+    }
+    let (Some(_), Ok(kit)) = (&watch.table, kits.single()) else {
         return;
     };
-    // What the server says the move takes (`Turn::taking`), but where a piece the move carries
-    // lands on it (the piece arriving stands in its place), or where one it carries away stood
-    // (what is taken there is what it left behind: `bowl_stones`).
+    // What the server says the move takes (`Turn::taking`), but not where a piece the move
+    // carries away stood (what is taken there is what it left behind: `bowl_stones`).
     let taken: Vec<&str> = watch
         .turn
         .as_ref()
         .map(|t| {
-            let landing: Vec<&str> = t.made.iter().filter_map(|s| s.to.as_deref()).collect();
             let left: Vec<&str> = t.carried().iter().map(|c| c.from).collect();
             t.taking()
                 .into_iter()
-                .filter(|c| !landing.contains(c) && !left.contains(c))
+                .filter(|c| !left.contains(c))
                 .collect()
         })
         .unwrap_or_default();
-    let cells = &table.state.state.cells;
-    for (entity, at, mut material, was) in &mut pieces {
-        let top = cells.get(&at.cell).map_or(0, |s| s.len().saturating_sub(1));
-        let now = at.layer == top && taken.contains(&at.cell.as_str());
-        if !now && !was {
+    for (entity, at, carry, mut material, was_taken, was_arriving) in &mut pieces {
+        let carried = carry.is_some();
+        let hide = !carried && taken.contains(&at.cell.as_str());
+        if hide && !was_taken {
+            commands.entity(entity).insert((Taken, Visibility::Hidden));
+        } else if !hide && was_taken {
+            commands
+                .entity(entity)
+                .insert(Visibility::Inherited)
+                .remove::<Taken>();
+        }
+        let see_through = matches!(carry, Some(Carry::Put(_)));
+        if see_through == was_arriving {
             continue;
+        }
+        if see_through {
+            commands.entity(entity).insert(Arriving);
+        } else {
+            commands.entity(entity).remove::<Arriving>();
         }
         let kind = kit.piece(&at.piece.piece);
         let colour = &at.piece.color;
-        // Its colour may change while it is taken (a disc turned back over as the preview
-        // changes): it stays see-through in that one.
-        let wanted = if now {
+        let wanted = if see_through {
             kind.ghost
                 .clone()
                 .or_else(|| kit.ghosts.get(colour).cloned())
@@ -3426,14 +3472,9 @@ fn show_taken(
                 .or_else(|| kit.materials.get(colour).cloned())
                 .unwrap_or_default()
         };
-        if now && !was {
-            commands.entity(entity).insert(Taken);
-        } else if !now {
-            commands.entity(entity).remove::<Taken>();
-        }
         // A piece of two sides wears its upper side's own once dressed (`dress_sides`).
         let dressed = kind.sides.as_ref().map(|s| {
-            let parts = if now { &s.ghost } else { &s.solid };
+            let parts = if see_through { &s.ghost } else { &s.solid };
             crate::sides::halves(parts, s.turned.get(colour).copied().unwrap_or(false)).0
         });
         if material.0 != wanted && dressed.as_ref() != Some(&material.0) {
@@ -5251,6 +5292,158 @@ wood = "contrast"
         }
 
         #[test]
+        fn a_move_being_built_hides_what_it_takes_and_shows_the_mover_see_through_where_it_lands() {
+            use crate::net::api::{Gesture, LegalSelection, Selections};
+            use crate::play::Turn;
+
+            let cells: &[(&str, &[(&str, &str)])] = &[
+                ("a1", &[("q", "white")]),
+                ("a2", &[("q", "black")]),
+                ("b1", &[("q", "black")]),
+            ];
+            let to = |to: &str, takes: &[&str], last: Option<&str>| {
+                let mut gestures = vec![Gesture::pos("a1"), Gesture::pos(to)];
+                gestures.extend(last.map(|a| Gesture {
+                    kind: "action".into(),
+                    value: a.into(),
+                }));
+                LegalSelection {
+                    notation: format!("a1-{to}{}", last.unwrap_or_default()),
+                    action: last.unwrap_or("move").into(),
+                    to: Some(to.into()),
+                    from: Some("a1".into()),
+                    piece: Some("q".into()),
+                    aim: None,
+                    gestures,
+                    captures: takes.iter().map(|c| c.to_string()).collect(),
+                }
+            };
+            let answer = |options: Vec<LegalSelection>| Selections {
+                seat: 1,
+                ply: 1,
+                made: vec![],
+                options,
+                complete: false,
+                may_end: false,
+                state: None,
+            };
+            // Each piece by cell: whether it is drawn, see-through, and how high it stands.
+            let seen = |app: &mut App| {
+                let mut kits = app.world_mut().query::<&Kit>();
+                let kit = kits.single(app.world()).unwrap();
+                let ghosts: Vec<Handle<StandardMaterial>> = kit
+                    .ghosts
+                    .values()
+                    .cloned()
+                    .chain([kit.ghost.clone()])
+                    .collect();
+                let mut q = app.world_mut().query::<(
+                    &PieceAt,
+                    Option<&Visibility>,
+                    &MeshMaterial3d<StandardMaterial>,
+                    Option<&Carry>,
+                    &Transform,
+                )>();
+                q.iter(app.world())
+                    .map(|(at, vis, m, carry, t)| {
+                        let y = match carry {
+                            Some(Carry::Put(put)) => put.translation.y,
+                            _ => t.translation.y,
+                        };
+                        (
+                            at.cell.clone(),
+                            (vis != Some(&Visibility::Hidden), ghosts.contains(&m.0), y),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>()
+            };
+            let play = |options: Vec<LegalSelection>, clicks: &[&str]| {
+                let mut app = with_looks();
+                app.world_mut().resource_mut::<WatchStatus>().table = Some(grid_table("g", cells));
+                app.update();
+                let mut turn = Turn::new(1);
+                turn.answered(answer(options));
+                for c in clicks {
+                    turn.gesture(&Gesture::pos(c));
+                }
+                app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+                app.update();
+                app.update();
+                app
+            };
+
+            // A capture where it lands: the piece taken is not drawn, and the one taking it is
+            // see-through in its place, at its height, not on top of it.
+            let mut app = play(
+                vec![to("a2", &["a2"], None), to("a3", &[], None)],
+                &["a1", "a2"],
+            );
+            let before = seen(&mut play(vec![], &[]));
+            let now = seen(&mut app);
+            assert!(!now["a2"].0, "taken: not drawn");
+            let (shown, ghost, y) = now["a1"];
+            assert!(shown && ghost, "the mover is see-through where it lands");
+            assert!(
+                (y - before["a2"].2).abs() < 1e-5,
+                "where the piece taken stood: {y}"
+            );
+
+            // Taken back: the piece is there again, and the mover solid where it stood.
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                let turn = watch.turn.as_mut().unwrap();
+                assert!(turn.back());
+                assert!(turn.back());
+            }
+            app.update();
+            app.update();
+            let now = seen(&mut app);
+            assert!(now["a2"].0 && !now["a2"].1, "back: {:?}", now["a2"]);
+            assert!(now["a1"].0 && !now["a1"].1, "back: {:?}", now["a1"]);
+
+            // A capture that promotes, the piece it becomes not chosen yet: the same.
+            let promote = |p: &str| to("a2", &["a2"], Some(p));
+            let now = seen(&mut play(
+                vec![promote("promote-q"), promote("promote-n")],
+                &["a1", "a2"],
+            ));
+            assert!(!now["a2"].0, "taken while the promotion is chosen");
+            assert!(now["a1"].0 && now["a1"].1, "the pawn see-through on it");
+
+            // A piece taken where the mover does not land (en passant): not drawn either.
+            let now = seen(&mut play(vec![to("b2", &["b1"], None)], &["a1", "b2"]));
+            assert!(!now["b1"].0, "taken elsewhere");
+            assert!(now["a2"].0, "the rest as they are");
+
+            // A move that takes nothing looks the same: the mover see-through where it goes.
+            let now = seen(&mut play(vec![to("a3", &[], None)], &["a1", "a3"]));
+            assert!(now["a1"].0 && now["a1"].1);
+            assert!(now.values().all(|(shown, ..)| *shown));
+
+            // Played: the position comes back without the piece taken, and nothing is hidden
+            // or see-through any more.
+            let mut app = play(vec![to("a2", &["a2"], None)], &["a1", "a2"]);
+            {
+                let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+                let mut table =
+                    grid_table("g", &[("a2", &[("q", "white")]), ("b1", &[("q", "black")])]);
+                table.state.move_seq = 2;
+                watch.table = Some(table);
+                watch.turn = None;
+            }
+            for _ in 0..3 {
+                app.update();
+            }
+            let now = seen(&mut app);
+            assert!(
+                now.values().all(|(shown, ghost, _)| *shown && !*ghost),
+                "{now:?}"
+            );
+            let mut hidden = app.world_mut().query_filtered::<(), With<Taken>>();
+            assert_eq!(hidden.iter(app.world()).count(), 0);
+        }
+
+        #[test]
         fn a_target_aimed_at_with_no_piece_in_the_look_has_nothing_put_on_it() {
             use crate::net::api::{Gesture, LegalSelection, Selections};
             use crate::play::Turn;
@@ -5323,36 +5516,27 @@ wood = "contrast"
             assert_eq!(counts(&mut app), (0, 0), "nothing over the piece pinned");
             // Pinned: the move made shows nothing on it either.
             let enemy = |app: &mut App| {
-                let mut q =
-                    app.world_mut()
-                        .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>, Has<Taken>)>();
+                let mut q = app
+                    .world_mut()
+                    .query::<(&PieceAt, Option<&Visibility>, Has<Taken>)>();
                 q.iter(app.world())
                     .find(|(at, ..)| at.cell == "b3")
-                    .map(|(_, m, taken)| (m.0.clone(), taken))
+                    .map(|(_, v, taken)| (v != Some(&Visibility::Hidden), taken))
                     .unwrap()
             };
-            let (solid, taken) = enemy(&mut app);
+            let (shown, taken) = enemy(&mut app);
             assert!(!taken, "not taken before the pin is chosen");
             click(&mut app, "b3");
             assert_eq!(counts(&mut app), (0, 0), "nothing on it once chosen");
-            // The piece pinned is see-through until the move is played: what it takes.
-            let ghost = {
-                let mut kits = app.world_mut().query::<&Kit>();
-                let kit = kits.single(app.world()).unwrap();
-                let kind = kit.piece("yellow");
-                kind.ghost
-                    .clone()
-                    .or_else(|| kit.ghosts.get("black").cloned())
-                    .unwrap_or_else(|| kit.ghost.clone())
-            };
-            assert_eq!(enemy(&mut app), (ghost, true));
-            // Taken back: solid again.
+            // The piece pinned is not drawn until the move is played: what it takes.
+            assert_eq!(enemy(&mut app), (false, true));
+            // Taken back: there again.
             {
                 let mut watch = app.world_mut().resource_mut::<WatchStatus>();
                 assert!(watch.turn.as_mut().unwrap().back());
             }
             app.update();
-            assert_eq!(enemy(&mut app), (solid, false));
+            assert_eq!(enemy(&mut app), (shown, false));
 
             // Where every move goes on to pin, nothing is held under the pointer for it.
             let mut turn = Turn::new(1);
@@ -7431,7 +7615,7 @@ piece = "ring"
         }
 
         #[test]
-        fn a_disc_turned_over_and_then_taken_stays_turned_and_see_through() {
+        fn a_disc_turned_over_and_then_taken_stays_turned_and_is_hidden() {
             let mut app = with_rings_look(&[
                 ("a1", &[("ring", "white")]),
                 ("a2", &[("disc", "black")]),
@@ -7476,29 +7660,22 @@ piece = "ring"
             assert_eq!(turn.gesture(&Gesture::pos("a2")), crate::play::Outcome::Ask);
             app.update();
             // The move is whole: the server previews nothing more. The disc on a2 is still
-            // shown white, as the last preview to have it had it, and see-through, as it goes.
+            // white, as the last preview to have it had it, and hidden, as it goes.
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
             let turn = watch.turn.as_mut().unwrap();
             turn.answered(answer(&["m", "m"], vec![], true, None));
             app.update();
             app.update();
-            let mut kits = app.world_mut().query::<&Kit>();
-            let ghost = kits.single(app.world()).unwrap().pieces["disc"]
-                .sides
-                .as_ref()
-                .unwrap()
-                .ghost
-                .clone();
             let mut q = app
                 .world_mut()
-                .query::<(&PieceAt, &MeshMaterial3d<StandardMaterial>, Has<Taken>)>();
-            let (at, material, taken) = q
+                .query::<(&PieceAt, Option<&Visibility>, Has<Taken>)>();
+            let (at, vis, taken) = q
                 .iter(app.world())
                 .find(|(at, ..)| at.cell == "a2")
                 .unwrap();
             assert_eq!(at.piece.color, "white");
             assert!(taken);
-            assert!(ghost.contains(&material.0), "dressed see-through");
+            assert_eq!(vis, Some(&Visibility::Hidden));
         }
     }
 
