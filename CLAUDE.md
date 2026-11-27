@@ -151,7 +151,9 @@ defines these four, used the same way here as in Bingle:
 A field, variable or parameter called `color` holds a name, and a value to draw with is called
 `paint`; Bevy's `Color` type keeps its name. **One resolver turns a color into paint**
 (`look::seat_paint`, the standard look, and `appearance::seat_paint`, a game's look over it), and
-no other code reasons about hue. The word is spelled `color` everywhere, in code, comments, docs and
+no other code reasons about hue. Wherever the client names a seat or a color, the paint stands
+beside the name: a dot for each color the seat plays (`Appearances::seat_paints`, `browser::said`
+for a line of words that names seats). The word is spelled `color` everywhere, in code, comments, docs and
 data files; `tests/spelling.rs` fails on the other spelling and lists the few places that keep it
 (a copy of Bingle's schema, and the old key a data file is still read with).
 

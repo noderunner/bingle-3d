@@ -34,6 +34,11 @@ being changed:
   The standard look paints a color whose name is a color word the client knows as the word says,
   and any other by seat (`look::seat_paint`); a game's look may paint it otherwise
   (`seats.<color>.paint`, `appearance::seat_paint`), and nothing else turns a color into paint.
+  Wherever the client names a seat or a color (the new-game form, the game's panel and its lobby,
+  whose impulse it is and who won, the games being played, a choice of a stone by its color), the
+  viewer's own paint stands beside the name: a dot for each color the seat plays
+  (`Appearances::seat_paints`), and no words. The list of games being played has one color for
+  each seat (the API's `players` carry no `colors`), so a seat of several shows one dot there.
   Facts such as tints and badges arrive by
   name, with words that explain them; their look is ours to choose. The web page's `web.yaml` is
   the web page's: we may read it for hints, but must not depend on it.
@@ -655,7 +660,10 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   goal, each on every wood the board may be made of, must differ in OKLab by at least 0.08 between
   any two colors of a game, and `white` must be at least 4 L* lighter than every other color
   (`black` darker). The colors of each game are a short table in the test (`GAMES`): a game
-  an appearance file names must be in it.
+  an appearance file names must be in it. A seat's `paint` is the dot beside its name, so it is
+  also held within 0.1 in OKLab of what its pieces look like on each wood (`MAX_FROM_PIECES`): a
+  veined stone's average need not be met, but a dot clearly paler, darker or of another hue
+  than its pieces fails.
 - As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
   each material using one is built again (Bevy does not rebuild a material when its image
   changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left

@@ -13,7 +13,9 @@
 //!
 //! Four paints of a color are held to it, each on its own among the colors of the game:
 //!
-//! - `paint`, what `appearance::seat_paint` gives (the panels' dot, the cells along a goal);
+//! - `paint`, what `appearance::seat_paint` gives (the panels' dot, the cells along a goal),
+//!   which is also held near what its pieces look like (`MAX_FROM_PIECES`), so that a dot beside
+//!   a seat's name stands for its pieces;
 //! - `tint`, the `tint` of the material the seat's pieces are made of, where it has one;
 //! - `pieces`, what the pieces look like: the material's texture (a wood's, or a stone's) at its
 //!   average, in linear light, times its tint. Where a look gives a seat no material the pieces
@@ -50,6 +52,35 @@ const MIN_DELTA: f32 = 0.08;
 /// less: in CIE L* (0 to 100). The rule is an order, so any margin would do; this one is a few
 /// steps a person tells apart, so a pair that merely edges ahead does not count.
 const MIN_LIGHTER: f32 = 4.0;
+
+/// The most a seat's `paint` (its dot beside its name, issue #91) may differ from what its pieces
+/// look like, on any board wood, in OKLab. The dot is flat and a stone is veined and polished, so
+/// it is not held to the average closely: this is about what tells a pale dot from dark pieces,
+/// or one hue from another. Today the farthest is Draughts' black (0.082, both near black).
+const MAX_FROM_PIECES: f32 = 0.1;
+
+/// Where a look's `paint` for a seat is farther from what its pieces look like than
+/// `MAX_FROM_PIECES`, as lines saying where.
+fn misleading_dots(look: &Appearance) -> Vec<String> {
+    let mut out = Vec::new();
+    for (color, seat) in &look.seats {
+        let (Some(paint), Some(material)) = (seat.paint, made_of(look, color, false)) else {
+            continue;
+        };
+        for wood in BOARD_WOODS {
+            let pieces = looks_like(material, wood);
+            let d = delta(paint, pieces);
+            if d > MAX_FROM_PIECES {
+                out.push(format!(
+                    "{}, {color}: paint {paint:?} is {d:.3} from its pieces on {wood} \
+                     ({pieces:.2?}), over {MAX_FROM_PIECES}",
+                    look.games.join(" "),
+                ));
+            }
+        }
+    }
+    out
+}
 
 /// What a game plays: each color, with the seat it belongs to (an unnamed color is painted by
 /// seat, so it matters; a color no seat plays has the next number). The first column is the game
@@ -401,6 +432,16 @@ mod tests {
     fn every_shipped_look_keeps_the_contract() {
         let bad = unallowed(shipped().iter().flat_map(check).collect());
         assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn every_shipped_looks_dot_is_painted_as_its_pieces_look() {
+        let bad: Vec<String> = shipped().iter().flat_map(misleading_dots).collect();
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        // A dot much paler than the pieces it stands for.
+        let mut pale = Appearances::built_in().for_game("chess").unwrap().clone();
+        pale.seats.get_mut("black").unwrap().paint = Some([0.55, 0.5, 0.45]);
+        assert!(!misleading_dots(&pale).is_empty());
     }
 
     #[test]

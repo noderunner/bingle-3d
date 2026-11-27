@@ -78,6 +78,7 @@ use serde::Deserialize;
 
 use crate::assets;
 use crate::look::{self, MaterialSpec};
+use crate::net::api::SeatDef;
 
 /// The format of appearance file this client reads. A file says the format it was written in
 /// (`format`, 1 when it does not); one written for a later format is not read. Raise it when a
@@ -1085,6 +1086,14 @@ impl Appearances {
     pub fn seat_paint(&self, game: &str, color: &str, seat: u32) -> Color {
         seat_paint(self.for_game(game), color, seat)
     }
+
+    /// The paint of each color a seat of a game plays, in the order it plays them: what is
+    /// shown beside the seat's name, a dot for each (Bingle's ADR 0154).
+    pub fn seat_paints(&self, game: &str, seat: &SeatDef) -> Vec<Color> {
+        seat.played()
+            .map(|color| self.seat_paint(game, color, seat.seat))
+            .collect()
+    }
 }
 
 /// The paint a seat whose color is `color` is shown in, with this look (if the game has one):
@@ -1462,6 +1471,37 @@ mod tests {
         assert_eq!(
             all.seat_paint("no-such-game", "red", 1),
             look::seat_paint("red", 1)
+        );
+    }
+
+    #[test]
+    fn a_seat_of_several_colors_has_a_paint_for_each_and_each_is_the_looks() {
+        let all = Appearances::built_in();
+        let seat = |color: &str, colors: &[&str]| SeatDef {
+            seat: 1,
+            color: color.into(),
+            label: "Warm".into(),
+            colors: colors.iter().map(|c| c.to_string()).collect(),
+        };
+        let look = all.for_game("blooms").expect("Blooms has one");
+        let paint = |color: &str| {
+            let [r, g, b] = look.seats[color].paint.expect("a paint");
+            Color::srgb(r, g, b)
+        };
+        // Two colors, two paints, in the seat's order: the look's own.
+        assert_eq!(
+            all.seat_paints("blooms", &seat("red", &["red", "yellow"])),
+            [paint("red"), paint("yellow")]
+        );
+        // One color, one paint.
+        assert_eq!(
+            all.seat_paints("blooms", &seat("blue", &[])),
+            [paint("blue")]
+        );
+        // A game with no look: the standard look's, by seat.
+        assert_eq!(
+            all.seat_paints("no-such-game", &seat("red", &["red", "yellow"])),
+            [look::seat_paint("red", 1), look::seat_paint("yellow", 1)]
         );
     }
 

@@ -28,6 +28,7 @@ use crate::net::{
 use crate::new_game::{self, Fill, Form, NewGame};
 use crate::play;
 use crate::sign_in::{self, Signing};
+use crate::table::Said;
 
 pub struct BrowserPlugin {
     /// A game to open the new game form for, once connected (`--new-game`).
@@ -436,7 +437,7 @@ fn rebuild_list(
                     new_game::draw(area, f, form, &handles, &appearances)
                 }
                 None => match screen.games {
-                    GamesView::Active => games_being_played(area, f, &list),
+                    GamesView::Active => games_being_played(area, f, &list, &appearances),
                     GamesView::New => {
                         let families = families(&snap.defs);
                         match screen
@@ -816,7 +817,12 @@ fn problem_block(area: &mut ChildSpawnerCommands, f: &UiFonts, problem: &Problem
     }
 }
 
-fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameList) {
+fn games_being_played(
+    area: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    list: &GameList,
+    appearances: &Appearances,
+) {
     area.spawn(line(f.regular(13.0), colors::MUTED, &describe_query(list)));
     area.spawn(buttons()).with_children(|row| {
         let (label, open_seats) = if list.query.open_seats {
@@ -844,9 +850,18 @@ fn games_being_played(area: &mut ChildSpawnerCommands, f: &UiFonts, list: &GameL
     }
     for game in &list.games {
         let (title, detail) = describe_game(game);
+        // The list gives each seat taken its one color (`color`), not every color it plays.
+        let dots = |seat: u32| -> Vec<Color> {
+            game.players
+                .iter()
+                .find(|p| p.seat == seat)
+                .map(|p| appearances.seat_paint(&game.game_def_id, &p.color, seat))
+                .into_iter()
+                .collect()
+        };
         area.spawn(card()).with_children(|card| {
             card.spawn(line(f.semibold(15.0), colors::TEXT, &title));
-            card.spawn(line(f.regular(13.0), colors::MUTED, &detail));
+            card.spawn(said(f.regular(13.0), colors::MUTED, &detail, &dots, 10.0));
             if game.status == "active" {
                 card.spawn(buttons()).with_children(|row| {
                     row.spawn(button(f, "Watch", Action::Watch(game.room_code.clone())));
@@ -877,15 +892,22 @@ pub fn describe_query(list: &GameList) -> String {
     )
 }
 
-/// A game's title line and what is happening in it, in words.
-pub fn describe_game(game: &OpenGame) -> (String, String) {
+/// A game's title line and what is happening in it, in words, each player with their seat's
+/// dot before their name.
+pub fn describe_game(game: &OpenGame) -> (String, Vec<Said>) {
     let title = format!("{}  ·  {}", game.name, game.room_code);
-    let names: Vec<&str> = game.players.iter().map(|p| p.name.as_str()).collect();
-    let players = if names.is_empty() {
-        "nobody yet".to_string()
-    } else {
-        names.join(" vs ")
-    };
+    let mut detail = Vec::new();
+    if game.players.is_empty() {
+        detail.push(Said::words("nobody yet"));
+    }
+    for (i, p) in game.players.iter().enumerate() {
+        if i > 0 {
+            detail.push(Said::words(" vs "));
+        }
+        detail.push(Said::Seat(p.seat));
+        detail.push(Said::words(p.name.clone()));
+    }
+    detail.push(Said::words("  —  "));
     let state = match game.status.as_str() {
         "waiting" if game.reserved_for_you => "a seat is kept for you".to_string(),
         "waiting" if game.open_seats > 0 => format!(
@@ -900,12 +922,16 @@ pub fn describe_game(game: &OpenGame) -> (String, String) {
             .impulse_seat
             .and_then(|s| game.players.iter().find(|p| p.seat == s))
         {
-            Some(p) => format!("{} to move", p.name),
+            Some(p) => {
+                detail.push(Said::Seat(p.seat));
+                format!("{} to move", p.name)
+            }
             None => "playing".to_string(),
         },
         other => other.to_string(),
     };
-    (title, format!("{players}  —  {state}"))
+    detail.push(Said::words(state));
+    (title, detail)
 }
 
 /// A game's title line: its family's title, and how many play the member chosen.
@@ -923,6 +949,74 @@ fn describe_def(title: &str, def: &GameDef) -> String {
 
 pub(crate) fn line(font: TextFont, color: Color, text: &str) -> impl Bundle {
     (Text::new(text), font, TextColor(color))
+}
+
+/// A line of words that names seats (`Said`), each seat's dots (`dots`, its paints) before its
+/// name, `size` across. Words go as they are, but for their spaces at either end, which the gap
+/// between the pieces stands for.
+pub(crate) fn said(
+    font: TextFont,
+    color: Color,
+    said: &[Said],
+    dots: &dyn Fn(u32) -> Vec<Color>,
+    size: f32,
+) -> impl Bundle + use<> {
+    let pieces: Vec<Piece> = said
+        .iter()
+        .filter_map(|s| match s {
+            Said::Words(w) => {
+                let w = w.trim();
+                (!w.is_empty()).then(|| Piece::Words(w.to_string()))
+            }
+            Said::Seat(seat) => Some(Piece::Dots(dots(*seat))),
+        })
+        .collect();
+    (
+        Node {
+            flex_wrap: FlexWrap::Wrap,
+            align_items: AlignItems::Center,
+            column_gap: px(4),
+            row_gap: px(2),
+            ..default()
+        },
+        Children::spawn(SpawnIter(pieces.into_iter().map(move |piece| {
+            let (text, dots) = match piece {
+                Piece::Words(w) => (Some((Text::new(w), font.clone(), TextColor(color))), vec![]),
+                Piece::Dots(d) => (None, d),
+            };
+            (
+                Node {
+                    column_gap: px(2),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                Children::spawn((
+                    SpawnIter(dots.into_iter().map(move |paint| seat_dot(paint, size))),
+                    SpawnIter(text.into_iter()),
+                )),
+            )
+        }))),
+    )
+}
+
+enum Piece {
+    Words(String),
+    Dots(Vec<Color>),
+}
+
+/// A seat's dots, one for each color it plays (`Appearances::seat_paints`), side by side.
+pub(crate) fn seat_dots(paints: Vec<Color>, size: f32) -> impl Bundle {
+    (
+        Node {
+            column_gap: px(2),
+            align_items: AlignItems::Center,
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Children::spawn(SpawnIter(
+            paints.into_iter().map(move |paint| seat_dot(paint, size)),
+        )),
+    )
 }
 
 /// A seat's dot, in its paint, ringed so that a dark one still shows on a dark panel.
@@ -966,14 +1060,25 @@ pub(crate) fn buttons() -> impl Bundle {
 }
 
 pub(crate) fn button(f: &UiFonts, label: &str, action: Action) -> impl Bundle {
-    button_in(f, label, action, false)
+    button_in(f, label, action, false, None)
+}
+
+/// A button that names a color, with its dot (`paint`) before the name.
+pub(crate) fn dotted_button(f: &UiFonts, label: &str, action: Action, paint: Color) -> impl Bundle {
+    button_in(f, label, action, false, Some(paint))
 }
 
 /// Whether a button is the choice made (see [`chip`]).
 #[derive(Component)]
 pub(crate) struct Chosen(bool);
 
-fn button_in(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
+fn button_in(
+    f: &UiFonts,
+    label: &str,
+    action: Action,
+    chosen: bool,
+    dot: Option<Color>,
+) -> impl Bundle {
     let color = if chosen {
         colors::CHOSEN
     } else {
@@ -987,17 +1092,25 @@ fn button_in(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bun
         Node {
             padding: UiRect::axes(px(12), px(6)),
             border_radius: BorderRadius::all(px(6)),
+            column_gap: px(6),
+            align_items: AlignItems::Center,
             ..default()
         },
         BackgroundColor(color),
         observe(on_activate),
-        children![(
-            Text::new(label),
-            f.semibold(14.0),
-            TextColor(colors::TEXT),
-            // Clicks land on the button, not its label.
-            Pickable::IGNORE,
-        )],
+        Children::spawn((
+            SpawnIter(
+                dot.into_iter()
+                    .map(|paint| (seat_dot(paint, 12.0), Pickable::IGNORE)),
+            ),
+            Spawn((
+                Text::new(label),
+                f.semibold(14.0),
+                TextColor(colors::TEXT),
+                // Clicks land on the button, not its label.
+                Pickable::IGNORE,
+            )),
+        )),
     )
 }
 
@@ -1223,7 +1336,7 @@ fn color_cards(mut cards: Query<(&Hovered, &mut BorderColor), CardHoverChanged>)
 
 /// A button for one choice among several, colored when it is the one made.
 pub(crate) fn chip(f: &UiFonts, label: &str, action: Action, chosen: bool) -> impl Bundle {
-    button_in(f, label, action, chosen)
+    button_in(f, label, action, chosen, None)
 }
 
 fn update_countdown(status: Res<ServerStatus>, mut lines: Query<&mut Text, With<Countdown>>) {
@@ -1245,6 +1358,7 @@ fn update_countdown(status: Res<ServerStatus>, mut lines: Query<&mut Text, With<
 mod tests {
     use super::*;
     use crate::net::api::Player;
+    use crate::table::words;
 
     fn app_with(connection: Connection) -> (App, std::sync::mpsc::Receiver<Request>) {
         let (net, requests) = Net::for_test();
@@ -1497,22 +1611,37 @@ mod tests {
         g.impulse_seat = Some(2);
         let (title, detail) = describe_game(&g);
         assert_eq!(title, "Hex (7×7)  ·  N5WUVW");
-        assert_eq!(detail, "Ana vs Bot (Random)  —  Bot (Random) to move");
+        assert_eq!(
+            words(&detail),
+            "Ana vs Bot (Random)  —  Bot (Random) to move"
+        );
+        // Every name of a seat's player has the seat's dot before it.
+        let seats: Vec<u32> = detail
+            .iter()
+            .filter_map(|s| match s {
+                Said::Seat(seat) => Some(*seat),
+                Said::Words(_) => None,
+            })
+            .collect();
+        assert_eq!(seats, [1, 2, 2]);
     }
 
     #[test]
     fn a_waiting_game_says_how_many_seats_are_free() {
         let (_, detail) = describe_game(&game("waiting", 2, &[("Ana", "")]));
-        assert_eq!(detail, "Ana  —  waiting for players: 1 of 2 seats free");
+        assert_eq!(
+            words(&detail),
+            "Ana  —  waiting for players: 1 of 2 seats free"
+        );
         let (_, detail) = describe_game(&game("waiting", 4, &[]));
         assert_eq!(
-            detail,
+            words(&detail),
             "nobody yet  —  waiting for players: 4 of 4 seats free"
         );
         let mut full = game("waiting", 2, &[("Ana", ""), ("Bo", "")]);
         full.lobby = true;
         assert_eq!(
-            describe_game(&full).1,
+            words(&describe_game(&full).1),
             "Ana vs Bo  —  waiting for its host to start it"
         );
     }
@@ -1521,13 +1650,16 @@ mod tests {
     fn a_seat_kept_for_this_viewer_is_said() {
         let mut kept = game("waiting", 2, &[("Ana", "")]);
         kept.reserved_for_you = true;
-        assert_eq!(describe_game(&kept).1, "Ana  —  a seat is kept for you");
+        assert_eq!(
+            words(&describe_game(&kept).1),
+            "Ana  —  a seat is kept for you"
+        );
     }
 
     #[test]
     fn a_status_this_client_does_not_know_is_shown_as_it_is() {
         assert_eq!(
-            describe_game(&game("paused", 2, &[])).1,
+            words(&describe_game(&game("paused", 2, &[])).1),
             "nobody yet  —  paused"
         );
     }

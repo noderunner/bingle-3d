@@ -11,7 +11,8 @@
 
 use bevy::prelude::*;
 
-use crate::browser::{Action, button, buttons, chip, colors, line};
+use crate::appearance::Appearances;
+use crate::browser::{Action, button, buttons, chip, colors, line, seat_dots};
 use crate::fonts::UiFonts;
 use crate::net::LobbyCall;
 use crate::net::session::Problem;
@@ -117,7 +118,13 @@ pub fn offers(table: &Table) -> Option<Offers> {
 }
 
 /// The lobby on the game's panel, with why the server last said no, if it did.
-pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: Option<&Problem>) {
+pub fn draw(
+    p: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    table: &Table,
+    appearances: &Appearances,
+    problem: Option<&Problem>,
+) {
     let Some(offers) = offers(table) else {
         return;
     };
@@ -127,7 +134,22 @@ pub fn draw(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, problem: O
         "Before the game starts",
     ));
     for seat in &offers.seats {
-        p.spawn(line(f.regular(13.0), colors::MUTED, &seat.label));
+        let paints = table
+            .info
+            .seats
+            .iter()
+            .find(|d| d.seat == seat.seat)
+            .map(|d| appearances.seat_paints(&table.info.id, d))
+            .unwrap_or_default();
+        p.spawn(Node {
+            column_gap: px(6),
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn(seat_dots(paints, 10.0));
+            row.spawn(line(f.regular(13.0), colors::MUTED, &seat.label));
+        });
         if seat.calls.is_empty() {
             continue;
         }
