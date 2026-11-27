@@ -99,9 +99,10 @@ click would be taken (L, or *Legal moves*, also lights every such place): click 
 stone is shown there; click it again, press Enter or choose *Play* to play it, or right-click
 or press Backspace (or *Back*) to take it back, one click at a time. A piece that moves is
 picked up with a click and hovers over its space, the places it may go lit; a click on one
-carries it there and sets it down (in Amazons the arrow is then held under the pointer).
-In a game where each turn is one stone placed (Go, Hex, Othello and the like), the pointer is
-that stone, floating over the board; over a panel it waits at the board's edge. Picking up,
+carries it there and sets it down (in Amazons a see-through arrow then shows where a click
+shoots). In a game where each turn is one stone placed (Go, Hex and the like), a stone waits
+over your bowl, and a click carries it where you play. Whatever you take up waits over where
+it came from, and the pointer stays a hand. Picking up,
 setting down and playing each make a sound, in every game, and a crowd cheers when
 you win and groans when you lose (none with `--no-audio-devices`). A choice that is not a cell, such as
 swapping sides in Hex, is a button on the panel. The client only offers what the server lists as legal, and sends

@@ -1,8 +1,9 @@
-//! What the player holds while a move is built: a piece picked up, lifted over its space and
-//! bobbing gently; a piece put down where it was moved, carried there over the board and lowered
-//! onto it, quickly but plainly, before the move is sent; and what the move aims (an arrow), held
-//! under the pointer, bobbing too, the pointer's hand (`cursor.rs`) hidden while it takes its
-//! place.
+//! What the player holds while a move is built: anything in hand, lifted over where it came
+//! from (its space, its bowl, its place in the stock) and bobbing gently, the pointer staying a
+//! hand; a piece put down where it was moved, carried there over the board and lowered onto it,
+//! quickly but plainly, before the move is sent. Nothing a click picks up follows the pointer:
+//! something held under it (`Held`, the pointer's hand in `cursor.rs` hidden while it takes its
+//! place) is only for what a drag holds while the button is down.
 //!
 //! The board (`board.rs`) says which piece is held or put where; this moves them there smoothly,
 //! every frame. The pointer's place on the board comes from picking, so a ray pointer in a
@@ -178,8 +179,9 @@ pub enum Carry {
     Over { at: Transform, scale: f32 },
 }
 
-/// What the move aims, held under the pointer while it is over the board: `lift` over the
-/// board's surface (at `board`), bobbing by `scale` of [`BOB`].
+/// Something held under the pointer while it is over the board, in place of the pointer's
+/// hand: `lift` over the board's surface (at `board`), bobbing by `scale` of [`BOB`]. Only a
+/// drag holds anything so; a click leaves what it picks up over where it came from (`Carry`).
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Held {
     pub board: f32,
@@ -368,7 +370,8 @@ fn carry(time: Res<Time>, mut pieces: Query<Carried, Without<Held>>, mut cues: M
     }
 }
 
-/// What the move aims follows the pointer over the board, bobbing; it is not shown off it.
+/// What is held under the pointer follows it over the board, bobbing; off it, it waits over the
+/// board's edge.
 fn hold(
     time: Res<Time>,
     on: Res<PointerOnBoard>,
@@ -649,7 +652,7 @@ mod tests {
     }
 
     #[test]
-    fn what_is_aimed_follows_the_pointer_and_waits_over_the_board_off_it() {
+    fn something_held_under_the_pointer_follows_it_and_waits_over_the_board_off_it() {
         let mut app = app();
         let held = app
             .world_mut()
