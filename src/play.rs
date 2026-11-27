@@ -15,7 +15,7 @@
 //! a click on the cell is enough (the web page takes such forced choices by itself too). The
 //! selection that ends the impulse is previewed, and waits for the player to confirm it.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::input_focus::InputFocus;
@@ -938,6 +938,36 @@ impl Turn {
         out
     }
 
+    /// The positions whose pieces the move being built turns over where they stand, and the
+    /// colour word each turns to, as far as is known (API 1.20's `converts_to`): as `taking`,
+    /// those the selections made turn over, and once something is chosen towards the next, those
+    /// every selection it could still become turns to the same colour.
+    pub fn turning(&self) -> BTreeMap<&str, &str> {
+        let mut out: BTreeMap<&str, &str> = self
+            .made
+            .iter()
+            .flat_map(|s| {
+                s.converts_to
+                    .iter()
+                    .map(|(c, to)| (c.as_str(), to.as_str()))
+            })
+            .collect();
+        if self.stage == Stage::Choosing && self.gestures.len() > self.forced {
+            let mut each = self.matching().map(|o| &o.converts_to);
+            if let Some(first) = each.next() {
+                let mut common: BTreeMap<&str, &str> = first
+                    .iter()
+                    .map(|(c, to)| (c.as_str(), to.as_str()))
+                    .collect();
+                for o in each {
+                    common.retain(|c, to| o.get(*c).is_some_and(|t| t == to));
+                }
+                out.extend(common);
+            }
+        }
+        out
+    }
+
     /// Whether a click on `cell` takes the piece standing there: every selection a click there
     /// would go on to takes it (a pin's target; a capture where the piece lands).
     pub fn takes_at(&self, cell: &str) -> bool {
@@ -1692,6 +1722,7 @@ mod tests {
                 .map(|(_, v)| v.to_string()),
             gestures: gestures.iter().map(|(k, v)| g(k, v)).collect(),
             captures: Vec::new(),
+            converts_to: Default::default(),
         }
     }
 
@@ -1733,6 +1764,54 @@ mod tests {
             gestures,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn what_a_move_turns_over_is_known_once_every_selection_it_could_be_turns_it() {
+        // An ace's jump over b2 to c3, the piece jumped captured, spared or converted.
+        let convert = |choice: &str| LegalSelection {
+            converts_to: (choice == "convert")
+                .then(|| ("b2".to_string(), "white".to_string()))
+                .into_iter()
+                .collect(),
+            ..jump(&[("c3", choice, "b2")])
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![convert("capture"), convert("spare"), convert("convert")],
+        ));
+        t.gesture(&g("pos", "a1"));
+        t.gesture(&g("pos", "c3"));
+        assert!(t.turning().is_empty(), "not known yet");
+        let mut spared = t.clone();
+        t.gesture(&g("action", "convert"));
+        assert_eq!(t.turning(), BTreeMap::from([("b2", "white")]), "converted");
+        t.gesture(&g("action", "end"));
+        assert_eq!(t.made.len(), 1);
+        assert_eq!(t.turning(), BTreeMap::from([("b2", "white")]), "made");
+        spared.gesture(&g("action", "spare"));
+        assert!(spared.turning().is_empty(), "spared: as it was");
+
+        // A placement that outflanks discs: made by its one click, what it turns is known.
+        let place = LegalSelection {
+            converts_to: BTreeMap::from([
+                ("d4".to_string(), "black".to_string()),
+                ("d5".to_string(), "black".to_string()),
+            ]),
+            ..sel("d3", Some("d3"), &[("pos", "d3")])
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![place, sel("c4", Some("c4"), &[("pos", "c4")])],
+        ));
+        assert!(t.turning().is_empty(), "nothing chosen yet");
+        t.gesture(&g("pos", "d3"));
+        assert_eq!(
+            t.turning(),
+            BTreeMap::from([("d4", "black"), ("d5", "black")])
+        );
     }
 
     #[test]

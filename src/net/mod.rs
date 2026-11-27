@@ -1852,6 +1852,7 @@ pub(crate) mod tests {
                 Gesture::pos(cell),
             ],
             captures: Vec::new(),
+            converts_to: Default::default(),
         }
     }
 

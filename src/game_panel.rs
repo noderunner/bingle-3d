@@ -638,6 +638,7 @@ mod tests {
                 },
             ],
             captures: Vec::new(),
+            converts_to: Default::default(),
         };
         let mut turn = Turn::new(1);
         let asking = hint(&turn, Some("Choose a Court."), &[]);
