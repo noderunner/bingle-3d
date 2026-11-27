@@ -62,6 +62,10 @@ fn no_tracked_file_spells_color_the_other_way() {
     }
     let mut found = Vec::new();
     for name in String::from_utf8(listed.stdout).unwrap().split('\0') {
+        // This file names the old spelling in its list.
+        if name == "tests/spelling.rs" {
+            continue;
+        }
         // A file that was deleted in the work tree, a binary, or a link is not text to read.
         let Ok(text) = std::fs::read_to_string(root.join(name)) else {
             continue;
