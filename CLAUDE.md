@@ -425,7 +425,12 @@ A game's own rules and its players' words keep their terms.
   those on it: they hover over their pile, the pointer staying a hand (an anchor they would
   follow under the pointer is `hand::Held` only for a drag); the piles they may go on glow, the one under the
   pointer shows them see-through where they would land, and a click there plays the move at
-  once (`Turn::clicks_only`). Cards go where the position puts them by `hand::Carry::Put`,
+  once (`Turn::clicks_only`). Or they are dragged, by `drag.rs`'s mechanism: a press on a
+  card or a pile's place is a `drag::CardPress` (`on_press`, `follow_cards`), the pointer
+  leaving it lifts what a click would and holds the anchor under the pointer (`hold_cards`),
+  let go over a pile a click would put them on it is that click (`click_pile`, the one
+  function for a click there, which every click on a patience's cards is), anywhere else the
+  turn is as it was. Cards go where the position puts them by `hand::Carry::Put`,
   one after another, turned over on the way when they were face down where they came from.
 - `src/choice_grid.rs`: the view's board of choices (lines of boxes), for a game whose look
   has `[grid]`: a board of wood on the table, a tile for each box with the look's picture for

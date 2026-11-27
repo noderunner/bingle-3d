@@ -925,6 +925,18 @@ that declares a patience plays the same way.
   home (`to-f`) is shown going to its suit's foundation when the view lists the suits
   (`patience::home`), since the server, not the click, chooses which. The stock draws, turns
   the waste back or deals, whichever is legal; *Finish* is the panel's button.
+- **Or dragged** (2026-11-27, #100), by the board's mechanism (`drag.rs`, a `CardPress`
+  recorded by `card_table.rs`): a press on a card, the pointer leaving it with the button
+  down, lifts what a click there would and carries it under the pointer, held near its edge so
+  what it is aimed at stays in sight (`hand::Held`, the pointer's hand hidden); the piles it may
+  go on glow, and the one under the pointer shows it see-through, as for a click. Let go over a
+  pile a click would put it on, it is that click, and the move plays at once (a patience plays
+  on a click: the one place a drop sends a move). Let go anywhere else (its own pile, a pile it
+  may not go on, the bare cloth, a panel), a right-click, Backspace or the escape menu, and the
+  turn is as it was before the press. A press and release on the card is the click it always
+  was (every click on a patience's cards and places is one), and cards lifted by a click are
+  pressed where they wait, over their own pile, and carried on. A game laid by its look is
+  played by clicks as before.
 - A game of one seat has *Play* on its setup (`browser::setup_actions`), which makes the game
   with this client in its seat, and it starts at once; *New game* at its end makes another.
 - The gestures the view says are drawn on the table (`panel_actions`) are no buttons, and the
@@ -932,8 +944,7 @@ that declares a patience plays the same way.
 - Cards go where the position puts them by the hand's own carrying, one after another (a row
   dealt, a run off the table, *Finish*), over the piles and down; a card that was face down
   where it came from (drawn, turned up in its column, dealt) turns over on the way.
-- Not built: dragging cards (the server's own words mention it; a press, move and release
-  make the same two gestures, as a piece on the board's do: #100); the suit's mark on an empty foundation; lighting the cards that
+- Not built: the suit's mark on an empty foundation; lighting the cards that
   move (L lights a board's legal moves, not a patience's); the web page's flight home and
   celebration when a game is won; a themed card set (ADR 0085); a headset's ray pointer is not
   tried. (Bowling Solitaire, below.)

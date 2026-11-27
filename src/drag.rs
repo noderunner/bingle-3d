@@ -21,6 +21,12 @@
 //! primary button, drags as the mouse does. Where the pointer is is the space it is over
 //! (`play::Hovering`): what is carried is out of picking's way meanwhile. Whether a drag is
 //! under way, and what it carries, is read here and nowhere else ([`Drag::carried`]).
+//!
+//! A patience's cards are dragged the same way ([`CardPress`], pressed and followed by
+//! `card_table.rs`, which knows the cards): a press on a card or a pile's place, the pointer
+//! leaving it with the button down lifting what a click there would (or taking up what a click
+//! already lifted, pressed on its own pile), and let go over a pile a click would put them on,
+//! the click there; anywhere else the turn is as it was before the press ([`let_go_cards`]).
 
 use bevy::picking::events::PointerPress;
 use bevy::picking::pointer::{PointerAction, PointerButton, PointerId, PointerInput};
@@ -51,7 +57,7 @@ impl Plugin for DragPlugin {
 /// A press of the pointer's primary button on the board, while the button is down: the one
 /// place that knows whether a drag is under way.
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
-pub struct Drag(pub Option<Press>);
+pub struct Drag(pub Option<Press>, pub Option<CardPress>);
 
 impl Drag {
     /// The space whose piece is carried under the pointer, while one is: the board holds the
@@ -65,7 +71,46 @@ impl Drag {
 
     /// Whether the button is down after a press on the board, a drag or not yet.
     pub fn pressed(&self) -> bool {
-        self.0.is_some()
+        self.0.is_some() || self.1.is_some()
+    }
+
+    /// The press whose cards are carried under the pointer, while they are.
+    pub fn carried_cards(&self) -> Option<&CardPress> {
+        self.1.as_ref().filter(|p| p.carrying)
+    }
+}
+
+/// A press on a patience's cards: on a card, or on a pile's place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CardPress {
+    /// The pointer pressed.
+    pub pointer: PointerId,
+    /// What was pressed: a card, or a pile's place.
+    pub entity: Entity,
+    /// Its pile.
+    pub zone: String,
+    /// The card's place from the top of its pile (1 for the top), when its face is shown.
+    pub from_top: Option<usize>,
+    /// The turn as it was before the press, to go back to.
+    pub before: Option<Turn>,
+    /// Whether the pointer has left what was pressed with the button down.
+    pub left: bool,
+    /// Whether it carries the cards in hand under the pointer.
+    pub carrying: bool,
+}
+
+/// What letting go of a press on cards does with the pointer `over` a pile (or none):
+/// `puts` says whether a click on a pile would put what is in hand on it.
+pub fn let_go_cards(press: &CardPress, over: Option<&str>, puts: impl Fn(&str) -> bool) -> LetGo {
+    if !press.left {
+        return LetGo::Click(press.zone.clone());
+    }
+    if !press.carrying {
+        return LetGo::Nothing;
+    }
+    match over {
+        Some(at) if at != press.zone && puts(at) => LetGo::Drop(at.to_string()),
+        _ => LetGo::Restore,
     }
 }
 
@@ -127,6 +172,12 @@ pub fn let_go(
 /// board: the press is let go of without a click, and the turn is as it was before it. Whether
 /// there was one (so it is not also a step back).
 pub fn cancel(drag: &mut ResMut<Drag>, watch: &mut ResMut<WatchStatus>) -> bool {
+    if let Some(press) = drag.1.take() {
+        if press.carrying {
+            restore(watch, press.before);
+        }
+        return true;
+    }
     let Some(press) = drag.0.take() else {
         return false;
     };
@@ -136,7 +187,8 @@ pub fn cancel(drag: &mut ResMut<Drag>, watch: &mut ResMut<WatchStatus>) -> bool 
     true
 }
 
-fn restore(watch: &mut ResMut<WatchStatus>, before: Option<Turn>) {
+/// The turn put back as it was before a press, `before`.
+pub fn restore(watch: &mut ResMut<WatchStatus>, before: Option<Turn>) {
     if watch.turn != before {
         watch.turn = before;
     }
