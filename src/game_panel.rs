@@ -11,7 +11,7 @@ use std::time::Instant;
 use bevy::prelude::*;
 
 use crate::appearance::Appearances;
-use crate::browser::{Action, button, buttons, colors, line, seat_dot};
+use crate::browser::{Action, button, buttons, colors, dotted_button, line, said, seat_dots};
 use crate::clock;
 use crate::downloads::Downloads;
 use crate::fonts::UiFonts;
@@ -19,7 +19,7 @@ use crate::lobby;
 use crate::net::api::{GameInfo, Gesture};
 use crate::net::{Connection, Net, Resign, ServerStatus, Target, WatchStatus, watch};
 use crate::play::{Stage, Turn};
-use crate::table::Table;
+use crate::table::{Said, Table};
 use crate::voice_chat::{self, VoiceChat};
 
 pub struct GamePanelPlugin {
@@ -167,10 +167,10 @@ fn rebuild(
                     game(p, f, table, &appearances);
                     score_sheet(p, f, table, &appearances);
                     if let Some(turn) = &watching.turn {
-                        your_turn(p, f, table, turn);
+                        your_turn(p, f, table, turn, &appearances);
                     }
                     waiting_for_players(p, f, table);
-                    lobby::draw(p, f, table, watching.lobby_problem.as_ref());
+                    lobby::draw(p, f, table, &appearances, watching.lobby_problem.as_ref());
                     resigning(p, f, table, &watching.resign);
                     voice_chat::draw(p, f, &voice, table);
                 }
@@ -247,8 +247,8 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
             ..default()
         })
         .with_children(|row| {
-            row.spawn(seat_dot(
-                appearances.seat_paint(&table.info.id, &seat.color, seat.seat),
+            row.spawn(seat_dots(
+                appearances.seat_paints(&table.info.id, seat),
                 14.0,
             ));
             let font = if to_move || won {
@@ -293,17 +293,42 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
     } else {
         colors::TEXT
     };
-    let summary = if table.to_play() {
-        "Your move.".to_string()
-    } else {
-        table.summary()
+    let summary = match table.state.impulse_seat {
+        Some(seat) if table.to_play() => vec![Said::Seat(seat), Said::words("Your move.")],
+        _ => table.told(),
     };
-    p.spawn(line(f.semibold(15.0), color, &summary));
+    let dots = |seat: u32| seat_paints(table, appearances, seat);
+    p.spawn(said(f.semibold(15.0), color, &summary, &dots, 12.0));
     // What the seat on impulse is asked, as the server words it, for everyone watching; the
     // player's own is the hint under their move (`your_turn`).
     if let Some(words) = asked(table) {
         p.spawn(line(f.regular(14.0), colors::TEXT, words));
     }
+}
+
+/// The paint of each color a seat of the table plays.
+fn seat_paints(table: &Table, appearances: &Appearances, seat: u32) -> Vec<Color> {
+    table
+        .info
+        .seats
+        .iter()
+        .find(|d| d.seat == seat)
+        .map(|d| appearances.seat_paints(&table.info.id, d))
+        .unwrap_or_default()
+}
+
+/// The paint of a choice that names a color some seat of the game plays (a stone of one of a
+/// seat's colors), shown beside its name; none for any other choice.
+fn choice_paint(table: &Table, appearances: &Appearances, choice: &Gesture) -> Option<Color> {
+    if choice.kind != "piece" {
+        return None;
+    }
+    let seat = table
+        .info
+        .seats
+        .iter()
+        .find(|d| d.played().any(|c| c == choice.value))?;
+    Some(appearances.seat_paint(&table.info.id, &choice.value, seat.seat))
 }
 
 /// A seat's counters of the view that the game's look has the panel show (`[panel]
@@ -477,7 +502,13 @@ fn resigning(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, resign: &
 }
 
 /// What the player may do on their impulse.
-fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Turn) {
+fn your_turn(
+    p: &mut ChildSpawnerCommands,
+    f: &UiFonts,
+    table: &Table,
+    turn: &Turn,
+    appearances: &Appearances,
+) {
     if let Some(problem) = &turn.problem {
         p.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
@@ -505,7 +536,11 @@ fn your_turn(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, turn: &Tu
                 Some(words) => words.to_string(),
                 None => choice_label(&table.info, &choice),
             };
-            row.spawn(button(f, &label, Action::Choose(choice.clone())));
+            let action = Action::Choose(choice.clone());
+            match choice_paint(table, appearances, &choice) {
+                Some(paint) => row.spawn(dotted_button(f, &label, action, paint)),
+                None => row.spawn(button(f, &label, action)),
+            };
         }
         if turn.can_play() {
             row.spawn(button(f, "Play", Action::Submit));
@@ -799,5 +834,60 @@ mod tests {
         );
         table.info.id = "other".into();
         assert_eq!(counts(&table, &appearances, 2), "", "a game with no look");
+    }
+
+    #[test]
+    fn a_seat_of_two_colors_has_two_dots_and_a_choice_of_one_has_its_dot() {
+        let appearances = Appearances(vec![
+            crate::appearance::Appearance::parse(
+                "games = [\"g\"]\n[seats.red]\npaint = [0.6, 0.2, 0.1]\n\
+                 [seats.yellow]\npaint = [0.7, 0.5, 0.2]",
+            )
+            .unwrap(),
+        ]);
+        let seat = |seat: u32, color: &str, colors: &[&str]| crate::net::api::SeatDef {
+            seat,
+            color: color.into(),
+            label: format!("Seat {seat}"),
+            colors: colors.iter().map(|c| c.to_string()).collect(),
+        };
+        let table = crate::table::Table::new(crate::net::session::Opened {
+            room_code: "AB12CD".into(),
+            info: GameInfo {
+                id: "g".into(),
+                seats: vec![seat(1, "red", &["red", "yellow"]), seat(2, "blue", &[])],
+                ..GameInfo::default()
+            },
+            game: serde_json::from_str(r#"{"game_def_id":"g","status":"active","seats":[]}"#)
+                .unwrap(),
+            state: serde_json::from_str(r#"{"state":{"cells":{}},"status":"active","move_seq":0}"#)
+                .unwrap(),
+            bots: vec![],
+        });
+        let red = Color::srgb(0.6, 0.2, 0.1);
+        let yellow = Color::srgb(0.7, 0.5, 0.2);
+        assert_eq!(seat_paints(&table, &appearances, 1), [red, yellow]);
+        assert_eq!(
+            seat_paints(&table, &appearances, 2),
+            [crate::look::seat_paint("blue", 2)],
+            "a color the look does not paint: the standard look's"
+        );
+        assert!(seat_paints(&table, &appearances, 3).is_empty());
+        let g = |kind: &str, value: &str| Gesture {
+            kind: kind.into(),
+            value: value.into(),
+        };
+        assert_eq!(
+            choice_paint(&table, &appearances, &g("piece", "yellow")),
+            Some(yellow)
+        );
+        assert_eq!(
+            choice_paint(&table, &appearances, &g("piece", "queen")),
+            None
+        );
+        assert_eq!(
+            choice_paint(&table, &appearances, &g("action", "red")),
+            None
+        );
     }
 }

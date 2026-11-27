@@ -33,7 +33,7 @@ paint = [0.66, 0.20, 0.12]
 
 [seats.yellow]
 pieces = "tiger_eye"
-paint = [0.78, 0.55, 0.20]
+paint = [0.66, 0.46, 0.16]
 
 [seats.blue]
 pieces = "lapis"

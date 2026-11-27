@@ -11,6 +11,31 @@ use crate::clock::Timing;
 use crate::net::api::{BotInfo, Event, Game, GameInfo, GameSeat, GameState};
 use crate::net::session::Opened;
 
+/// A piece of a line of words that names seats: words, or a seat whose dots stand before the
+/// name that follows (Bingle's ADR 0154: wherever a seat is named, its paint is beside it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Said {
+    Words(String),
+    Seat(u32),
+}
+
+impl Said {
+    pub fn words(w: impl Into<String>) -> Said {
+        Said::Words(w.into())
+    }
+}
+
+/// A line's words alone, as they read.
+#[cfg(test)]
+pub fn words(said: &[Said]) -> String {
+    said.iter()
+        .filter_map(|s| match s {
+            Said::Words(w) => Some(w.as_str()),
+            Said::Seat(_) => None,
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Table {
     pub room_code: String,
@@ -237,8 +262,21 @@ impl Table {
     }
 
     /// Where the game stands, in words.
+    #[cfg(test)]
     pub fn summary(&self) -> String {
+        words(&self.told())
+    }
+
+    /// Where the game stands, in words, with the seats they name: whose impulse it is, who
+    /// won, who drew.
+    pub fn told(&self) -> Vec<Said> {
         let s = &self.state;
+        let named = |seat: u32, then: &str| {
+            vec![
+                Said::Seat(seat),
+                Said::words(format!("{}{then}", self.player(seat))),
+            ]
+        };
         match s.status.as_str() {
             "finished" => {
                 let how = match s.end_reason.as_str() {
@@ -246,27 +284,33 @@ impl Table {
                     r => format!(" ({})", r.replace(['_', '-'], " ")),
                 };
                 if let Some(w) = s.winner_seat {
-                    format!("{} won{how}.", self.player(w))
+                    named(w, &format!(" won{how}."))
                 } else if s.all_lost {
-                    format!("Everybody lost{how}.")
+                    vec![Said::words(format!("Everybody lost{how}."))]
                 } else if !s.drawn_seats.is_empty() {
-                    let names: Vec<String> =
-                        s.drawn_seats.iter().map(|&x| self.player(x)).collect();
-                    format!("A draw between {}{how}.", names.join(" and "))
+                    let mut out = vec![Said::words("A draw between ")];
+                    for (i, &seat) in s.drawn_seats.iter().enumerate() {
+                        if i > 0 {
+                            out.push(Said::words(" and "));
+                        }
+                        out.extend(named(seat, ""));
+                    }
+                    out.push(Said::words(format!("{how}.")));
+                    out
                 } else {
-                    format!("The game is over{how}.")
+                    vec![Said::words(format!("The game is over{how}."))]
                 }
             }
             "active" => match s.impulse_seat {
-                Some(seat) => format!("{} to move.", self.player(seat)),
-                None => "Playing.".into(),
+                Some(seat) => named(seat, " to move."),
+                None => vec![Said::words("Playing.")],
             },
             "waiting" if self.info.seats.iter().any(|d| self.is_open(d.seat)) => {
-                "Waiting for players.".into()
+                vec![Said::words("Waiting for players.")]
             }
-            "waiting" if self.game.lobby => "Waiting for the start.".into(),
-            "waiting" => "Waiting.".into(),
-            other => format!("{}.", capitalised(other)),
+            "waiting" if self.game.lobby => vec![Said::words("Waiting for the start.")],
+            "waiting" => vec![Said::words("Waiting.")],
+            other => vec![Said::words(format!("{}.", capitalised(other)))],
         }
     }
 }
@@ -538,6 +582,34 @@ mod tests {
         t.state.end_reason = String::new();
         assert_eq!(t.summary(), "A draw between Ana and Blue.");
         assert!(t.finished());
+    }
+
+    #[test]
+    fn every_seat_the_summary_names_stands_before_its_name() {
+        let w = Said::words;
+        let mut t = table(0);
+        assert_eq!(t.told(), [Said::Seat(1), w("Ana to move.")]);
+        t.state.status = "finished".into();
+        t.state.impulse_seat = None;
+        t.state.winner_seat = Some(2);
+        assert_eq!(t.told(), [Said::Seat(2), w("Blue won.")]);
+        t.state.winner_seat = None;
+        t.state.drawn_seats = vec![1, 2];
+        assert_eq!(
+            t.told(),
+            [
+                w("A draw between "),
+                Said::Seat(1),
+                w("Ana"),
+                w(" and "),
+                Said::Seat(2),
+                w("Blue"),
+                w("."),
+            ]
+        );
+        t.state.drawn_seats.clear();
+        t.state.all_lost = true;
+        assert_eq!(t.told(), [w("Everybody lost.")], "no seat named, no dot");
     }
 
     #[test]

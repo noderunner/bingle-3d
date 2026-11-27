@@ -733,6 +733,15 @@ pub struct SeatDef {
     pub colors: Vec<String>,
 }
 
+impl SeatDef {
+    /// Every color the seat plays, its `color` first: `colors` where the server lists several,
+    /// else its one `color`.
+    pub fn played(&self) -> impl Iterator<Item = &str> {
+        let one = self.colors.is_empty().then_some(self.color.as_str());
+        self.colors.iter().map(String::as_str).chain(one)
+    }
+}
+
 /// The board as the rules see it.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Board {

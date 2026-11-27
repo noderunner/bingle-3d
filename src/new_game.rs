@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 
 use crate::appearance::Appearances;
-use crate::browser::{Action, button, buttons, chip, colors, line, seat_dot};
+use crate::browser::{Action, button, buttons, chip, colors, line, seat_dots};
 use crate::fonts::UiFonts;
 use crate::net::api::{BotInfo, GameInfo};
 use crate::net::session::Problem;
@@ -233,10 +233,7 @@ pub fn draw(
                     ..default()
                 })
                 .with_children(|row| {
-                    row.spawn(seat_dot(
-                        appearances.seat_paint(&form.def_id, &seat.color, seat.seat),
-                        12.0,
-                    ));
+                    row.spawn(seat_dots(appearances.seat_paints(&form.def_id, seat), 12.0));
                     row.spawn(line(f.semibold(14.0), colors::TEXT, &seat.label));
                 });
             block.spawn(buttons()).with_children(|row| {
