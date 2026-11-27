@@ -517,13 +517,13 @@ impl Kit {
                 continue;
             }
             let seat = table.info.seats.iter().find(|s| s.color == word);
-            let colour = match seat {
-                Some(s) => appearances.seat_colour(&table.info.id, &word, s.seat),
-                None => look::seat_colour(&word, 0),
+            let paint = match seat {
+                Some(s) => appearances.seat_paint(&table.info.id, &word, s.seat),
+                None => look::seat_paint(&word, 0),
             }
             .to_srgba();
             let spec = ink(MaterialSpec {
-                tint: Some([colour.red, colour.green, colour.blue]),
+                tint: Some([paint.red, paint.green, paint.blue]),
                 ..default()
             });
             seals.insert(word, build(&spec));

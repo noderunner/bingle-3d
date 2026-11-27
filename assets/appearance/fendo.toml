@@ -36,11 +36,11 @@ fence-w = [-1, 0]
 
 [seats.white]
 pieces = "boxwood"
-colour = [0.90, 0.80, 0.62]
+paint = [0.90, 0.80, 0.62]
 
 [seats.orange]
 pieces = "orange"
-colour = [0.86, 0.45, 0.14]
+paint = [0.86, 0.45, 0.14]
 
 [materials.boxwood]
 wood = "maple"

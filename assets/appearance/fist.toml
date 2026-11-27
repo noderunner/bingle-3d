@@ -37,16 +37,16 @@ stands = "upright"
 
 [seats.white]
 pieces = "boxwood"
-colour = [0.90, 0.80, 0.62]
+paint = [0.90, 0.80, 0.62]
 
 [seats.black]
 pieces = "ebonised"
-colour = [0.13, 0.11, 0.10]
+paint = [0.13, 0.11, 0.10]
 
-# The pawn's colour, which no seat plays.
+# The pawn's color, which no seat plays.
 [seats.green]
 pieces = "verdigris"
-colour = [0.30, 0.62, 0.52]
+paint = [0.30, 0.62, 0.52]
 
 # As in `chessmen.toml`.
 [materials.boxwood]

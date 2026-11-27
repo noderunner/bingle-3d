@@ -26,11 +26,11 @@ material = "red"
 
 [seats.white]
 pieces = "boxwood"
-colour = [0.90, 0.80, 0.62]
+paint = [0.90, 0.80, 0.62]
 
 [seats.black]
 pieces = "ebonised"
-colour = [0.13, 0.11, 0.10]
+paint = [0.13, 0.11, 0.10]
 
 # Pale wood, polished.
 [materials.boxwood]

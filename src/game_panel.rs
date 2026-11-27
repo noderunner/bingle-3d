@@ -248,7 +248,7 @@ fn game(p: &mut ChildSpawnerCommands, f: &UiFonts, table: &Table, appearances: &
         })
         .with_children(|row| {
             row.spawn(seat_dot(
-                appearances.seat_colour(&table.info.id, &seat.color, seat.seat),
+                appearances.seat_paint(&table.info.id, &seat.color, seat.seat),
                 14.0,
             ));
             let font = if to_move || won {

@@ -51,11 +51,11 @@ size = 0.8
 
 [seats.white]
 pieces = "boxwood"
-colour = [0.90, 0.80, 0.62]
+paint = [0.90, 0.80, 0.62]
 
 [seats.black]
 pieces = "ebonised"
-colour = [0.13, 0.11, 0.10]
+paint = [0.13, 0.11, 0.10]
 
 # As in `chessmen.toml`: pale wood, polished, and dark wood stained near black.
 [materials.boxwood]

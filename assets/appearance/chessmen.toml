@@ -26,14 +26,14 @@ stands = "upright"
 model = "models/chess/king.glb"
 stands = "forward"
 
-# Each seat, by its colour word: what its pieces are made of, and its colour in the panels.
+# Each seat, by its color: what its pieces are made of, and its paint in the panels.
 [seats.white]
 pieces = "boxwood"
-colour = [0.90, 0.80, 0.62]
+paint = [0.90, 0.80, 0.62]
 
 [seats.black]
 pieces = "ebonised"
-colour = [0.13, 0.11, 0.10]
+paint = [0.13, 0.11, 0.10]
 
 # Pale wood, polished.
 [materials.boxwood]

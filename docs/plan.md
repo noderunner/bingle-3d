@@ -28,11 +28,18 @@ being changed:
   selections and their gestures, and posts a move by its notation.
 - **The server says what things are; each client decides how they look**
   ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
-  Seat colour words (`red`) are identifiers, not colours. Facts such as tints and badges arrive by
+  A seat's color (`red`) is a name, not a value to draw with: what this client draws it as is its
+  paint, its own, which the server is never told
+  ([ADR 0154](https://github.com/noderunner/bingle/blob/main/docs/decisions/0154-a-color-is-a-name-and-paint-is-each-clients-own.md)).
+  The standard look paints a color whose name is a color word the client knows as the word says,
+  and any other by seat (`look::seat_paint`); a game's look may paint it otherwise
+  (`seats.<color>.paint`, `appearance::seat_paint`), and nothing else turns a color into paint.
+  Facts such as tints and badges arrive by
   name, with words that explain them; their look is ours to choose. The web page's `web.yaml` is
   the web page's: we may read it for hints, but must not depend on it.
 - **Words** ([ADR 0114](https://github.com/noderunner/bingle/blob/main/docs/decisions/0114-impulses-selections-moves-and-gestures.md)):
-  impulse, selection, move, ply and gesture mean here what they mean in Bingle, in code and docs.
+  impulse, selection, move, ply and gesture mean here what they mean in Bingle, in code and docs;
+  and seat, color, label and paint (ADR 0154), in `CLAUDE.md`'s Words.
 - **The connection must be secure** ([ADR 0065](https://github.com/noderunner/bingle/blob/main/docs/decisions/0065-the-connection-must-be-secure.md)):
   plain HTTP only to loopback; otherwise HTTPS/WSS, including a server's self-signed certificate,
   which the client should accept by its SHA-256 fingerprint rather than by turning checks off.
@@ -637,9 +644,9 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   memory, so the woods stay at 2K. Oak was tried and left out: its open grain caught too much
   glare.
 - The appearance file (`appearance.rs`, decided: TOML): per game id, the pieces' model, what each
-  seat's pieces and rim are made of, and each seat's colour (in the panels, and shading its
-  cells). Hex's: slate and clamshell stones (the shell a little translucent), the slate side's rim
-  stained ebony and the shell side's in maple.
+  seat's pieces and rim are made of, and each seat's paint (in the panels, and shading its
+  cells; `colour` until format 2 of the file). Hex's: slate and clamshell stones (the shell a
+  little translucent), the slate side's rim stained ebony and the shell side's in maple.
 - As built. JPEG textures get mipmaps and a repeating, anisotropic sampler when they load, and
   each material using one is built again (Bevy does not rebuild a material when its image
   changes). Bevy's `jpeg` feature is the only new code (zune-jpeg). PCSS soft shadows were left
@@ -1034,8 +1041,11 @@ for Bingle's own Draughts fixture.
   one it gives that game, or its only one. It may name the client's own models, materials and
   sounds, as a private look does. Of several appearance files in a look, the one that names the
   game is read, else the only one.
-- **The appearance file has a format number** (`format`, now 1): a look from a server must say
-  it; a built-in or private one may leave it out.
+- **The appearance file has a format number** (`format`, now 2): a look from a server must say
+  it; a built-in or private one may leave it out. Format 2 (2026-11-27, ADR 0154) calls a seat's
+  paint `paint`, which format 1 called `colour`; a file of format 1 is still read, `colour` and
+  all, and a client that reads only format 1 leaves a file of format 2 out, as it does any later
+  format, and draws the game from its defaults.
 - **Tried** against a Bingle built from its main branch with the Draughts fixture pack, marked
   private, and this repository's `tests/pack/clients/bingle-3d/` as its folder
   (`scripts/pack-server.sh`): the game is listed with the pack's picture, and opening it fetches

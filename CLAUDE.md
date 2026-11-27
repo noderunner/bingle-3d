@@ -120,7 +120,7 @@ These are Bingle's decisions; the client is built around them, not around changi
   them as the player clicks; it never decides legality, and it holds no rules.
 - **The server says what things are; the client decides how they look**
   ([ADR 0124](https://github.com/noderunner/bingle/blob/main/docs/decisions/0124-the-server-says-what-things-are-clients-decide-how-they-look.md)).
-  A seat's colour word is an identifier, not a colour. Every game must draw from its meaning alone,
+  A seat's color is a name, not a value to draw with (Words, below). Every game must draw from its meaning alone,
   with generic defaults; a per-game appearance improves that and is never required.
 - **No game is named in shared code.** Game-specific looks live in per-game appearance files.
 - **Commercial games stay out of this repository**
@@ -137,6 +137,21 @@ These are Bingle's decisions; the client is built around them, not around changi
   agrees, never by turning certificate checks off.
 
 ## Words
+
+[ADR 0154](https://github.com/noderunner/bingle/blob/main/docs/decisions/0154-a-color-is-a-name-and-paint-is-each-clients-own.md)
+defines these four, used the same way here as in Bingle:
+
+| Word | Meaning |
+|---|---|
+| **seat** | a place at the table: its turn in the order, its clock, its result |
+| **color** | a name the rules give a set of pieces (`white`, `yellow`, `grey`): an identifier from the API, never a value to draw with |
+| **label** | what players call a seat ("White", "Warm", "Attackers") |
+| **paint** | what this client draws a color as: an sRGB value, a material |
+
+A field, variable or parameter called `color` holds a name, and a value to draw with is called
+`paint`; Bevy's `Color` type keeps its name. **One resolver turns a color into paint**
+(`look::seat_paint`, the standard look, and `appearance::seat_paint`, a game's look over it), and
+no other code reasons about hue. The word is spelled `color`.
 
 [ADR 0114](https://github.com/noderunner/bingle/blob/main/docs/decisions/0114-impulses-selections-moves-and-gestures.md)
 defines these; use them the same way in code, docs and names.
@@ -317,7 +332,7 @@ A game's own rules and its players' words keep their terms.
   has one, or two sides (`sides`, `up`: a disc light on one side and dark on the other, each
   seat's its own side up; `src/sides.rs`, no Bevy systems, which half is which and how one
   changing hands is turned over, `board::dress_sides` and `flip_pieces` drawing it); what a
-  seat's pieces and goal edges are made of, a seat's colour in the panels, the picture on its
+  seat's pieces and goal edges are made of, a seat's paint in the panels (`seats.<color>.paint`), the picture on its
   card in the main screen, sounds of its own as it is played in place of every game's
   (`[sounds]`), parts of its model in materials of their own (`parts`: an engraving's paint,
   every seat's alike; or a seat's own for a part, `seats.<word>.parts`: a ring's trim, gold on
@@ -345,7 +360,7 @@ A game's own rules and its players' words keep their terms.
   `on = "table"` no board at all: the cells unseen on the table, raised to the top of what
   stands on them (`raise_cells`), the camera and the supply kept to the middle (`table_frame`); `BoardWood` is its wood, chosen by `src/wood_choice.rs`
   (stopgap buttons), and the materials made of it are built again when it changes.
-  `src/look.rs`: generic defaults for how things look (a seat's colour, the woods, the stone),
+  `src/look.rs`: generic defaults for how things look (a seat's paint in the standard look, the woods, the stone),
   and `MaterialSpec`, a material as data (its `wood` may be `board`, the board's, or `contrast`,
   one that stands out against it: an inlay; `metallic` makes it a metal); a wooden mesh needs texture coordinates in metres
   (`world_uvs`). Do not read `shape`, `style` or other fields ADR 0124 moves to `web.yaml`: they

@@ -12,18 +12,18 @@ games = ["hex-7", "hex-9", "hex-11", "hex-13"]
 [pieces.stone]
 model = "models/stone.glb"
 
-# Each seat, by its colour word, which is a name and not a colour: what its pieces are made of,
-# what the board's rim along the edges it must connect is made of, and its colour, in the panels
-# and shading the cells along those edges.
+# Each seat, by its color, which is a name and not a value to draw with: what its pieces are made
+# of, what the board's rim along the edges it must connect is made of, and its paint, in the
+# panels and shading the cells along those edges.
 [seats.red]
 pieces = "slate"
 goal = "ebony"
-colour = [0.13, 0.13, 0.14]
+paint = [0.13, 0.13, 0.14]
 
 [seats.blue]
 pieces = "shell"
 goal = "maple"
-colour = [0.92, 0.91, 0.87]
+paint = [0.92, 0.91, 0.87]
 
 # Materials (`look::MaterialSpec`). `albedo` is a texture, or `wood` one of the woods in
 # `src/look.rs` (`board`: the board's own); `tint` (sRGB) multiplies its colour, as a stain does.

@@ -26,22 +26,22 @@ stones = "models/bowl_stones.glb"
 material = "bowl"
 size = 0.62
 
-# Each colour word: what its stones are made of, and its colour in the panels.
+# Each color: what its stones are made of, and its paint in the panels.
 [seats.red]
 pieces = "jasper"
-colour = [0.66, 0.20, 0.12]
+paint = [0.66, 0.20, 0.12]
 
 [seats.yellow]
 pieces = "tiger_eye"
-colour = [0.78, 0.55, 0.20]
+paint = [0.78, 0.55, 0.20]
 
 [seats.blue]
 pieces = "lapis"
-colour = [0.16, 0.26, 0.66]
+paint = [0.16, 0.26, 0.66]
 
 [seats.black]
 pieces = "black_slate"
-colour = [0.13, 0.13, 0.15]
+paint = [0.13, 0.13, 0.15]
 
 # Polished: a glossy coat over a stone that is itself fairly smooth.
 [materials.jasper]

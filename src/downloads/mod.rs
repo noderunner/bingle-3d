@@ -521,7 +521,8 @@ albedo = "textures/jade.png"
     fn a_look_in_a_later_format_is_left_out() {
         let (mut app, _inbox) = app();
         hold(&mut app);
-        let later = LOOK.replace("format = 1", "format = 2\nnew_thing = true");
+        let next = crate::appearance::FORMAT + 1;
+        let later = LOOK.replace("format = 1", &format!("format = {next}\nnew_thing = true"));
         done(
             &mut app,
             vec![file("appearance/made-up.toml", later.as_bytes())],
@@ -531,7 +532,7 @@ albedo = "textures/jade.png"
         assert!(world.resource::<WatchStatus>().table.is_some(), "drawn");
         assert!(matches!(
             world.resource::<Downloads>().look("made-up-1.0.0"),
-            Some(Look::LeftOut(e)) if e.contains("format 2")
+            Some(Look::LeftOut(e)) if e.contains(&format!("format {next}"))
         ));
     }
 

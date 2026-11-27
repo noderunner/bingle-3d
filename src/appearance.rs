@@ -11,11 +11,12 @@
 //!   model's two parts (`sides`) and which side each seat's are up (`up`); and the piece a move
 //!   of it `leaves` where it started (a disc dropped in a ring that then moves), shown while
 //!   the move is built, since the server does not say;
-//! - `seats.<colour word>.pieces` and `.goal`: the material a seat's pieces are made of, and that
-//!   its goal's edges are stained; `.colour`, the seat's colour in the panels; `.parts`, the
-//!   material of a part of its pieces' models, by the part's name, where one seat's differs
-//!   from another's (a ring's trim, gold on one seat's and silver on the other's). A colour
-//!   word no seat plays may have one too, for the pieces that are nobody's;
+//! - `seats.<color>.pieces` and `.goal`: the material a seat's pieces are made of, and that
+//!   its goal's edges are stained; `.paint`, what the panels draw the color as (`colour` in a
+//!   file of format 1, still read); `.parts`, the material of a part of its pieces' models, by
+//!   the part's name, where one seat's differs from another's (a ring's trim, gold on one
+//!   seat's and silver on the other's). A color no seat plays may have one too, for the pieces
+//!   that are nobody's;
 //! - `materials.<name>`: those materials (`look::MaterialSpec`);
 //! - `board.on`: `points` for a game played where the board's lines cross, as Go is, rather
 //!   than in its spaces (the default, `cells`); `table` for one played on the table itself, with
@@ -82,7 +83,9 @@ use crate::look::{self, MaterialSpec};
 /// (`format`, 1 when it does not); one written for a later format is not read. Raise it when a
 /// file this client reads would be read otherwise by an older one, and say what changed here:
 /// - 1: the first (2026-11-26).
-pub const FORMAT: u32 = 1;
+/// - 2: a seat's `colour` is its `paint` (2026-11-27, Bingle's ADR 0154). A file of format 1
+///   that says `colour` is still read; a client that reads only 1 leaves a file of 2 out.
+pub const FORMAT: u32 = 2;
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -543,9 +546,11 @@ pub struct SeatLook {
     pub pieces: Option<String>,
     /// The material of the edges of this seat's goal.
     pub goal: Option<String>,
-    /// The seat's colour wherever the interface shows it (the dot by its name), in sRGB: what its
-    /// pieces look like, rather than its colour word.
-    pub colour: Option<[f32; 3]>,
+    /// What this client draws the color as wherever the interface shows the seat (the dot by
+    /// its name), in sRGB: what its pieces look like, rather than what its color's name says.
+    /// Format 1 called it `colour`.
+    #[serde(alias = "colour")]
+    pub paint: Option<[f32; 3]>,
     /// The material of a part of this seat's pieces' models after the first, by the part's
     /// name, on every piece whose model has such a part and whose look gives it nothing of its
     /// own (`PieceLook::parts`): a trim that is gold on one seat's pieces and silver on
@@ -1076,15 +1081,20 @@ impl Appearances {
         self.for_game(id)?.card.pictures.get(id).map(String::as_str)
     }
 
-    /// The colour a seat of a game is shown in: its appearance's, or the generic one.
-    pub fn seat_colour(&self, game: &str, word: &str, seat: u32) -> Color {
-        self.for_game(game)
-            .and_then(|a| a.seats.get(word)?.colour)
-            .map_or_else(
-                || look::seat_colour(word, seat),
-                |[r, g, b]| Color::srgb(r, g, b),
-            )
+    /// The paint a seat of a game is shown in: its appearance's, or the standard look's.
+    pub fn seat_paint(&self, game: &str, color: &str, seat: u32) -> Color {
+        seat_paint(self.for_game(game), color, seat)
     }
+}
+
+/// The paint a seat whose color is `color` is shown in, with this look (if the game has one):
+/// the look's, or the standard look's (`look::seat_paint`). With `look.rs`, the one place a
+/// color becomes paint (Bingle's ADR 0154).
+pub fn seat_paint(look: Option<&Appearance>, color: &str, seat: u32) -> Color {
+    look.and_then(|a| a.seats.get(color)?.paint).map_or_else(
+        || look::seat_paint(color, seat),
+        |[r, g, b]| Color::srgb(r, g, b),
+    )
 }
 
 pub struct AppearancePlugin;
@@ -1221,15 +1231,56 @@ mod tests {
     fn a_file_says_its_format_and_one_for_a_later_format_is_not_read() {
         assert_eq!(Appearance::parse("games = [\"a\"]").unwrap().format, None);
         assert_eq!(
-            Appearance::parse("format = 1\ngames = [\"a\"]")
+            Appearance::parse(&format!("format = {FORMAT}\ngames = [\"a\"]"))
                 .unwrap()
                 .format,
             Some(FORMAT)
         );
-        let later = Appearance::parse("format = 2\ngames = [\"a\"]\nhovers = true").unwrap_err();
-        assert!(later.contains("written for format 2"), "{later}");
+        assert_eq!(
+            Appearance::parse("format = 1\ngames = [\"a\"]")
+                .unwrap()
+                .format,
+            Some(1),
+            "an earlier format is read"
+        );
+        let next = FORMAT + 1;
+        let later = Appearance::parse(&format!("format = {next}\ngames = [\"a\"]\nhovers = true"))
+            .unwrap_err();
+        assert!(
+            later.contains(&format!("written for format {next}")),
+            "{later}"
+        );
         assert!(Appearance::parse("format = \"one\"").is_err());
         assert!(Appearance::parse("format = 0").is_err());
+    }
+
+    /// Format 1 called a seat's paint `colour`: a look a server offers may be written so, and
+    /// still gives its seat that paint.
+    #[test]
+    fn a_seats_paint_is_read_from_format_1s_colour_too() {
+        let seat = "[seats.white]\npieces = \"m\"\n";
+        let mine = "\n[materials.m]\ntint = [1, 1, 1]";
+        for text in [
+            format!("format = 1\ngames = [\"g\"]\n{seat}colour = [0.75, 0.3, 0.16]{mine}"),
+            format!("format = {FORMAT}\ngames = [\"g\"]\n{seat}paint = [0.75, 0.3, 0.16]{mine}"),
+            format!("games = [\"g\"]\n{seat}colour = [0.75, 0.3, 0.16]{mine}"),
+        ] {
+            let look = Appearance::parse(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            assert!(look.problems().is_empty(), "{:?}", look.problems());
+            assert_eq!(look.seats["white"].paint, Some([0.75, 0.3, 0.16]));
+            assert_eq!(
+                seat_paint(Some(&look), "white", 1),
+                Color::srgb(0.75, 0.3, 0.16),
+                "{text}"
+            );
+            assert_eq!(
+                seat_paint(Some(&look), "black", 2),
+                look::seat_paint("black", 2),
+                "a color the look leaves out has the standard look's paint"
+            );
+        }
+        let both = format!("games = [\"g\"]\n{seat}colour = [1, 0, 0]\npaint = [0, 1, 0]{mine}");
+        assert!(Appearance::parse(&both).is_err(), "one or the other");
     }
 
     #[test]
@@ -1404,13 +1455,13 @@ mod tests {
         assert!(hex.games.iter().any(|g| g == "hex-7"));
         assert!(all.for_game("no-such-game").is_none());
         assert_ne!(
-            all.seat_colour("hex-11", "red", 1),
-            look::seat_colour("red", 1),
+            all.seat_paint("hex-11", "red", 1),
+            look::seat_paint("red", 1),
             "Hex's red seat is shown as its stones are"
         );
         assert_eq!(
-            all.seat_colour("no-such-game", "red", 1),
-            look::seat_colour("red", 1)
+            all.seat_paint("no-such-game", "red", 1),
+            look::seat_paint("red", 1)
         );
     }
 

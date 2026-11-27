@@ -47,14 +47,14 @@ model = "models/bowl.glb"
 stones = "models/bowl_stones.glb"
 material = "bowl"
 
-# Each seat, by its colour word: what its stones are made of, and its colour in the panels.
+# Each seat, by its color: what its stones are made of, and its paint in the panels.
 [seats.black]
 pieces = "slate"
-colour = [0.13, 0.13, 0.14]
+paint = [0.13, 0.13, 0.14]
 
 [seats.white]
 pieces = "shell"
-colour = [0.92, 0.91, 0.87]
+paint = [0.92, 0.91, 0.87]
 
 # As in `hex.toml`.
 [materials.slate]

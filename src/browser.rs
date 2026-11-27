@@ -925,8 +925,8 @@ pub(crate) fn line(font: TextFont, colour: Color, text: &str) -> impl Bundle {
     (Text::new(text), font, TextColor(colour))
 }
 
-/// A seat's dot, in its colour, ringed so that a dark one still shows on a dark panel.
-pub(crate) fn seat_dot(colour: Color, size: f32) -> impl Bundle {
+/// A seat's dot, in its paint, ringed so that a dark one still shows on a dark panel.
+pub(crate) fn seat_dot(paint: Color, size: f32) -> impl Bundle {
     (
         Node {
             width: px(size),
@@ -936,7 +936,7 @@ pub(crate) fn seat_dot(colour: Color, size: f32) -> impl Bundle {
             flex_shrink: 0.0,
             ..default()
         },
-        BackgroundColor(colour),
+        BackgroundColor(paint),
         BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
     )
 }
