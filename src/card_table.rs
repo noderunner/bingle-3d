@@ -15,6 +15,12 @@
 //! the bare cloth, a right-click or Backspace puts them back. A click on the stock draws, turns the waste over or deals,
 //! whichever the game offers.
 //!
+//! They may be dragged too, as a piece on the board is (`drag.rs`): a press on a card, the
+//! pointer leaving it with the button down, lifts what a click would and carries it under the
+//! pointer, held near its edge (`hand::Held`); let go over a pile a click would put them on, it
+//! is that click, and anywhere else they go back. A press and a release on the card is the
+//! click. Every click on a patience's cards and places is such a press and release.
+//!
 //! A game of several seats is laid round the table by its look (`Layout::seated`), seen from
 //! the seat this client plays: its own hand fanned in front of it, the others' standing in the
 //! air, a trick in the middle with each card towards who played it (the zone's captions), and
@@ -29,8 +35,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use bevy::light::NotShadowCaster;
 use bevy::picking::Pickable;
-use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
-use bevy::picking::pointer::PointerButton;
+use bevy::picking::events::{PointerClick, PointerOut, PointerOver, PointerPress};
+use bevy::picking::pointer::{PointerAction, PointerButton, PointerInput};
 use bevy::prelude::*;
 
 use crate::appearance::{Appearance, Appearances, CardsLook};
@@ -38,13 +44,15 @@ use crate::assets;
 use crate::board::BoardBuilt;
 use crate::card_layout::{self, Layout, Placed};
 use crate::cursor::{Feel, Sense, TableFeel, Under};
+use crate::drag::{self, CardPress, Drag, LetGo};
+use crate::escape_menu::{self, EscapeMenu};
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
 use crate::net::api::{CardOnTable, Cards, GameInfo, Gesture, LegalSelection, Position};
 use crate::net::{Net, WatchStatus};
 use crate::patience::{self, Click};
-use crate::play::{self, Stage, Turn};
+use crate::play::{self, Outcome, Stage, Turn};
 use crate::props::{self, CARD, CARD_SIZE};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -57,6 +65,10 @@ impl Plugin for CardTablePlugin {
             .init_resource::<PutOn>()
             .init_resource::<Together>()
             .init_resource::<Appearances>()
+            .init_resource::<Drag>()
+            .init_resource::<Pointed>()
+            .add_message::<PointerInput>()
+            .add_observer(on_press)
             .add_message::<BoardBuilt>()
             .add_message::<Cue>()
             .add_observer(on_click)
@@ -69,6 +81,8 @@ impl Plugin for CardTablePlugin {
                 Update,
                 (
                     let_go,
+                    follow_cards,
+                    hold_cards.run_if(resource_changed::<Drag>),
                     sync_cards.run_if(
                         resource_changed::<WatchStatus>.or_eager(resource_changed::<Together>),
                     ),
@@ -251,6 +265,10 @@ pub enum LookClick {
 /// The pile the pointer is over, if any: its cards, or its place.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Aimed(pub Option<String>);
+
+/// The card or pile's place the pointer is over, if any: what a press there leaves.
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+struct Pointed(Option<Entity>);
 
 /// The pile a click put the cards in hand on, while that move is sent: they are shown there.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
@@ -1202,19 +1220,15 @@ fn on_click(
     roots: Query<&CardRoot>,
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
-    (mut put_on, mut together): (ResMut<PutOn>, ResMut<Together>),
+    mut together: ResMut<Together>,
 ) {
     if click.button != PointerButton::Primary {
         return;
     }
-    let (zone, from_top, known) = if let Ok(card) = cards.get(click.entity) {
-        (
-            card.zone.clone(),
-            card.shown.then_some(card.from_top),
-            card.known.then(|| card.key.clone()),
-        )
+    let (zone, known) = if let Ok(card) = cards.get(click.entity) {
+        (card.zone.clone(), card.known.then(|| card.key.clone()))
     } else if let Ok(pile) = places.get(click.entity) {
-        (pile.0.clone(), None, None)
+        (pile.0.clone(), None)
     } else if cloths.contains(click.entity) {
         // The bare cloth: what is in hand goes back, and what is chosen is let go.
         if in_hand(watch.turn.as_ref()).is_some() {
@@ -1231,34 +1245,50 @@ fn on_click(
         return;
     };
     let seq = watch.table.as_ref().map_or(0, |t| t.state.move_seq);
-    let by_look = watch
+    // A patience's cards and places are clicked by the press and the release (`follow_cards`).
+    let Some(look) = watch
         .table
         .as_ref()
         .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code))
-        .and_then(|r| r.by_look.as_ref());
-    if let Some(look) = by_look {
-        // A card of the hand, played by the click.
-        let played = known
-            .as_deref()
-            .and_then(|card| card_choice(look, card, &turn.choices()));
-        if let Some(choice) = played {
-            play::gesture(&net, &mut watch, &choice);
-            return;
-        }
-        match look_click(look, &zone, &together.at(seq), &turn.options) {
-            LookClick::Choose(chosen) => *together = Together { seq, chosen },
-            LookClick::Play(gestures) => {
-                together.chosen.clear();
-                play::enter_all(&net, &mut watch, &gestures);
-            }
-            LookClick::Nothing => {}
-        }
+        .and_then(|r| r.by_look.as_ref())
+    else {
+        return;
+    };
+    // A card of the hand, played by the click.
+    let played = known
+        .as_deref()
+        .and_then(|card| card_choice(look, card, &turn.choices()));
+    if let Some(choice) = played {
+        play::gesture(&net, &mut watch, &choice);
         return;
     }
+    match look_click(look, &zone, &together.at(seq), &turn.options) {
+        LookClick::Choose(chosen) => *together = Together { seq, chosen },
+        LookClick::Play(gestures) => {
+            together.chosen.clear();
+            play::enter_all(&net, &mut watch, &gestures);
+        }
+        LookClick::Nothing => {}
+    }
+}
+
+/// What a click on `zone` (on its card `from_top` from the top, when its face is shown, or on
+/// the pile) does in a patience, whether it is a press and a release there or cards dragged and
+/// let go there: lift cards, put down what is in hand (the move played), put it back, draw.
+fn click_pile(
+    net: &Net,
+    watch: &mut ResMut<WatchStatus>,
+    put_on: &mut PutOn,
+    zone: &str,
+    from_top: Option<usize>,
+) -> Outcome {
+    let Some(turn) = watch.turn.as_ref().filter(|t| t.stage == Stage::Choosing) else {
+        return Outcome::Ignored;
+    };
     let lifted = patience::lifted(&turn.gestures);
     let next = turn.choices();
     let held = lifted.as_ref().map(|(z, n)| (z.as_str(), *n));
-    match patience::click(&zone, from_top, held, &next, &turn.options) {
+    match patience::click(zone, from_top, held, &next, &turn.options) {
         Click::Gesture(g) => {
             if g.value.starts_with("to-") {
                 // Sent home, it is shown going to its suit's foundation, when that is known.
@@ -1268,12 +1298,180 @@ fn on_click(
                         home_of(table, lifted.as_ref()?)
                     })
                     .flatten();
-                put_on.0 = Some(home.unwrap_or(zone));
+                put_on.0 = Some(home.unwrap_or_else(|| zone.to_string()));
             }
-            play::gesture(&net, &mut watch, &g);
+            play::gesture(net, watch, &g)
         }
-        Click::PutBack => play::back(&mut watch),
-        Click::Nothing => {}
+        Click::PutBack => {
+            play::back(watch);
+            Outcome::Changed
+        }
+        Click::Nothing => Outcome::Ignored,
+    }
+}
+
+/// Whether a click on `zone` would put what is in hand on it.
+fn puts_on(turn: Option<&Turn>, zone: &str) -> bool {
+    let Some(turn) = turn.filter(|t| t.stage == Stage::Choosing) else {
+        return false;
+    };
+    let lifted = patience::lifted(&turn.gestures);
+    let held = lifted.as_ref().map(|(z, n)| (z.as_str(), *n));
+    matches!(
+        patience::click(zone, None, held, &turn.choices(), &turn.options),
+        Click::Gesture(g) if g.value.starts_with("to-")
+    )
+}
+
+/// Whether the watched game is a patience on the table (not one laid by its look).
+fn patience_shown(watch: &WatchStatus, roots: &Query<&CardRoot>) -> bool {
+    watch.table.as_ref().is_some_and(|t| {
+        roots
+            .iter()
+            .any(|r| r.room_code == t.room_code && r.by_look.is_none())
+    })
+}
+
+/// A press of the primary button on a patience's card or pile's place begins one (`drag.rs`).
+/// Presses bubble up from a card's parts to the card.
+fn on_press(
+    press: On<PointerPress>,
+    piles: Query<(&PileOf, Option<&CardAt>)>,
+    roots: Query<&CardRoot>,
+    watch: Res<WatchStatus>,
+    menu: Option<Res<EscapeMenu>>,
+    mut drag: ResMut<Drag>,
+) {
+    if press.button != PointerButton::Primary
+        || drag.pressed()
+        || !escape_menu::closed(menu.as_deref())
+        || !patience_shown(&watch, &roots)
+    {
+        return;
+    }
+    let Ok((pile, card)) = piles.get(press.entity) else {
+        return;
+    };
+    drag.1 = Some(CardPress {
+        pointer: press.pointer.id,
+        entity: press.entity,
+        zone: pile.0.clone(),
+        from_top: card.filter(|c| c.shown).map(|c| c.from_top),
+        before: watch.turn.clone(),
+        left: false,
+        carrying: false,
+    });
+}
+
+/// Follows a press on the cards while the button is down: the pointer leaving what was
+/// pressed (a drag, lifting what a click there would), and the button let go (the click, the
+/// click on the pile let go over, or the turn as it was). A turn that ends ends it; the escape
+/// menu cancels it.
+fn follow_cards(
+    mut drag: ResMut<Drag>,
+    mut inputs: MessageReader<PointerInput>,
+    (pointed, aimed): (Res<Pointed>, Res<Aimed>),
+    menu: Option<Res<EscapeMenu>>,
+    net: Res<Net>,
+    mut watch: ResMut<WatchStatus>,
+    mut put_on: ResMut<PutOn>,
+) {
+    let Some(pointer) = drag.1.as_ref().map(|p| p.pointer) else {
+        inputs.clear();
+        return;
+    };
+    let released = inputs
+        .read()
+        .filter(|i| {
+            i.pointer_id == pointer
+                && matches!(i.action, PointerAction::Release(PointerButton::Primary))
+        })
+        .count()
+        > 0;
+    let asked_at = |t: &Option<Turn>| t.as_ref().map(|t| t.asked_at);
+    if drag
+        .1
+        .as_ref()
+        .is_some_and(|p| p.before.is_some() && asked_at(&p.before) != asked_at(&watch.turn))
+    {
+        drag.1 = None;
+        return;
+    }
+    if !escape_menu::closed(menu.as_deref()) {
+        drag::cancel(&mut drag, &mut watch);
+        return;
+    }
+    let press = drag.1.as_ref().expect("a press");
+    if !press.left && pointed.0 != Some(press.entity) {
+        let (zone, from_top) = (press.zone.clone(), press.from_top);
+        let held = |w: &WatchStatus| in_hand(w.turn.as_ref()).map(|(z, _)| z);
+        // Lifted already (by a click, pressed on its own pile), they are taken up as they are.
+        if held(&watch).as_deref() != Some(zone.as_str()) {
+            let lifts = watch
+                .turn
+                .as_ref()
+                .filter(|t| t.stage == Stage::Choosing)
+                .is_some_and(|t| {
+                    let lifted = patience::lifted(&t.gestures);
+                    let held = lifted.as_ref().map(|(z, n)| (z.as_str(), *n));
+                    matches!(
+                        patience::click(&zone, from_top, held, &t.choices(), &t.options),
+                        Click::Gesture(g) if patience::lifted(std::slice::from_ref(&g)).is_some()
+                    )
+                });
+            if lifts {
+                click_pile(&net, &mut watch, &mut put_on, &zone, from_top);
+            }
+        }
+        let carrying = held(&watch).as_deref() == Some(zone.as_str());
+        let press = drag.1.as_mut().expect("a press");
+        press.left = true;
+        press.carrying = carrying;
+    }
+    if !released {
+        return;
+    }
+    let press = drag.1.take().expect("a press");
+    let turn = watch.turn.clone();
+    match drag::let_go_cards(&press, aimed.0.as_deref(), |at| puts_on(turn.as_ref(), at)) {
+        LetGo::Click(zone) => {
+            click_pile(&net, &mut watch, &mut put_on, &zone, press.from_top);
+        }
+        LetGo::Drop(at) => {
+            if click_pile(&net, &mut watch, &mut put_on, &at, None) == Outcome::Ignored {
+                drag::restore(&mut watch, press.before);
+            }
+        }
+        LetGo::Restore => drag::restore(&mut watch, press.before),
+        LetGo::Stay | LetGo::Nothing => {}
+    }
+}
+
+/// While a drag carries the cards in hand, what they follow is held under the pointer.
+fn hold_cards(
+    mut commands: Commands,
+    drag: Res<Drag>,
+    anchors: Query<(Entity, Has<Held>), With<Anchor>>,
+) {
+    let carrying = drag.carried_cards().is_some();
+    for (anchor, holding) in &anchors {
+        match (carrying, holding) {
+            (true, false) => {
+                commands.entity(anchor).insert((
+                    Held {
+                        board: BASE,
+                        lift: HELD_LIFT,
+                        scale: 1.0,
+                    },
+                    // Where the pointer is, not sliding there from where it was last.
+                    Visibility::Hidden,
+                ));
+            }
+            (false, true) => {
+                commands.entity(anchor).remove::<Held>();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1416,19 +1614,37 @@ fn moved(was: Transform, now: Transform) -> bool {
     was.translation.distance(now.translation) > 1e-5
 }
 
-fn on_over(over: On<PointerOver>, piles: Query<&PileOf>, mut aimed: ResMut<Aimed>) {
-    if let Ok(pile) = piles.get(over.entity)
-        && aimed.0.as_ref() != Some(&pile.0)
-    {
+fn on_over(
+    over: On<PointerOver>,
+    piles: Query<&PileOf>,
+    mut aimed: ResMut<Aimed>,
+    mut pointed: ResMut<Pointed>,
+) {
+    let Ok(pile) = piles.get(over.entity) else {
+        return;
+    };
+    if aimed.0.as_ref() != Some(&pile.0) {
         aimed.0 = Some(pile.0.clone());
+    }
+    if pointed.0 != Some(over.entity) {
+        pointed.0 = Some(over.entity);
     }
 }
 
-fn on_out(out: On<PointerOut>, piles: Query<&PileOf>, mut aimed: ResMut<Aimed>) {
-    if let Ok(pile) = piles.get(out.entity)
-        && aimed.0.as_ref() == Some(&pile.0)
-    {
+fn on_out(
+    out: On<PointerOut>,
+    piles: Query<&PileOf>,
+    mut aimed: ResMut<Aimed>,
+    mut pointed: ResMut<Pointed>,
+) {
+    let Ok(pile) = piles.get(out.entity) else {
+        return;
+    };
+    if aimed.0.as_ref() == Some(&pile.0) {
         aimed.0 = None;
+    }
+    if pointed.0 == Some(out.entity) {
+        pointed.0 = None;
     }
 }
 
@@ -1436,6 +1652,10 @@ fn on_out(out: On<PointerOut>, piles: Query<&PileOf>, mut aimed: ResMut<Aimed>) 
 mod tests {
     use super::*;
     use crate::net::session::Opened;
+    use bevy::camera::NormalizedRenderTarget;
+    use bevy::picking::backend::HitData;
+    use bevy::picking::events::Pointer;
+    use bevy::picking::pointer::{Location, PointerId};
     use serde_json::json;
 
     /// A small patience as the server describes it: four cards, a stock, a waste, a
@@ -1638,6 +1858,222 @@ mod tests {
             .iter(world)
             .count();
         assert_eq!(held, 0, "nothing in hand");
+    }
+
+    /// A column with a run of two on a card face down, an empty column and a foundation: the
+    /// ace may go home, or the run to the empty column.
+    fn run_table() -> Table {
+        table(
+            1,
+            json!({
+                "stock": {"cards": [{}]},
+                "waste": {},
+                "f1": {},
+                "t1": {"cards": [{}, {"id": "spades-2", "up": true}, {"id": "hearts-A", "up": true}]},
+                "t2": {}
+            }),
+        )
+    }
+
+    fn run_turn() -> Turn {
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        let option = |notation: &str, gestures: &[&str]| LegalSelection {
+            notation: notation.into(),
+            action: "patience".into(),
+            gestures: gestures.iter().map(|g| act(g)).collect(),
+            ..Default::default()
+        };
+        turn.options = vec![
+            option("t1-f", &["from-t1-1", "to-f"]),
+            option("t1-t2", &["from-t1-2", "to-t2"]),
+        ];
+        turn.stage = Stage::Choosing;
+        turn
+    }
+
+    /// A patience laid and ours to play, and what it asks of the server.
+    struct Patience {
+        app: App,
+        requests: std::sync::mpsc::Receiver<crate::net::Request>,
+    }
+
+    impl Patience {
+        fn new() -> Self {
+            let mut app = app();
+            let (net, requests) = Net::for_test();
+            app.insert_resource(net);
+            watch(&mut app, run_table(), Some(run_turn()));
+            app.update();
+            app.update();
+            Patience { app, requests }
+        }
+
+        fn place(&mut self, zone: &str) -> Entity {
+            let world = self.app.world_mut();
+            let mut places = world.query_filtered::<(Entity, &PileOf), With<Place>>();
+            places.iter(world).find(|(_, p)| p.0 == zone).unwrap().0
+        }
+
+        /// The pointer over `what` (a card or a place) and its pile, or over the bare cloth.
+        fn over(&mut self, what: Option<Entity>) {
+            let zone = what.and_then(|e| self.app.world().get::<PileOf>(e).map(|p| p.0.clone()));
+            self.app.world_mut().resource_mut::<Pointed>().0 = what;
+            self.app.world_mut().resource_mut::<Aimed>().0 = zone;
+            self.app.update();
+        }
+
+        fn press(&mut self, what: Entity) {
+            self.over(Some(what));
+            self.app.world_mut().trigger(PointerPress {
+                entity: what,
+                pointer: Pointer::new(PointerId::Mouse, nowhere()),
+                button: PointerButton::Primary,
+                hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                count: 1,
+            });
+            self.app.update();
+        }
+
+        fn release(&mut self) {
+            self.app.world_mut().write_message(PointerInput::new(
+                PointerId::Mouse,
+                nowhere(),
+                PointerAction::Release(PointerButton::Primary),
+            ));
+            self.app.update();
+            self.app.update();
+        }
+
+        fn turn(&self) -> &Turn {
+            let watch = self.app.world().resource::<WatchStatus>();
+            watch.turn.as_ref().expect("a turn")
+        }
+
+        fn gestures(&self) -> Vec<String> {
+            self.turn()
+                .gestures
+                .iter()
+                .map(|g| g.value.clone())
+                .collect()
+        }
+
+        fn held(&mut self) -> bool {
+            let world = self.app.world_mut();
+            let mut q = world.query_filtered::<(), (With<Anchor>, With<Held>)>();
+            q.iter(world).count() == 1
+        }
+
+        fn asked(&self) -> usize {
+            self.requests.try_iter().count()
+        }
+    }
+
+    fn nowhere() -> Location {
+        Location {
+            target: NormalizedRenderTarget::None {
+                width: 1,
+                height: 1,
+            },
+            position: Vec2::ZERO,
+        }
+    }
+
+    #[test]
+    fn a_run_dragged_to_a_column_plays_the_move() {
+        let mut p = Patience::new();
+        let two = card(&mut p.app, "spades-2");
+        let ace = card(&mut p.app, "hearts-A");
+        p.press(two);
+        assert!(p.gestures().is_empty(), "a press alone does nothing");
+        // Off the card with the button down: the run is lifted and carried under the pointer.
+        p.over(None);
+        assert_eq!(p.gestures(), ["from-t1-2"]);
+        assert!(p.held(), "under the pointer");
+        p.app.update();
+        assert_eq!(p.app.world().get::<InHand>(ace), Some(&InHand(1)));
+        let to = p.place("t2");
+        p.over(Some(to));
+        p.release();
+        assert_eq!(p.turn().made_notations(), ["t1-t2"], "the click on t2");
+        assert_ne!(p.turn().stage, Stage::Choosing);
+        assert!(p.asked() > 0, "played at once");
+        assert!(!p.held());
+        assert!(!p.app.world().resource::<Drag>().pressed());
+    }
+
+    #[test]
+    fn a_card_let_go_over_the_bare_cloth_goes_back() {
+        let mut p = Patience::new();
+        let ace = card(&mut p.app, "hearts-A");
+        p.press(ace);
+        p.over(None);
+        assert_eq!(p.gestures(), ["from-t1-1"]);
+        assert!(p.held());
+        p.release();
+        assert!(p.gestures().is_empty(), "back where it was");
+        assert!(!p.held());
+        assert_eq!(p.asked(), 0);
+        // Let go over a pile it may not go on, or its own: back too.
+        for elsewhere in ["t2", "t1"] {
+            p.press(ace);
+            p.over(None);
+            let at = p.place(elsewhere);
+            p.over(Some(at));
+            p.release();
+            assert!(p.gestures().is_empty(), "let go over {elsewhere}");
+            assert_eq!(p.asked(), 0);
+        }
+    }
+
+    #[test]
+    fn a_press_and_release_on_a_card_is_still_a_click() {
+        let mut p = Patience::new();
+        let ace = card(&mut p.app, "hearts-A");
+        p.press(ace);
+        p.release();
+        assert_eq!(p.gestures(), ["from-t1-1"], "lifted, over its pile");
+        assert!(!p.held(), "nothing under the pointer");
+        // A press and release on the foundation: put there, and played.
+        let home = p.place("f1");
+        p.press(home);
+        p.release();
+        assert_eq!(p.turn().made_notations(), ["t1-f"]);
+        assert!(p.asked() > 0);
+    }
+
+    #[test]
+    fn cards_lifted_by_a_click_are_dragged_on_from_where_they_wait() {
+        let mut p = Patience::new();
+        let ace = card(&mut p.app, "hearts-A");
+        let two = card(&mut p.app, "spades-2");
+        p.press(ace);
+        p.release();
+        let lifted = p.turn().clone();
+        // Pressed where it waits, over its own pile (the card under it), and carried off.
+        p.press(two);
+        p.over(None);
+        assert_eq!(p.gestures(), ["from-t1-1"], "not put back");
+        assert!(p.held());
+        // A right-click: lifted, as it was before the press.
+        p.app
+            .world_mut()
+            .run_system_cached(|mut drag: ResMut<Drag>, mut watch: ResMut<WatchStatus>| {
+                drag::cancel(&mut drag, &mut watch)
+            })
+            .unwrap();
+        p.app.update();
+        assert_eq!(*p.turn(), lifted);
+        assert!(!p.held());
+        p.release();
+        assert_eq!(*p.turn(), lifted, "the release that follows does nothing");
+        // Again, onto the foundation.
+        p.press(two);
+        p.over(None);
+        let home = p.place("f1");
+        p.over(Some(home));
+        p.release();
+        assert_eq!(p.turn().made_notations(), ["t1-f"]);
     }
 
     #[test]
