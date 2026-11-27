@@ -284,7 +284,7 @@ A game's own rules and its players' words keep their terms.
   look has `[fences]` has a bowl of them both seats take from, just off the board's side to the
   first seat's left where its supply leaves room (`bowl_place`) (`play::TakeUp`: a click takes
   one up, `Turn::take_up`; or it is taken up by itself once nothing else may follow,
-  `Turn::auto_take`). It is held under the pointer (`hand::Held`), the sides it may go on lit;
+  `Turn::auto_take`). It waits lifted over the bowl, the sides it may go on lit;
   the side nearest the pointer, or turned to with the wheel, is aimed at (`play::SideAim`,
   `board::fence_aim`: a see-through fence there), and a click on the board makes the choice
   that builds it there, and it is carried there (`board::show_fences`). Which choice builds on which side is the look's (`sides`): the API
@@ -296,7 +296,7 @@ A game's own rules and its players' words keep their terms.
   drawn. And what both seats have still to place, counted in the view (`[stock]`, a draft's
   tiles: `Position::view_counts`), in a column of each kind beside the board to the first
   seat's left; a click on one takes it to place (`play::TakeToPlace`, `Turn::take_to_place`:
-  held under the pointer, the hexes it may go on lit, the one under the pointer showing it
+  lifted over its place in the stock, the hexes it may go on lit, the one under the pointer showing it
   see-through in place of its light (`board::TileGhost`), and a click on one makes the click and
   the tile's choice that follows it), and it is carried where it goes (`board::FromStock`).
   `Tinted`, `shown`, `stock` and `takes` have no Bevy in them; `board::show_tints` draws them.
@@ -342,8 +342,8 @@ A game's own rules and its players' words keep their terms.
   every seat's alike; or a seat's own for a part, `seats.<word>.parts`: a ring's trim, gold on
   one seat's and silver on another's; a part given neither is of the piece's own material;
   `board::dress_parts`), the piece a move of it leaves where it started
-  (`leaves`: a disc dropped in a ring that moves on, held under the pointer until the ring is
-  picked up, and shown see-through in a ring the pointer is over; the server does not say), a wider margin (`[board] margin`), a chessboard's two
+  (`leaves`: a disc dropped in a ring that moves on as the ring is picked up, and shown
+  see-through in a ring the pointer is over; the server does not say), a wider margin (`[board] margin`), a chessboard's two
   materials (`[board] squares`), its inlaid
   border (`[board] border`), a material for the cells of a region the board names
   (`[board.regions]`: Fist's keep), and the piece
@@ -373,14 +373,16 @@ A game's own rules and its players' words keep their terms.
   seat shares (Tak's roads) is nobody's to color, and is not marked. The board also
   marks the positions a click would be taken on `highlight::Lit` (always while a piece is in
   hand), each with its `Outline`, and shows the
-  move being built: what it places as see-through pieces (solid once the move is sent), a piece
-  it moves held over its space or carried to where it goes, and what it aims held under the
-  pointer. `src/hand.rs` moves them every frame (a piece held bobs; one put down goes across,
-  then is lowered: `travel`), and the pointer's hand gives way to anything held under the
-  pointer; off the board, what is held waits over the board's edge where the pointer is
-  beyond it (`hand::within`, `BoardEdge`), and over a panel the hand is back. Where every
-  click places one stone (Go, Hex, Othello: `Turn::auto_hand`), the stone is held under the
-  pointer by itself and carried from there to where it is placed. The pointer's place is read
+  move being built: what it places as see-through pieces (solid once the move is sent), and a
+  piece it moves held over its space or carried to where it goes. **Anything in hand is lifted
+  over where it came from and bobs there, and the pointer stays a hand; a click never puts
+  anything under the pointer** (plan, 2026-11-27): what a move aims (Amazons' arrow) is only
+  shown see-through where it would land. `src/hand.rs` moves them every frame (a piece held
+  bobs; one put down goes across, then is lowered: `travel`); `hand::Held`, something under the
+  pointer in place of the pointer's hand, waiting over the board's edge where the pointer is
+  beyond it (`hand::within`, `BoardEdge`), is kept for what a drag holds. Where every click
+  places one stone (Go, Hex, Othello: `Turn::auto_hand`), the stone waits over its bowl by
+  itself and is carried from there to where it is placed; with no bowl, nothing is held. The pointer's place is read
   from a board's `Spot`s and from anything marked `hand::Surface` (a card, the cloth).
 - `src/cursor.rs`: the pointer, which is the client's own: the system's cursor is never shown
   over the window. A small glove of capsules (`pose`, `bones`: no Bevy systems), drawn by a
@@ -390,7 +392,7 @@ A game's own rules and its players' words keep their terms.
   it gives way to a text cursor, an I-beam of nodes (`beam_parts`). What a click on the table
   would do is the table's to say: a system in `cursor::Sense` reads `Under` and writes
   `TableFeel` (`play::feel` for the board, `card_table`'s `feel` for cards), deciding as its
-  click would. Hidden while anything is held under the pointer (`hand::Held`), but over the interface (never
+  click would. Hidden while anything is held under the pointer (`hand::Held`: only what a drag holds), but over the interface (never
   by whether the pointer is on the board, which flickers from cell to cell), and not added in a
   headset.
 - `src/patience.rs`: a patience (Bingle's ADR 0122), which any game may declare
@@ -419,8 +421,8 @@ A game's own rules and its players' words keep their terms.
   rack's pins) are chosen in any order, kept by the client (`Together`) and hover; the piles
   that would play exactly them (the balls) glow, and a click there sends the move's gestures
   in the server's order (`throw`, `Turn::enter_all`). In a patience, a click on a card a move starts with lifts it and
-  those on it: they hover under the pointer, held near their edge, the arrow hidden
-  (`hand::Held` on an anchor they follow); the piles they may go on glow, the one under the
+  those on it: they hover over their pile, the pointer staying a hand (an anchor they would
+  follow under the pointer is `hand::Held` only for a drag); the piles they may go on glow, the one under the
   pointer shows them see-through where they would land, and a click there plays the move at
   once (`Turn::clicks_only`). Cards go where the position puts them by `hand::Carry::Put`,
   one after another, turned over on the way when they were face down where they came from.
@@ -460,7 +462,7 @@ A game's own rules and its players' words keep their terms.
   `stack_moves` a stack picked up, by its gestures: a position, a count, a position for each
   piece dropped; a stack clicked is taken whole; `lifted` the piece every click moves, where
   its selections do not have it clicked (Courtfall's activated unit), picked up by a click on
-  it and held under the pointer; `clicks_only` a turn where nothing is chosen for the player
+  it and lifted over its hex; `clicks_only` a turn where nothing is chosen for the player
   and a whole move plays itself, a card game's; `enter_all` a whole selection's gestures at
   once, put together by the player in an order of their own; `preview` the position after the
   selections made, as the server's answer has it (`Selections.state`): what its view asks next

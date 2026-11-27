@@ -475,18 +475,20 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   at shows where one goes.
 - Lighting the legal moves is off by default (at the start of most games every position is one,
   and the whole board lit up); *Legal moves* or L turns it on (`toggles.rs`). The see-through
-  stone under the pointer still shows where a click would play. Once a piece is picked up, the
-  places it may go are lit whatever the setting, as a chess program shows them; it is lifted and
-  bobs over its own space (following the pointer instead was tried, and set aside), and a click
-  on it again puts it down. A click on where it goes carries it there: across the board at the
+  stone under the pointer still shows where a click would play. **Anything in hand is lifted
+  over where it came from and bobs there, and the pointer stays a hand; a see-through copy
+  shows where a click would put it. Something follows the pointer only while the button is
+  held down on it** (a drag, not built yet), in every game alike (2026-11-27, #97). Once a
+  piece is picked up, the places it may go are lit whatever the setting, as a chess program
+  shows them; it is lifted and bobs over its own space, and a click on it again puts it down. A click on where it goes carries it there: across the board at the
   height it was held, then lowered onto it (a third of a second in all), and it stands there
   before the move is sent. Once the move is sent, what it puts down (Amazons' arrow) is shown
   solid at once, without waiting for the server, and is not dropped in again when the server's
   position arrives. Backspace, or a right-click (the right button pressed and let
   go with the pointer all but still, so a right-drag still turns the camera), goes back one
   click at a time. What a move
-  then aims (Amazons' arrow) is held under the pointer in place of its arrow, with a see-through
-  one on the space a click would shoot at. The server does not say what an aim puts down, so a
+  then aims (Amazons' arrow) is not held at all: a see-through one lies on the space a click
+  would shoot at. The server does not say what an aim puts down, so a
   game's appearance names it (`aimed`); asking the API for it belongs in Bingle. Without it,
   nothing is shown where a move aims: an aim may put nothing down (Fist's pin captures the piece
   aimed at where it stands), and it was drawn as the generic stone. A target a click takes a
@@ -565,7 +567,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   out, so they are heaped in one bowl that both players take from, beside the middle of the
   board's side (beyond the other seat's pawns there), where it reads as shared. Once the piece
   has moved, the fence is taken up by itself (`auto_take`: once nothing but a fence may follow)
-  and held under the pointer in place of its arrow, as Amazons' arrow is; to leave the piece
+  and waits lifted over the bowl, as a stone taken from one does; to leave the piece
   where it stands, it is picked up and the bowl clicked. The sides of the piece's square the
   fence may go on are lit; the one the pointer comes near shows a see-through fence (in place of
   its light), and a click anywhere on the board puts it there, carried and set down. The wheel
@@ -578,15 +580,14 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   Yavalath) play alike: each seat's stones in a turned bowl beside the board (Othello's discs
   excepted, below) (the looks:
   `points.toml`, `hex.toml`, and `stones.toml` for the rest, slate and shell, and jade for
-  Mycelium's green), and on the player's turn the pointer is the stone, floating and bobbing as
-  Amazons' arrow and Fendo's fence are, with a see-through stone on the point or cell under it;
-  a click carries it there. This is the default for any game whose every click places one stone
+  Mycelium's green), and on the player's turn a stone waits lifted over the player's bowl,
+  bobbing, with a see-through stone on the point or cell under the pointer; a click carries it
+  there from the bowl. This is the default for any game whose every click places one stone
   (`Turn::auto_hand`: the same choices before one click, nothing after, nothing moved), look or
-  no look; a pass or a swap stays on the panel. When the pointer leaves the board (for a panel),
-  whatever is held under it (stone, arrow or fence) waits floating over the board's edge where
-  the pointer is beyond it, and the pointer's own arrow comes back; back over the board, it is
-  the stone again. Which games have bowls is each look's: the definitions do not say which games
-  are of this kind (two have their rules in Go and name no placing action).
+  no look; with no bowl nothing is held, and the see-through stone alone shows where a click
+  plays. A pass or a swap stays on the panel. Which games have bowls is each look's: the
+  definitions do not say which games are of this kind (two have their rules in Go and name no
+  placing action).
 - Courtfall (`assets/appearance/courtfall.toml`): its units are the chessmen, by the piece each
   is in the definition (a Warden is a pawn, an Outrider a knight, an Arbalest a bishop, a
   Juggernaut a rook, the Champion a queen), of boxwood and ebonised walnut. Its terrain is what
@@ -599,8 +600,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   drawn. During the draft the tiles still to lay (the view's `tiles_left`, `[stock]`) wait
   beside the board to the first seat's left, a column of each color, each tile the size of the
   board's. On the player's draft a click on one takes it up (`Turn::take_to_place`): it
-  leaves its column and floats under the pointer, bobbing, as Fendo's fence does, and only the
-  hexes that tile may go on are lit; over one of them the tile is shown there see-through, in
+  is lifted over its place in the column, bobbing, as Fendo's fence waits over its bowl, and only
+  the hexes that tile may go on are lit; over one of them the tile is shown there see-through, in
   place of the hex's light, following the pointer from hex to hex; a click on one of them makes both of the selection's
   gestures (the hex, then the tile, as Courtfall's selection has them) and the tile is carried
   down onto it, solid, until the move is played; a click on another hex leaves it in hand, and
@@ -610,14 +611,14 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   look of its own.
 - A piece whose moves do not have it clicked (Courtfall's unit, once activated: each of its
   selections says it moves from its hex, and is a click on where it goes, then what it does
-  there) is picked up by a click on it (`Turn::unclicked_from`, `Turn::lifted`): it floats
-  under the pointer in place of its arrow, with the sound of a piece picked up, the hexes it
+  there) is picked up by a click on it (`Turn::unclicked_from`, `Turn::lifted`): it is lifted
+  over its hex, as a chess piece is, with the sound of a piece picked up, the hexes it
   may go to or act on are lit, and over an empty one it may go to a see-through copy of it
   stands there (none over a unit it would strike or shove: it does not go there). A click on
-  one of them moves it, carried from under the pointer; a click on it again, or Back, puts it
+  one of them moves it, carried from over its hex; a click on it again, or Back, puts it
   down; a click where it may not go leaves it in hand. Its second action starts from where
   the first put it: the board follows the piece the move being built has moved
-  (`show_turn`'s `origin`), so it is picked up there and carried on from there.
+  (`show_turn`'s `origin`), so it is lifted over where it now stands and carried on from there.
 - The game's panel says what the seat on impulse is asked in the server's words, for any game
   whose view says it (`ext.view.impulse`, else `prompt`: Courtfall's "Choose where to lay a
   tile (Overgrowth 4, Mire 3, Hazard 3 left).", "Choose a Court."), as Bingle's page does:
@@ -733,7 +734,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
     that changes hands is the same disc turned over where it lies (`sides.rs`): raised, half a
     turn away from the move played, and down again, each further from the move a little later
     than the one before, with the soft sound of a capture as each lands. No bowls: a heap of
-    stones would not do for discs, and a disc in hand comes from under the pointer as before.
+    stones would not do for discs, so no disc is held: the see-through one under the pointer
+    shows where a click plays.
 - A patience's cards are drawn (below); no game's dice, discs or rings yet. `props.rs` holds how
   these models are read. `--showcase` lays every piece model, the discs and rings, the dice and
   some cards on the table,
@@ -890,11 +892,10 @@ that declares a patience plays the same way.
 - A card's face is the usual deck's (`props::standard_face`, by its suit's symbol and rank);
   one this client may not see lies face down. The waste fans its top three.
 - **Click and swap**: a click on a card a move starts with lifts it and the cards on it. They
-  hover just beyond the pointer, bobbing, held near their edge so what they are aimed at stays
-  in sight, and the pointer's arrow is hidden. Each pile they may go on glows; the one under
-  the pointer shows them see-through where they would land. A click there puts them down and
-  plays the move. A click on the pile they came from, on the bare cloth, a right-click or
-  Backspace puts them back; a click on another card that moves takes it instead. A card sent
+  hover over their pile, bobbing, and the pointer stays a hand. Each pile they may go on glows;
+  the one under the pointer shows them see-through where they would land. A click there puts
+  them down and plays the move. A click on the pile they came from, on the bare cloth, a
+  right-click or Backspace puts them back; a click on another card that moves takes it instead. A card sent
   home (`to-f`) is shown going to its suit's foundation when the view lists the suits
   (`patience::home`), since the server, not the click, chooses which. The stock draws, turns
   the waste back or deals, whichever is legal; *Finish* is the panel's button.
@@ -977,8 +978,8 @@ this repository may not hold (decision 2). This repository names none of them, h
   told apart only by the way each is turned.
 - Not built for it, and generic when they are: a count of
   the view's in trays (they follow `GameInfo.counters`); what a seat has to place at setup
-  beside the board when nothing counts it; and the piece held under the pointer when a
-  selection does not name it (a disc is shown where a ring is placed).
+  beside the board when nothing counts it; and the piece shown see-through where a click would
+  place it when a selection does not name it (a disc is shown where a ring is placed).
 - **What a move turns over** is shown before it is sent: each piece is see-through in the color
   it turns to, as a piece placed is (`board::show_taken`, `Turn::turning`; 2026-11-27). The
   server says which pieces and what color (API 1.20's `converts_to`, bingle#293), so the client

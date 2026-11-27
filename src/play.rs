@@ -442,7 +442,7 @@ impl Turn {
 
     /// The kind of piece the player holds without taking it from anywhere, at the start of a
     /// selection where every click on the board places one piece of that kind, and that is all
-    /// it does (Go, Hex, Othello: a stone, held under the pointer). Choices that are not clicks
+    /// it does (Go, Hex, Othello: a stone, waiting over its bowl). Choices that are not clicks
     /// (pass, swap) may be there too; they are the panel's. Empty when the selections do not
     /// name the kind.
     pub fn auto_hand(&self) -> Option<&str> {
@@ -590,21 +590,6 @@ impl Turn {
             .iter()
             .filter(|s| s.from.is_none())
             .filter_map(|s| Some((s.to.as_deref()?, s.piece.as_deref())))
-    }
-
-    /// Whether the next click is where what follows a move goes (an arrow shot from where the
-    /// piece landed), for the board to put it in the player's hand.
-    pub fn aiming(&self) -> bool {
-        if self.stage != Stage::Choosing {
-            return false;
-        }
-        let n = self.gestures.len();
-        let mut options = self.matching().peekable();
-        options.peek().is_some()
-            && options.all(|o| {
-                let next = o.gestures[n..].iter().find(|g| g.is_pos());
-                next.is_some() && next.map(|g| &g.value) == o.aim.as_ref()
-            })
     }
 
     /// What the move being built would stand on `cell`: by the last selection made that puts
@@ -2530,7 +2515,6 @@ mod tests {
             ],
         ));
         assert!(t.carried().is_empty(), "nothing is picked up yet");
-        assert!(!t.aiming());
 
         assert_eq!(t.gesture(&Gesture::pos("a1")), Outcome::Changed);
         assert_eq!(
@@ -2541,7 +2525,6 @@ mod tests {
             }],
             "in hand, not yet put anywhere"
         );
-        assert!(!t.aiming(), "where it goes comes first");
         assert_eq!(t.arriving("a2").map(|a| a.aimed), Some(false));
         assert_eq!(t.arriving("c3"), None, "c3 is only ever aimed at");
 
@@ -2558,7 +2541,6 @@ mod tests {
                 to: Some("a2")
             }]
         );
-        assert!(t.aiming());
         assert_eq!(
             t.targets(),
             BTreeSet::from(["a1".to_string(), "a3".to_string()]),
@@ -2592,7 +2574,6 @@ mod tests {
         // Back takes off the shot first, leaving the piece where it was put.
         assert!(t.back());
         assert_eq!(t.gestures, [Gesture::pos("a1"), Gesture::pos("a2")]);
-        assert!(t.aiming());
         assert!(t.back());
         assert_eq!(t.gestures, [Gesture::pos("a1")]);
     }

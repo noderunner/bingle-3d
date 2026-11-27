@@ -4,8 +4,9 @@
 //! pointing over what a click chooses but does not pick up (a position, a button). Over a field
 //! that takes typing it gives way to a text cursor, an I-beam (`beam_parts`), whose middle is
 //! the pointer, as any other program's. It is hidden
-//! while anything is held under the pointer (`hand::Held`), which is the pointer then, wherever
-//! the pointer is but over the interface, where a button still wants it. Not by whether the
+//! while anything is held under the pointer (`hand::Held`: only what a drag holds; what a click
+//! picks up waits over where it came from, and the hand stays), which is the pointer then,
+//! wherever the pointer is but over the interface, where a button still wants it. Not by whether the
 //! pointer is on the board: that changes from one cell to the next, and the hand flickered.
 //!
 //! What a click on the table would do is the table's to say: the board's (`play.rs`) and the

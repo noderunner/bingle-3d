@@ -8,12 +8,11 @@
 //! (the balls that knock them down) glow, and a click on one plays the move, its choices sent in
 //! the order the server lists them. A click on the bare cloth, or Backspace, lets them all go.
 //!
-//! A click on a card a move starts with lifts it, and the cards on it: they hover under the
-//! pointer, bobbing gently, the pointer's own arrow hidden while they take its place
-//! (`hand::Held`). Each pile they may go on glows, and the one under the pointer shows them
-//! see-through where they would land. A click there puts them down and plays the move at once
-//! (`Turn::clicks_only`); a click on the pile they came from, on the bare cloth, a right-click
-//! or Backspace puts them back. A click on the stock draws, turns the waste over or deals,
+//! A click on a card a move starts with lifts it, and the cards on it: they hover over their
+//! pile, bobbing gently, and the pointer stays a hand. Each pile they may go on glows, and the
+//! one under the pointer shows them see-through where they would land. A click there puts them
+//! down and plays the move at once (`Turn::clicks_only`); a click on the pile they came from, on
+//! the bare cloth, a right-click or Backspace puts them back. A click on the stock draws, turns the waste over or deals,
 //! whichever the game offers.
 //!
 //! A game of several seats is laid round the table by its look (`Layout::seated`), seen from
@@ -295,7 +294,8 @@ struct Place;
 #[derive(Component)]
 struct Cloth;
 
-/// What the cards in hand follow: `hand::Held` while there are any, under the pointer.
+/// What the cards in hand would follow under the pointer, while it is `hand::Held`; a click
+/// leaves them over their pile.
 #[derive(Component)]
 struct Anchor;
 
@@ -542,7 +542,6 @@ fn sync_cards(
     (mut meshes, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
     mut roots: Query<(Entity, &mut CardRoot)>,
     cards: Query<Existing>,
-    anchors: Query<(Entity, Has<Held>), With<Anchor>>,
     (put_on, together, appearances): (Res<PutOn>, Res<Together>, Res<Appearances>),
     (mut built, mut cues): (MessageWriter<BoardBuilt>, MessageWriter<Cue>),
 ) {
@@ -759,25 +758,6 @@ fn sync_cards(
     }
     if lifting {
         cues.write(Cue::Lift);
-    }
-    for (anchor, holding) in &anchors {
-        match (held.is_some(), holding) {
-            (true, false) => {
-                commands.entity(anchor).insert((
-                    Held {
-                        board: BASE,
-                        lift: HELD_LIFT,
-                        scale: 1.0,
-                    },
-                    // Where the pointer is, not sliding there from where it was last.
-                    Visibility::Hidden,
-                ));
-            }
-            (false, true) => {
-                commands.entity(anchor).remove::<Held>();
-            }
-            _ => {}
-        }
     }
 }
 
@@ -1181,8 +1161,8 @@ fn show_aim(
 /// What the cards in hand follow, while there are any.
 type HandHeld = (With<Anchor>, With<Held>);
 
-/// The cards in hand follow it: under the pointer, each beyond the one under it, or lifted
-/// over where they lie until the pointer is known.
+/// The cards in hand follow it while it is held under the pointer, each beyond the one under
+/// it; else (as after a click) they are lifted over where they lie.
 fn follow_hand(
     anchors: Query<(&Transform, &Visibility), HandHeld>,
     mut cards: Query<(&InHand, &Rest, &mut Carry)>,
@@ -1578,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    fn a_patience_is_laid_as_it_lies_its_cards_lifted_into_the_hand_and_carried_where_they_go() {
+    fn a_patience_is_laid_as_it_lies_its_cards_lifted_over_their_pile_and_carried_where_they_go() {
         let mut app = app();
         watch(&mut app, dealt(1), None);
         app.update();
@@ -1597,7 +1577,7 @@ mod tests {
             "a table just laid deals nothing"
         );
 
-        // The ace lifted: it is in hand, and the hand follows the pointer.
+        // The ace lifted: it is in hand, over its pile, and nothing follows the pointer.
         let mut turn = Turn::new(1);
         turn.clicks_only = true;
         turn.options = vec![crate::net::api::LegalSelection {
@@ -1610,13 +1590,20 @@ mod tests {
         turn.gestures = vec![act("from-t1-1")];
         watch(&mut app, dealt(1), Some(turn));
         app.update();
+        app.update();
         assert_eq!(app.world().get::<InHand>(ace), Some(&InHand(0)));
+        let rest = app.world().get::<Rest>(ace).unwrap().0;
+        assert_eq!(
+            app.world().get::<Carry>(ace),
+            Some(&Carry::Over {
+                at: rest.with_translation(rest.translation + Vec3::Y * HELD_LIFT),
+                scale: 1.0,
+            }),
+            "lifted over where it lies"
+        );
         let world = app.world_mut();
-        let held = world
-            .query_filtered::<(), (With<Anchor>, With<Held>)>()
-            .iter(world)
-            .count();
-        assert_eq!(held, 1);
+        let held = world.query_filtered::<(), With<Held>>().iter(world).count();
+        assert_eq!(held, 0, "nothing under the pointer");
         let lit: Vec<String> = world
             .query_filtered::<&PileGlow, With<Lit>>()
             .iter(world)
