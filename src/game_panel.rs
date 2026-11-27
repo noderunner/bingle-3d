@@ -592,8 +592,15 @@ fn hint(turn: &Turn, said: Option<&str>, drawn: &[&str]) -> String {
         Stage::Choosing if turn.can_play() => {
             format!("Play {} as it is (Enter), or go on.", turn.notation())
         }
-        // A piece in hand, or pieces to pick up: a click or a drag moves them (`drag.rs`).
-        Stage::Choosing if turn.held_at().is_some() => "Click or drag it where it goes.".into(),
+        // A piece in hand (a stack, or one taken from beside the board too), or pieces to pick
+        // up: a click or a drag moves them (`drag.rs`).
+        Stage::Choosing
+            if turn.in_hand_at().is_some()
+                || turn.in_hand().is_some()
+                || turn.taken().is_some() =>
+        {
+            "Click or drag it where it goes.".into()
+        }
         Stage::Choosing if turn.unclicked_from().is_some() || !turn.moves_only().is_empty() => {
             "Click or drag a piece to move it.".into()
         }

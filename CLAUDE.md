@@ -484,7 +484,9 @@ A game's own rules and its players' words keep their terms.
   and the panel's buttons into gestures and commands. Picking is Bevy's mesh
   picking with markers: only what is `Pickable` is picked, through a `MeshPickingCamera`.
 - `src/drag.rs`: a piece on the board dragged: pressed, carried under the pointer while the
-  button is down, let go where it goes. **The one place that knows a drag is under way**
+  button is down, let go where it goes; and what lies beside it (a `drag::Source`: a bowl, a
+  supply, the bowl of fences, the stock, what waits in hand over them), taken up as the pointer
+  leaves it and let go as the click on the board there (`let_go_beside`). **The one place that knows a drag is under way**
   (`Drag`: the press, the turn as it was before it, whether the pointer has left the space
   pressed, what is carried). Every click on the board's spaces is a press and a release here
   too, made by `play::click_at`, the one function for what a click there does; `on_click` in
@@ -494,7 +496,8 @@ A game's own rules and its players' words keep their terms.
   anywhere else (or a right-click, Backspace, the escape menu: `cancel`) the turn is as it was.
   Bevy's `PointerPress` and the pointer's own `PointerInput`, so a headset's ray drags as the
   mouse does. Where a piece stands part-way through a chain is `Turn::legs` and
-  `Turn::stands_at` (each selection's `path`), the piece in hand on the board `Turn::held_at`.
+  `Turn::stands_at` (each selection's `path`), the piece in hand on the board `Turn::held_at`,
+  a Tak stack carried `Turn::stack_at`.
 - `src/coordinates.rs`: the board's coordinates along its edges (each board's own, for a game
   on several), toggled with C, from position names that are letters then a number
   (`edge_labels`, no Bevy); none for any other naming.
