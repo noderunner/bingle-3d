@@ -215,6 +215,13 @@ window's size), kept in `config.toml` (`fullscreen`, `resolution = "1920x1080"`)
 or `--fullscreen` chooses for one run; a run with `--frames` or `--screenshot` is a 1280×720
 window unless `--fullscreen` says.
 
+*Settings, Graphics* (not in a headset) steps each effect through its values, at once: ambient
+occlusion (Off, Low, High), anti-aliasing (Off, FXAA, SMAA, TAA, MSAA 4×: with MSAA there is no
+ambient occlusion), depth of field, bloom, the sun's shadows (Off, Low, Medium, High) and its
+contact shadows, and the frame limit. `config.toml` keeps them (`ambient_occlusion`,
+`anti_aliasing`, `depth_of_field`, `bloom`, `shadows`, `contact_shadows`, `max_fps`); a run with
+`--frames` or `--screenshot` uses the defaults whatever it says.
+
 The window draws at most 60 frames a second, which a board game does not need more than, so the
 GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
 and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.

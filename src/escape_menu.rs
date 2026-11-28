@@ -1,13 +1,14 @@
 //! The menu Esc opens over a game or the main screen: *Resume*, *Main Menu* (back to the main
 //! screen from a game; the game goes on at the server, as the game panel's *Back* leaves it),
-//! *Settings* (a page of its own: fullscreen or a window, and the resolution, `display.rs`),
+//! *Settings* (a page of its own: fullscreen or a window, and the resolution, `display.rs`, and
+//! a page of the effects drawn, `graphics.rs`),
 //! *Game Options* and *Profile* (not built yet, shown greyed), *Logout* (back to the login
 //! screen, the account's session ended, auto-login off) and *Quit* (to the desktop). On the main
 //! screen *Main Menu* and *Game Options* are greyed too. Not on the login screen.
 //!
 //! While it is open it covers the window: a click reaches neither the board nor the panels, and
 //! the move keys and the camera's keys stand aside. Esc closes it again (from *Settings*, back to
-//! the menu first); a text field that has the keyboard gives it up to the first Esc instead.
+//! the menu first, and from *Graphics* to *Settings*); a text field that has the keyboard gives it up to the first Esc instead.
 
 use bevy::input_focus::InputFocus;
 use bevy::picking::Pickable;
@@ -20,6 +21,8 @@ use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow};
 use crate::browser::{Action, colors};
 use crate::display::{self, DisplaySettings};
 use crate::fonts::UiFonts;
+use crate::frame_pace::{self, FrameTime};
+use crate::graphics::{AmbientOcclusion, AntiAliasing, Graphics, HeadsetRun, Setting, Shadows};
 use crate::login::{self, LoginScreen, Screen};
 use crate::net::{Connection, Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
 use crate::sign_in::Signing;
@@ -38,7 +41,9 @@ impl Plugin for EscapeMenuPlugin {
                     show.run_if(
                         resource_changed::<EscapeMenu>
                             .or_eager(resource_changed::<WatchStatus>)
-                            .or_eager(resource_exists_and_changed::<DisplaySettings>),
+                            .or_eager(resource_exists_and_changed::<DisplaySettings>)
+                            .or_eager(resource_exists_and_changed::<Graphics>)
+                            .or_eager(resource_exists_and_changed::<FrameTime>),
                     ),
                     color_items,
                 )
@@ -60,6 +65,8 @@ pub enum Page {
     #[default]
     Menu,
     Settings,
+    /// The effects drawn, under *Settings*.
+    Graphics,
 }
 
 /// Whether the menu is closed, for what stands aside while it is open (`play.rs`, the camera);
@@ -82,6 +89,12 @@ pub enum MenuAction {
     Fullscreen,
     /// A resolution, or none: the desktop's.
     Resolution(Option<(u32, u32)>),
+    /// The page of the effects drawn.
+    Graphics,
+    /// An effect, to its next value.
+    Effect(Setting),
+    /// The frame limit, to its next value.
+    FrameLimit,
 }
 
 /// The menu's items, in order: a name, and what it does (`None`: greyed). In a game, or on the
@@ -234,6 +247,7 @@ fn on_item(
     mut exit: MessageWriter<AppExit>,
     (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
     display: Option<ResMut<DisplaySettings>>,
+    (graphics, frame_time): (Option<ResMut<Graphics>>, Option<ResMut<FrameTime>>),
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
@@ -251,6 +265,20 @@ fn on_item(
     match action {
         MenuAction::Settings => menu.page = Page::Settings,
         MenuAction::Back => menu.page = Page::Menu,
+        MenuAction::Graphics => menu.page = Page::Graphics,
+        MenuAction::Effect(setting) => {
+            if let Some(mut graphics) = graphics {
+                graphics.cycle(*setting);
+                net.send(Request::RememberGraphics(*graphics));
+            }
+        }
+        MenuAction::FrameLimit => {
+            if let Some(mut time) = frame_time {
+                let next = frame_pace::next_limit(frame_pace::fps(*time));
+                *time = FrameTime::from_fps(next);
+                net.send(Request::RememberMaxFps(next));
+            }
+        }
         MenuAction::Fullscreen => set(&|d| d.fullscreen = !d.fullscreen),
         MenuAction::Resolution(size) => set(&|d| d.resolution = *size),
         _ => menu.open = false,
@@ -260,7 +288,10 @@ fn on_item(
         | MenuAction::Settings
         | MenuAction::Back
         | MenuAction::Fullscreen
-        | MenuAction::Resolution(_) => {}
+        | MenuAction::Resolution(_)
+        | MenuAction::Graphics
+        | MenuAction::Effect(_)
+        | MenuAction::FrameLimit => {}
         MenuAction::MainMenu => {
             // As the game panel's Back: stop watching, and read the server's lists again.
             stop_watching(&net, &mut watching);
@@ -304,8 +335,11 @@ fn toggle_on_escape(
         focus.clear();
         return;
     }
-    if menu.open && menu.page == Page::Settings {
-        menu.page = Page::Menu;
+    if menu.open && menu.page != Page::Menu {
+        menu.page = match menu.page {
+            Page::Graphics => Page::Settings,
+            _ => Page::Menu,
+        };
         return;
     }
     menu.open = !menu.open;
@@ -329,6 +363,9 @@ fn show(
     watching: Res<WatchStatus>,
     fonts: Res<UiFonts>,
     display: Option<Res<DisplaySettings>>,
+    graphics: Option<Res<Graphics>>,
+    frame_time: Option<Res<FrameTime>>,
+    headset: Option<Res<HeadsetRun>>,
     window: Query<Option<&OnMonitor>, With<PrimaryWindow>>,
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
     mut overlay: Single<&mut Node, With<MenuOverlay>>,
@@ -354,6 +391,19 @@ fn show(
             },
         ));
     };
+    if menu.page == Page::Graphics {
+        let graphics = graphics.as_deref().copied().unwrap_or_default();
+        let limit = frame_time.as_deref().map(|t| frame_pace::fps(*t));
+        commands
+            .entity(*list)
+            .despawn_related::<Children>()
+            .with_children(|list| {
+                title(list, "Graphics");
+                effects(list, f, graphics, limit);
+                list.spawn(item(f, "Back", MenuAction::Settings));
+            });
+        return;
+    }
     if menu.page == Page::Settings {
         let display = display.as_deref().copied().unwrap_or(DisplaySettings {
             fullscreen: true,
@@ -365,7 +415,7 @@ fn show(
             .despawn_related::<Children>()
             .with_children(|list| {
                 title(list, "Settings");
-                settings(list, f, display, monitor);
+                settings(list, f, display, monitor, headset.is_none());
                 list.spawn(item(f, "Back", MenuAction::Back));
             });
         return;
@@ -395,6 +445,7 @@ fn settings(
     f: &UiFonts,
     display: DisplaySettings,
     monitor: Option<((u32, u32), Vec<bevy::window::VideoMode>)>,
+    flat: bool,
 ) {
     list.spawn(choice(
         f,
@@ -459,6 +510,97 @@ fn settings(
             }
         }
     });
+    // A headset's cameras are its own, and none of the page means anything there.
+    if flat {
+        list.spawn(item(f, "Graphics", MenuAction::Graphics));
+    } else {
+        list.spawn(greyed(f, "Graphics"));
+    }
+}
+
+/// How a setting's value reads on its row.
+fn value(setting: Setting, g: &Graphics) -> &'static str {
+    let on = |on: bool| if on { "On" } else { "Off" };
+    match setting {
+        Setting::AmbientOcclusion => match g.ambient_occlusion {
+            AmbientOcclusion::Off => "Off",
+            AmbientOcclusion::Low => "Low",
+            AmbientOcclusion::High => "High",
+        },
+        Setting::AntiAliasing => match g.anti_aliasing {
+            AntiAliasing::Off => "Off",
+            AntiAliasing::Fxaa => "FXAA",
+            AntiAliasing::Smaa => "SMAA",
+            AntiAliasing::Taa => "TAA",
+            AntiAliasing::Msaa => "MSAA 4×",
+        },
+        Setting::DepthOfField => on(g.depth_of_field),
+        Setting::Bloom => on(g.bloom),
+        Setting::Shadows => match g.shadows {
+            Shadows::Off => "Off",
+            Shadows::Low => "Low",
+            Shadows::Medium => "Medium",
+            Shadows::High => "High",
+        },
+        Setting::ContactShadows => on(g.contact_shadows),
+    }
+}
+
+/// A row's name.
+fn name(setting: Setting) -> &'static str {
+    match setting {
+        Setting::AmbientOcclusion => "Ambient occlusion",
+        Setting::AntiAliasing => "Anti-aliasing",
+        Setting::DepthOfField => "Depth of field",
+        Setting::Bloom => "Bloom",
+        Setting::Shadows => "Shadows",
+        Setting::ContactShadows => "Contact shadows",
+    }
+}
+
+/// The frame limit as it reads: a number, or the monitor's pace.
+fn limit_label(fps: u32) -> String {
+    match fps {
+        0 => "Frame limit: Monitor".to_string(),
+        n => format!("Frame limit: {n}"),
+    }
+}
+
+/// The graphics page's rows: each effect, and the frame limit (`limit`, none known: left out),
+/// one line each. A row that is on is lit; ambient occlusion is greyed with MSAA, which it
+/// cannot go with.
+fn effects(list: &mut ChildSpawnerCommands, f: &UiFonts, g: Graphics, limit: Option<u32>) {
+    for setting in [
+        Setting::AmbientOcclusion,
+        Setting::AntiAliasing,
+        Setting::DepthOfField,
+        Setting::Bloom,
+        Setting::Shadows,
+        Setting::ContactShadows,
+    ] {
+        if setting == Setting::AmbientOcclusion && !g.can_occlude() {
+            list.spawn(greyed(f, "Ambient occlusion: Off (not with MSAA)"));
+            continue;
+        }
+        let label = format!("{}: {}", name(setting), value(setting, &g));
+        let lit = value(setting, &g) != "Off";
+        list.spawn(choice(
+            f,
+            &label,
+            MenuAction::Effect(setting),
+            lit,
+            item_node(),
+        ));
+    }
+    if let Some(fps) = limit {
+        list.spawn(choice(
+            f,
+            &limit_label(fps),
+            MenuAction::FrameLimit,
+            false,
+            item_node(),
+        ));
+    }
 }
 
 fn color_items(mut items: Query<(&MenuItem, &Hovered, &mut BackgroundColor), Changed<Hovered>>) {
@@ -489,6 +631,8 @@ mod tests {
                 fullscreen: true,
                 resolution: None,
             })
+            .insert_resource(Graphics::default())
+            .insert_resource(FrameTime::from_fps(60))
             .insert_resource(Screen::Main)
             .insert_resource(LoginScreen::new("127.0.0.1:8080", true))
             .insert_resource(ServerStatus {
@@ -691,6 +835,96 @@ mod tests {
         app.world_mut().resource_mut::<EscapeMenu>().page = Page::Settings;
         press_escape(&mut app);
         assert_eq!(page(&app), Page::Menu, "opened at the menu");
+    }
+
+    fn graphics(app: &App) -> Graphics {
+        *app.world().resource::<Graphics>()
+    }
+
+    #[test]
+    fn graphics_are_a_page_of_settings_that_esc_goes_back_through() {
+        let (mut app, _requests) = app();
+        press_escape(&mut app);
+        choose(&mut app, MenuAction::Settings);
+        choose(&mut app, MenuAction::Graphics);
+        let page = |app: &App| app.world().resource::<EscapeMenu>().page;
+        assert_eq!(page(&app), Page::Graphics);
+        press_escape(&mut app);
+        assert!(open(&app));
+        assert_eq!(page(&app), Page::Settings, "back a page");
+        choose(&mut app, MenuAction::Graphics);
+        choose(&mut app, MenuAction::Settings);
+        assert_eq!(page(&app), Page::Settings, "the page's Back");
+        press_escape(&mut app);
+        assert_eq!(page(&app), Page::Menu);
+    }
+
+    #[test]
+    fn a_row_steps_to_its_next_value_at_once_and_is_kept() {
+        let (mut app, requests) = app();
+        requests.try_iter().count();
+        choose(&mut app, MenuAction::Effect(Setting::Bloom));
+        choose(&mut app, MenuAction::Effect(Setting::AmbientOcclusion));
+        choose(&mut app, MenuAction::Effect(Setting::Shadows));
+        let g = graphics(&app);
+        assert!(!g.bloom);
+        assert_eq!(
+            g.ambient_occlusion,
+            AmbientOcclusion::Off,
+            "High, then round"
+        );
+        assert_eq!(g.shadows, Shadows::High);
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert_eq!(asked.len(), 3);
+        assert_eq!(asked.last(), Some(&Request::RememberGraphics(g)));
+    }
+
+    #[test]
+    fn msaa_turns_ambient_occlusion_off_and_the_row_says_so() {
+        let (mut app, _requests) = app();
+        choose(&mut app, MenuAction::Effect(Setting::AntiAliasing));
+        let g = graphics(&app);
+        assert_eq!(g.anti_aliasing, AntiAliasing::Msaa);
+        assert_eq!(g.ambient_occlusion, AmbientOcclusion::Off);
+        choose(&mut app, MenuAction::Effect(Setting::AmbientOcclusion));
+        assert_eq!(
+            graphics(&app).ambient_occlusion,
+            AmbientOcclusion::Off,
+            "not offered with MSAA"
+        );
+        assert_eq!(value(Setting::AntiAliasing, &g), "MSAA 4×");
+    }
+
+    #[test]
+    fn the_frame_limit_steps_and_is_kept() {
+        let (mut app, requests) = app();
+        requests.try_iter().count();
+        choose(&mut app, MenuAction::FrameLimit);
+        assert_eq!(
+            *app.world().resource::<FrameTime>(),
+            FrameTime::from_fps(120)
+        );
+        choose(&mut app, MenuAction::FrameLimit);
+        assert_eq!(*app.world().resource::<FrameTime>(), FrameTime(None));
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert_eq!(
+            asked,
+            [Request::RememberMaxFps(120), Request::RememberMaxFps(0)]
+        );
+        assert_eq!(limit_label(0), "Frame limit: Monitor");
+        assert_eq!(limit_label(60), "Frame limit: 60");
+    }
+
+    #[test]
+    fn every_row_reads_as_a_name_and_a_value() {
+        let g = Graphics::default();
+        let row = |s| format!("{}: {}", name(s), value(s, &g));
+        assert_eq!(row(Setting::AmbientOcclusion), "Ambient occlusion: High");
+        assert_eq!(row(Setting::AntiAliasing), "Anti-aliasing: TAA");
+        assert_eq!(row(Setting::DepthOfField), "Depth of field: On");
+        assert_eq!(row(Setting::Bloom), "Bloom: On");
+        assert_eq!(row(Setting::Shadows), "Shadows: Medium");
+        assert_eq!(row(Setting::ContactShadows), "Contact shadows: On");
     }
 
     #[test]

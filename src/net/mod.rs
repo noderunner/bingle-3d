@@ -110,6 +110,19 @@ impl Plugin for NetPlugin {
                     size
                 }),
             });
+        let c = &store.config;
+        let (graphics, problems) = crate::graphics::Graphics::read(
+            c.ambient_occlusion.as_deref(),
+            c.anti_aliasing.as_deref(),
+            c.depth_of_field,
+            c.bloom,
+            c.shadows.as_deref(),
+            c.contact_shadows,
+        );
+        for problem in &problems {
+            warn!("{problem}");
+        }
+        app.insert_resource(crate::graphics::Kept(graphics));
         // The games the private folder has a look for are shown, though the server marks them
         // private (`appearance.rs` reads the folder before this).
         let private_looks = app
@@ -242,6 +255,10 @@ pub enum Request {
         fullscreen: bool,
         resolution: Option<(u32, u32)>,
     },
+    /// Remember which effects are on (`graphics.rs`).
+    RememberGraphics(crate::graphics::Graphics),
+    /// Remember the most frames a second to draw, 0 for the monitor's pace.
+    RememberMaxFps(u32),
     /// Read the account's friends list.
     Friends,
     /// Change the friends list, or answer an invitation.
@@ -885,6 +902,14 @@ fn handle(
             resolution,
         } => {
             session.remember_display(fullscreen, resolution);
+            None
+        }
+        Request::RememberGraphics(graphics) => {
+            session.remember_graphics(&graphics);
+            None
+        }
+        Request::RememberMaxFps(fps) => {
+            session.remember_max_fps(fps);
             None
         }
         Request::Trust(fp) => Some(connected(session.trust(fp))),

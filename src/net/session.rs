@@ -318,6 +318,18 @@ impl Session {
         }
     }
 
+    pub fn remember_graphics(&mut self, graphics: &crate::graphics::Graphics) {
+        if let Err(e) = self.store.remember_graphics(graphics) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
+    pub fn remember_max_fps(&mut self, fps: u32) {
+        if let Err(e) = self.store.remember_max_fps(fps) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
     /// The server's address as the player would write it, or as configured if it cannot be used.
     pub fn server(&self) -> String {
         match &self.url {

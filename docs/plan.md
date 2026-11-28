@@ -844,7 +844,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   let go of by the first Esc. Backspace now takes a gesture back, which Esc did before.
 - *Settings* is built (2026-11-23): fullscreen or a window, and the resolution (`display.rs`),
   kept in `config.toml` (`fullscreen`, `resolution`). Fullscreen is the default (decision 14).
-  Esc on *Settings* goes back to the menu.
+  Esc on *Settings* goes back to the menu. Its *Graphics* page (decision 16) has a row for each
+  effect and the frame limit.
 - Found while building it: the interface is blended in linear light (the cameras are HDR), so a
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
   see-through, than the same colors on the web page. The new parts use opaque colors.
@@ -930,8 +931,9 @@ nothing of (decision 9). First draft, for the maintainer's eye.
   both). The client grew by 17 MB.
 - Not built: sound (water, wind, a bird); anything that moves but the water's ripples (leaves
   falling, the carp, a deer-scarer); a tea house to close the south side, where there is only
-  the fence and a gap for a gate; settings for the hardware (shadow distance, the effects), which
-  wait for more environments to measure; a light in the lantern after dark.
+  the fence and a gap for a gate; settings for the hardware (the shadows' distance), which wait
+  for more environments to measure (the effects are in *Settings, Graphics* now: decision 16);
+  a light in the lantern after dark.
 - **Next**: the maintainer's eye on it; then what it says.
 
 ### Patience: cards on the table (2026-11-22)
@@ -1476,3 +1478,26 @@ Proposed 2026-11-25, for the maintainer to settle (the upload memory's pull requ
     is made by the OpenXR plugin with wgpu's defaults: not changed, and to be watched there.
     `--frame-times` logs a frame's time and each drawing pass's, which is how this was found
     (the passes were fast; the time was in Bevy's own systems writing buffers).
+
+Proposed 2026-11-27, for the maintainer to settle (the graphics options' pull request):
+
+16. **A *Graphics* page under *Settings* steps each effect through its values, at once.** One row
+    an option, `Name: Value`, each click the next value: ambient occlusion (Off, Low, High),
+    anti-aliasing (Off, FXAA, SMAA, TAA, MSAA 4×: FXAA and SMAA are Bevy's, in the build already),
+    depth of field, bloom, shadows (Off, Low, Medium, High: the sun's shadow map is 1024, 2048
+    or 4096 texels a cascade; its distance is the environment's), contact shadows, and the frame
+    limit (30, 60, 120, the monitor's pace; `max_fps`, which had no control). A page of its own,
+    since *Settings* already holds the resolutions. No presets, no motion blur (a table that
+    mostly stands still gains little from it; it would be a new effect, for an issue of its
+    own). The defaults are what has always been drawn (High, TAA, on, on, Medium, on, 60), so a
+    player who touches nothing sees no change. SSAO and TAA need MSAA off: choosing MSAA sets
+    ambient occlusion to Off, and the row says "not with MSAA" greyed (a config that has both is
+    read the same way); the shadows' temporal filtering is TAA's, Bevy's Gaussian filter
+    otherwise, and no option of its own. Turning bloom off also takes the camera's high dynamic
+    range target away, as `--no-bloom` has always drawn it, and flips `scene::BloomOn`, so the
+    highlights' glow and the arcs retune. A headset's cameras (4× MSAA, nothing screen-space)
+    are never touched and a headset has no limit of ours, so the *Graphics* item is greyed
+    there. A run limited by `--frames` or `--screenshot` uses the defaults, and ignores
+    `max_fps`, whatever `config.toml` says; `--no-bloom` still starts without bloom. Kept as
+    `ambient_occlusion`, `anti_aliasing`, `depth_of_field`, `bloom`, `shadows` and
+    `contact_shadows`; a value it does not know is the default, with a warning.
