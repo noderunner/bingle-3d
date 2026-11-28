@@ -666,6 +666,7 @@ mod tests {
             cards: None,
             engine: String::new(),
             clients: Vec::new(),
+            endings: Default::default(),
         };
         let g = |kind: &str, value: &str| Gesture {
             kind: kind.into(),

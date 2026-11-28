@@ -373,6 +373,7 @@ mod tests {
                 cards: None,
                 engine: String::new(),
                 clients: Vec::new(),
+                endings: Default::default(),
             },
             vec![BotInfo {
                 id: "mcts".into(),
