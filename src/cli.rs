@@ -47,6 +47,9 @@ Options:
   --card-face FILE   in the showcase, a picture (JPEG or PNG, 5 to 7) for the cards'
                      faces
   --card-back FILE   and one for their backs, in place of the client's own
+  --test-hand N      a made-up card game of three seats in place of a server's, you
+                     holding N cards (for pictures of the hand; give it a --server
+                     nobody listens on)
   --vr               draw the table in a headset too, through OpenXR (only in a build
                      with the vr feature, which does so by itself when SteamVR is
                      already running). Home sits you at the table again
@@ -111,6 +114,8 @@ pub struct Options {
     pub view: Option<String>,
     /// Lay the piece models, cards and dice out on the table, to look at.
     pub showcase: bool,
+    /// `--test-hand`: a made-up card game, the player holding this many cards.
+    pub test_hand: Option<usize>,
     /// Pictures for the showcase's cards, from files.
     pub card_face: Option<PathBuf>,
     pub card_back: Option<PathBuf>,
@@ -204,6 +209,16 @@ impl Options {
                 "--legal-moves" => opts.legal_moves = true,
                 "--frame-times" => opts.frame_times = true,
                 "--showcase" => opts.showcase = true,
+                "--test-hand" => {
+                    let v = value("a number of cards")?;
+                    let n: usize = v
+                        .parse()
+                        .map_err(|_| format!("--test-hand: {v:?} is not a number of cards"))?;
+                    if n == 0 || n > 52 {
+                        return Err("--test-hand holds 1 to 52 cards".into());
+                    }
+                    opts.test_hand = Some(n);
+                }
                 "--card-face" => opts.card_face = Some(PathBuf::from(value("a picture's file")?)),
                 "--card-back" => opts.card_back = Some(PathBuf::from(value("a picture's file")?)),
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
@@ -491,6 +506,12 @@ mod tests {
         assert_eq!(opts.card_face, Some(PathBuf::from("seven.png")));
         assert_eq!(opts.card_back, None);
         assert!(!Options::parse(["--frames", "3"]).unwrap().showcase);
+        assert_eq!(
+            Options::parse(["--test-hand", "13"]).unwrap().test_hand,
+            Some(13)
+        );
+        assert!(Options::parse(["--test-hand", "0"]).is_err());
+        assert!(Options::parse(["--test-hand", "many"]).is_err());
         assert!(
             Options::parse(["--card-back=b.jpg"]).is_err(),
             "a picture with nothing to put it on"

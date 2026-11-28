@@ -21,6 +21,14 @@ impl Plugin for HudPlugin {
 #[derive(Component)]
 struct FpsText;
 
+/// A row of buttons at the bottom right of the window, which the hand along the bottom keeps
+/// clear of (`hand_strip.rs`).
+#[derive(Component)]
+pub struct BottomRight;
+
+/// How far above the window's bottom the line of words there reaches.
+pub const BOTTOM_LINE: f32 = 32.0;
+
 const HINT: &str = "Play: click or drag, Enter · Back: right-click, Backspace · Menu: Esc · Orbit: right-drag, arrows · \
                     Pan: middle-drag, W A S D · Zoom: wheel · Coordinates: C · Legal moves: L · Reconnect: F5";
 

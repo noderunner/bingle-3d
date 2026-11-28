@@ -137,6 +137,9 @@ pub struct Layout {
     pub room: f32,
     /// Laid round the table for its seats (`Layout::seated`): the cloth is round.
     pub round: bool,
+    /// The viewer's hand, when it is drawn along the bottom of the window instead of in the
+    /// world (`Layout::lay_strip`): its zone.
+    pub strip: Option<String>,
 }
 
 impl Layout {
@@ -150,6 +153,7 @@ impl Layout {
                 size: Vec2::ZERO,
                 room: 0.0,
                 round: false,
+                strip: None,
             };
         }
         let half = CARD_SIZE.xy() / 2.0;
@@ -173,6 +177,7 @@ impl Layout {
             size: high - low,
             room: 0.0,
             round: false,
+            strip: None,
         }
     }
 
@@ -220,7 +225,26 @@ impl Layout {
             size: Vec2::splat(2.0 * radius),
             room: 0.0,
             round: true,
+            strip: None,
         }
+    }
+
+    /// The viewer's own hand (a pile `held` that is theirs) drawn along the bottom of the
+    /// window instead of in the world: its cards lie squared, face up, at the near edge of the
+    /// table, where a card dealt into it is carried to and one played from it sets off from.
+    /// Laid round its seats, after the table's size is settled.
+    pub fn lay_strip(&mut self) {
+        let edge = (self.size.y - CARD_SIZE.y) / 2.0;
+        let Some((zone, pile)) = self
+            .piles
+            .iter_mut()
+            .find(|(_, p)| p.own && p.spread == Spread::Held)
+        else {
+            return;
+        };
+        pile.spread = Spread::Squared;
+        pile.at = from_seat(pile.turn, Vec2::new(0.0, edge.max(0.0)));
+        self.strip = Some(zone.clone());
     }
 
     /// Where each card of `zone` lies, bottom first, on a table whose top is at `base`: `up`
@@ -243,6 +267,13 @@ impl Layout {
             return Vec::new();
         };
         let n = up.len();
+        // The hand in the strip comes and goes face up.
+        let all_up = vec![true; n];
+        let up = if self.strip.as_deref() == Some(zone) {
+            &all_up
+        } else {
+            up
+        };
         if pile.spread == Spread::Held {
             return held(pile, n, base);
         }
@@ -481,6 +512,36 @@ mod tests {
             reach.abs() <= STAND_WIDTH + 1e-5 && reach.abs() > 0.1,
             "{reach}"
         );
+    }
+
+    #[test]
+    fn the_viewers_hand_in_the_strip_lies_squared_and_face_up_at_the_near_edge_of_the_table() {
+        let mut layout = seated();
+        layout.lay_strip();
+        assert_eq!(layout.strip.as_deref(), Some("hand:2"));
+        let edge = layout.size.y / 2.0 - CARD_SIZE.y / 2.0;
+        let cards = layout.lie("hand:2", &[false; 13], 0.002);
+        for card in &cards {
+            assert!((card.translation.xz() - Vec2::new(0.0, edge)).length() < 1e-6);
+            assert!((card.rotation * Vec3::Y).y > 0.99, "face up");
+        }
+        // Another seat's hand stands in the air as before.
+        let left = layout.lie("hand:3", &[false; 2], 0.002);
+        assert!((left[0].rotation * Vec3::NEG_Z).y > 0.99);
+        // A table only watched has no hand of the viewer's to draw there.
+        let mut watched = Layout::seated(
+            &[Placed {
+                zone: "hand".into(),
+                at: Vec2::new(0.0, 0.4),
+                spread: Spread::Held,
+                each_seat: true,
+            }],
+            &[1, 2],
+            0,
+            false,
+        );
+        watched.lay_strip();
+        assert_eq!(watched.strip, None);
     }
 
     #[test]

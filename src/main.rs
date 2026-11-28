@@ -35,6 +35,7 @@ mod game_panel;
 mod gpu_memory;
 mod graphics;
 mod hand;
+mod hand_strip;
 mod highlight;
 mod hud;
 mod lobby;
@@ -63,6 +64,7 @@ mod slab;
 mod sounds;
 mod supply;
 mod table;
+mod test_hand;
 mod textures;
 mod tints;
 mod toggles;
@@ -239,6 +241,7 @@ fn main() -> AppExit {
             (
                 board::BoardPlugin,
                 card_table::CardTablePlugin,
+                hand_strip::HandStripPlugin,
                 (
                     choice_grid::ChoiceGridPlugin,
                     seat_markers::SeatMarkersPlugin,
@@ -298,6 +301,9 @@ fn main() -> AppExit {
             card_back: opts.card_back.clone(),
             scripted: opts.last_frame().is_some(),
         });
+    }
+    if let Some(cards) = opts.test_hand {
+        app.add_plugins(test_hand::TestHandPlugin(cards));
     }
     // What a frame costs, for finding what is slow: the frame's time, and each pass of its
     // drawing as the processor and the graphics card took it.

@@ -25,7 +25,10 @@
 //! the seat this client plays: its own hand fanned in front of it, the others' standing in the
 //! air, a trick in the middle with each card towards who played it (the zone's captions), and
 //! a click on a card of the hand that may be played (they stand a little out of the fan, and
-//! the one under the pointer further) makes its choice (`[cards] play`).
+//! the one under the pointer further) makes its choice (`[cards] play`). Outside a headset the
+//! player's own hand is drawn flat along the bottom of the window instead (`hand_strip.rs`, from
+//! [`HandStrip`]): its cards lie unseen at the near edge of the table (`Layout::lay_strip`), where
+//! a card dealt is carried to and joins the strip as it lands, and a card played sets off from.
 //!
 //! Cards go where the position puts them by the hand's own carrying (`hand::Carry::Put`): over
 //! the table and down, one after another when several go at once (a row dealt, a run off the
@@ -47,6 +50,7 @@ use crate::cursor::{Feel, Sense, TableFeel, Under};
 use crate::drag::{self, CardPress, Drag, LetGo};
 use crate::escape_menu::{self, EscapeMenu};
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
+use crate::hand_strip::{HandStrip, StripCard};
 use crate::highlight::{Lit, Outline};
 use crate::look::{self, MaterialSpec};
 use crate::net::api::{CardOnTable, Cards, GameInfo, Gesture, LegalSelection, Position};
@@ -56,6 +60,7 @@ use crate::play::{self, Outcome, Stage, Turn};
 use crate::props::{self, CARD, CARD_SIZE};
 use crate::sounds::Cue;
 use crate::table::Table;
+use crate::vr_panels::InHeadset;
 
 pub struct CardTablePlugin;
 
@@ -67,6 +72,8 @@ impl Plugin for CardTablePlugin {
             .init_resource::<Appearances>()
             .init_resource::<Drag>()
             .init_resource::<Pointed>()
+            .init_resource::<HandStrip>()
+            .init_resource::<InHeadset>()
             .add_message::<PointerInput>()
             .add_observer(on_press)
             .add_message::<BoardBuilt>()
@@ -84,7 +91,9 @@ impl Plugin for CardTablePlugin {
                     follow_cards,
                     hold_cards.run_if(resource_changed::<Drag>),
                     sync_cards.run_if(
-                        resource_changed::<WatchStatus>.or_eager(resource_changed::<Together>),
+                        resource_changed::<WatchStatus>
+                            .or_eager(resource_changed::<Together>)
+                            .or_eager(resource_changed::<InHeadset>),
                     ),
                     show_aim.run_if(
                         resource_changed::<WatchStatus>
@@ -93,6 +102,7 @@ impl Plugin for CardTablePlugin {
                     ),
                     follow_hand,
                     stand_out,
+                    fill_strip,
                 )
                     .chain()
                     .before(Hands),
@@ -285,6 +295,9 @@ struct CardRoot {
     /// The seat the table is seen from, its place among the game's, when it is laid round
     /// its seats.
     viewer: usize,
+    /// Whether the player's own hand is drawn along the bottom of the window (not in a
+    /// headset).
+    strip: bool,
 }
 
 /// A card: what the position calls it (its id, or its zone and place for one face down), where
@@ -562,6 +575,7 @@ fn sync_cards(
     cards: Query<Existing>,
     (put_on, together, appearances): (Res<PutOn>, Res<Together>, Res<Appearances>),
     (mut built, mut cues): (MessageWriter<BoardBuilt>, MessageWriter<Cue>),
+    in_headset: Res<InHeadset>,
 ) {
     let look = |t: &Table| appearances.for_game(&t.info.id);
     let Some(table) = watch.table.as_ref().filter(|t| on_table(&t.info, look(t))) else {
@@ -572,9 +586,10 @@ fn sync_cards(
     };
     let by_look = look(table).and_then(|l| l.cards.as_ref());
     let seen_from = by_look.filter(|l| l.seated()).map_or(0, |_| viewer(table));
+    let strip = !in_headset.0;
     let current = roots
         .iter_mut()
-        .find(|(_, r)| r.room_code == table.room_code && r.viewer == seen_from);
+        .find(|(_, r)| r.room_code == table.room_code && r.viewer == seen_from && r.strip == strip);
     let Some((root, mut shown)) = current else {
         for (old, _) in &roots {
             commands.entity(old).despawn();
@@ -583,6 +598,7 @@ fn sync_cards(
             &mut commands,
             table,
             look(table).and_then(|l| l.cards.clone()),
+            strip,
             &server,
             &mut meshes,
             &mut materials,
@@ -826,10 +842,12 @@ fn place_fresh(
 
 /// The cloth, the piles' places and glows, and what the cards in hand follow, for the camera to
 /// frame.
+#[allow(clippy::too_many_arguments)]
 fn build(
     commands: &mut Commands,
     table: &Table,
     by_look: Option<CardsLook>,
+    strip: bool,
     server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -855,6 +873,9 @@ fn build(
             let mut layout = Layout::seated(&placed, &seats, seen_from, table.yours().is_some());
             if let Some(radius) = look.radius {
                 layout.size = layout.size.max(Vec2::splat(2.0 * radius));
+            }
+            if strip {
+                layout.lay_strip();
             }
             layout
         }
@@ -983,6 +1004,7 @@ fn build(
             looks,
             by_look,
             viewer: seen_from,
+            strip,
         },
     )
 }
@@ -1598,6 +1620,75 @@ fn stand_out(
                 }
             }
         }
+    }
+}
+
+/// The player's own hand along the bottom of the window: its cards that have come to rest at
+/// the near edge of the table, where they are unseen, left to right, each with its picture and
+/// the choice a click on it makes now. One on its way there or from there is seen on the table.
+fn fill_strip(
+    watch: Res<WatchStatus>,
+    roots: Query<&CardRoot>,
+    mut cards: Query<(&CardAt, &Transform, &Rest, &mut Visibility)>,
+    mut strip: ResMut<HandStrip>,
+) {
+    let root = watch
+        .table
+        .as_ref()
+        .and_then(|t| roots.iter().find(|r| r.room_code == t.room_code));
+    let Some((table, root, zone)) = watch
+        .table
+        .as_ref()
+        .zip(root)
+        .and_then(|(t, r)| Some((t, r, r.layout.strip.as_deref()?)))
+    else {
+        if !strip.0.is_empty() {
+            strip.0.clear();
+        }
+        return;
+    };
+    let choices = watch
+        .turn
+        .as_ref()
+        .filter(|t| t.stage == Stage::Choosing)
+        .map(Turn::choices)
+        .unwrap_or_default();
+    let mut held: Vec<(usize, StripCard)> = Vec::new();
+    for (at, t, rest, mut visibility) in &mut cards {
+        let resting = at.zone == zone && t.translation.distance(rest.0.translation) < 1e-4;
+        let wanted = if resting {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        visibility.set_if_neq(wanted);
+        if !resting {
+            continue;
+        }
+        let picture = if at.known {
+            face_file(table.info.cards.as_ref(), &at.key)
+        } else {
+            Some(look::CARD_BACK.to_string())
+        };
+        let choice = root
+            .by_look
+            .as_ref()
+            .filter(|_| at.known)
+            .and_then(|l| card_choice(l, &at.key, &choices));
+        held.push((
+            at.from_top,
+            StripCard {
+                key: at.key.clone(),
+                picture,
+                choice,
+            },
+        ));
+    }
+    // The bottom card of the pile at the left.
+    held.sort_by_key(|(from_top, _)| std::cmp::Reverse(*from_top));
+    let now: Vec<StripCard> = held.into_iter().map(|(_, c)| c).collect();
+    if strip.0 != now {
+        strip.0 = now;
     }
 }
 
@@ -2462,7 +2553,9 @@ mod tests {
     fn a_game_of_several_seats_is_laid_round_the_table_and_a_card_of_the_hand_is_played_by_a_click()
     {
         let mut app = app();
-        app.insert_resource(Appearances(vec![seated_look()]));
+        // In a headset, where the hand stays in the world.
+        app.insert_resource(Appearances(vec![seated_look()]))
+            .insert_resource(InHeadset(true));
         let mut turn = Turn::new(1);
         turn.clicks_only = true;
         turn.options = vec![play_of(&["card-spades-2"])];
@@ -2525,5 +2618,91 @@ mod tests {
         };
         assert_eq!(feel_of("spades-2"), Feel::Point);
         assert_eq!(feel_of("hearts-A"), Feel::Open);
+    }
+
+    #[test]
+    fn outside_a_headset_the_players_hand_is_the_strips_and_its_cards_come_and_go_by_the_near_edge()
+    {
+        let mut app = app();
+        app.insert_resource(Appearances(vec![seated_look()]));
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.options = vec![play_of(&["card-spades-2"])];
+        turn.stage = Stage::Choosing;
+        watch(&mut app, tricks(1, mid_trick()), Some(turn));
+        app.update();
+        app.update();
+        // The hand, left to right as the position has it, the card that may be played with its
+        // choice; its cards unseen at the near edge of the table.
+        let strip = app.world().resource::<HandStrip>().0.clone();
+        let keys: Vec<&str> = strip.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, ["hearts-A", "spades-2"]);
+        assert_eq!(strip[0].choice, None);
+        assert_eq!(strip[1].choice, Some(act("card-spades-2")));
+        assert_eq!(
+            strip[1].picture.as_deref(),
+            Some("textures/cards/faces/spades_2_albedo.png")
+        );
+        let two = card(&mut app, "spades-2");
+        let near = *app.world().get::<Transform>(two).unwrap();
+        assert_eq!(
+            app.world().get::<Visibility>(two),
+            Some(&Visibility::Hidden)
+        );
+        assert!(
+            near.translation.z > 0.3 && near.translation.x.abs() < 1e-6,
+            "{near:?}"
+        );
+        assert!((near.rotation * Vec3::Y).y > 0.99, "face up");
+        // Another seat's hand still stands in the air, and is seen.
+        let theirs = card(&mut app, "hand:1#0");
+        assert_eq!(
+            app.world().get::<Visibility>(theirs),
+            Some(&Visibility::Inherited)
+        );
+
+        // The two played: it leaves the strip and is carried from the near edge to the trick,
+        // seen; a card dealt to the hand is carried in and joins the strip only once there.
+        // (Passed from the first seat's hand: it comes from there.)
+        let played = json!([
+            {"id": "hand", "owner": 1, "count": 1, "cards": [{}]},
+            {"id": "hand", "owner": 2, "count": 2,
+             "cards": [{"id": "hearts-A"}, {"id": "clubs-5"}]},
+            {"id": "hand", "owner": 3, "count": 1, "cards": [{}]},
+            {"id": "trick", "count": 2,
+             "cards": [{"id": "spades-K", "up": true}, {"id": "spades-2", "up": true}],
+             "captions": ["Owlet", "Owl"]}
+        ]);
+        watch(&mut app, tricks(2, played), None);
+        app.update();
+        app.update();
+        let strip = app.world().resource::<HandStrip>().0.clone();
+        let keys: Vec<&str> = strip.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, ["hearts-A"], "the card dealt is still on its way");
+        let world = app.world();
+        assert_eq!(
+            world.get::<Transform>(two),
+            Some(&near),
+            "sets off from there"
+        );
+        assert!(matches!(world.get::<Carry>(two), Some(Carry::Put(_))));
+        assert_eq!(world.get::<Visibility>(two), Some(&Visibility::Inherited));
+        let dealt = card(&mut app, "clubs-5");
+        let world = app.world();
+        let rest = world.get::<Rest>(dealt).unwrap().0;
+        assert_eq!(world.get::<Carry>(dealt), Some(&Carry::Put(rest)));
+        assert_eq!(world.get::<Visibility>(dealt), Some(&Visibility::Inherited));
+        // Landed: it is the strip's.
+        app.world_mut()
+            .entity_mut(dealt)
+            .insert(rest)
+            .remove::<Carry>();
+        app.update();
+        let strip = app.world().resource::<HandStrip>().0.clone();
+        assert_eq!(strip.len(), 2);
+        assert_eq!(
+            app.world().get::<Visibility>(dealt),
+            Some(&Visibility::Hidden)
+        );
     }
 }
