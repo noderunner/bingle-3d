@@ -247,6 +247,10 @@ pub enum ListenError {
     /// No place for the channel: no runtime or config directory.
     Nowhere,
     /// Its directory is somebody else's, or others may enter it.
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(dead_code, reason = "the Unix socket's alone")
+    )]
     NotPrivate,
     Io(std::io::Error),
 }
@@ -346,6 +350,10 @@ fn listen_at(
 
 /// Whether a socket found where the channel goes is in use, as a connect to it said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the Unix socket's alone")
+)]
 pub enum Found {
     /// Nothing there.
     Nothing,
@@ -356,6 +364,10 @@ pub enum Found {
 }
 
 /// What a connect to the socket found there says of it.
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the Unix socket's alone")
+)]
 pub fn found(connect: Result<(), std::io::ErrorKind>) -> Found {
     match connect {
         Err(std::io::ErrorKind::NotFound) => Found::Nothing,
@@ -366,12 +378,20 @@ pub fn found(connect: Result<(), std::io::ErrorKind>) -> Found {
 
 /// Whether a directory is fit for the channel: a directory (not a link to one), the user's own,
 /// and nobody else's to enter (`mode`'s group and other bits all clear).
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the Unix socket's alone")
+)]
 pub fn is_private(is_dir: bool, owner: u32, user: u32, mode: u32) -> bool {
     is_dir && owner == user && mode & 0o077 == 0
 }
 
 /// Where the channel goes on Linux: the runtime directory's `bingle-3d`, else the config
 /// directory's `run`.
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the Unix socket's alone")
+)]
 pub fn dir_from(
     runtime: Option<std::ffi::OsString>,
     config: Option<std::path::PathBuf>,
