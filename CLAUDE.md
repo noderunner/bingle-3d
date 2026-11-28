@@ -85,7 +85,8 @@ R=noderunner/bingle-3d
   systems with a headless `App` (`MinimalPlugins`), as `src/run_limit.rs` does.
 - **Look at what you changed when it is visual.** Render it (`--frames N --screenshot out.png`) and
   look at the picture. A green build does not prove a scene draws. `--showcase` lays every piece
-  model, the dice and some cards on the table, for a model no game draws yet.
+  model, the dice and some cards on the table, for a model no game draws yet, and a piece passing
+  between two portals, the same moment at the same frame on any machine (`--frames`).
 - `docs/plan.md` updated when a stage moves on or a decision is made; README updated when building
   or running changes.
 - Push back, in the PR or the issue, on anything that hurts performance, simplicity, security or
@@ -476,8 +477,9 @@ A game's own rules and its players' words keep their terms.
   rank's label (`standard_face`; the usual 52, and `1`, `11`, `12` and `13` for a deck
   numbered to thirteen, are the pipeline's, `card_faces.py`).
   A patience's cards are drawn with them (`card_table.rs`); no game's dice, discs or rings yet. `src/showcase.rs`: `--showcase`, every
-  piece model the appearance files name, with discs and rings, cards and dice, laid out to look at; it names no
-  game either.
+  piece model the appearance files name, with discs and rings, cards and dice, laid out to look at, and the
+  tallest piece passing between two portals over and over (`pass_on`; in a run a script limits, time goes on a
+  thirtieth of a second a frame); it names no game either.
 - `src/play.rs`: playing a seat (Enter plays, Backspace or a right-click goes back; Esc is the
   escape menu's).
   `Turn` is the move being built from the server's legal selections, narrowed by gestures, with no Bevy in it
@@ -532,6 +534,17 @@ A game's own rules and its players' words keep their terms.
   played (`board::show_taken`). Tuned twice, for a camera that
   blooms and one that does not (`scene::BloomOn`: off in a headset, and with `--no-bloom`). **Another effect is
   another `Effect` and its arm in `light`**, nothing else. The outline's geometry (`walk`, `ring`, `ribbon`) has no Bevy systems in it.
+- `src/portal.rs`: a portal that opens on a flat surface and closes again (`Portal`: an outline,
+  when it opens and how long it stays; this module draws it, by a shader of our own,
+  `src/portal/portal.wesl`, the surface inside darkened and a line of light round it, tuned by
+  `scene::BloomOn`, and takes it away once closed; it knows nothing of boards), and a piece's
+  passage from one to another (`Passage`, `pose`: it arrives, sinks into the first, rises out of
+  the second). Nothing is cut out of a piece going in: the surface is opaque, so the depth test
+  hides what is under it. The board uses it for a game on several boards whose look says
+  `[board] passage = "portal"` (Alice chess's): a piece new on one board where its color left
+  another (`board::passes_from`) sinks on the same position of the board it moved on
+  (`board::twin`) and rises where it now stands (`board::Passing`, `pass_pieces`), finished at once
+  when another move is played.
 - `src/toggles.rs`: stopgap buttons and keys for the table's settings: coordinates (C) and
   lighting the legal moves (L, `board::ShowLegalMoves`, off by default; `--legal-moves` starts
   with it on).

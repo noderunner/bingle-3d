@@ -1,6 +1,6 @@
 //! `--showcase`: every model the client has for a piece, in each material its games give it,
-//! with two-sided discs and their rings, the dice, a chess clock and a few playing cards of the
-//! usual deck,
+//! with two-sided discs and their rings, the dice, a chess clock, a few playing cards of the
+//! usual deck, and the tallest piece passing between two portals over and over (`portal.rs`),
 //! laid out on the table with nothing
 //! else: to look at an asset in the client's own light, as the asset pipeline asks before one
 //! is called done (`assets-src/README.md`). A face is seen from one side here, as nowhere in
@@ -8,16 +8,23 @@
 //!
 //! The pieces are found in the appearance files, so a new one is here by itself, and no game is
 //! named. `--card-face` and `--card-back` try a picture (a JPEG or a PNG) on a card's sides.
+//!
+//! In a run a script limits (`--frames`, `--screenshot`), time goes on by a thirtieth of a second
+//! each frame whatever the machine (`TimeUpdateStrategy::ManualDuration`), so a picture at a frame
+//! shows the same moment of the passage everywhere: the first starts at frame 60
+//! (`PASSAGE_START`), and each lasts `Passage::length` and a second more.
 
 use std::path::{Path, PathBuf};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 
 use crate::appearance::{Appearances, Stands};
 use crate::board::BoardBuilt;
 use crate::look::{self, MaterialSpec};
+use crate::portal::{self, Passage, Portal};
 use crate::scene::BloomOn;
 use crate::{assets, chess_clock, props};
 
@@ -25,6 +32,8 @@ pub struct ShowcasePlugin {
     /// Pictures to try on the cards' sides, from files outside the client.
     pub card_face: Option<PathBuf>,
     pub card_back: Option<PathBuf>,
+    /// Whether a script limits the run: time then goes on by a frame's worth each frame.
+    pub scripted: bool,
 }
 
 #[derive(Resource, Clone)]
@@ -40,9 +49,29 @@ impl Plugin for ShowcasePlugin {
             back: self.card_back.clone(),
         })
         .add_systems(Startup, lay_out)
-        .add_systems(Update, clear_the_view);
+        .add_systems(Update, (clear_the_view, pass_on));
+        if self.scripted {
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+        }
     }
 }
+
+/// How far time goes on each frame of a run a script limits.
+const FRAME: std::time::Duration = std::time::Duration::from_nanos(1_000_000_000 / 30);
+
+/// When the first passage starts, in seconds (frame 60 of a run a script limits), and the
+/// pause after each before the next.
+pub const PASSAGE_START: f32 = 2.0;
+const PASSAGE_PAUSE: f32 = 1.0;
+/// The passage: coming down onto the first portal, as a piece moved does.
+const PASSAGE: Passage = Passage { arrive: 0.28 };
+
+/// The plank the passage goes through: as thick as a board, two squares on it as far apart as
+/// four of a board's, each of a board's size.
+const PLANK_HEIGHT: f32 = crate::board::BOARD_HEIGHT;
+const SQUARE: f32 = crate::board::PITCH;
+const SQUARES_APART: f32 = 4.0 * SQUARE;
+const PLANK: Vec2 = Vec2::new(SQUARES_APART + 2.0 * SQUARE, 2.0 * SQUARE);
 
 /// Between two pieces in a row, between two rows, and between the rows and what lies in front;
 /// and how many pieces a row holds.
@@ -149,12 +178,71 @@ pub fn places(count: usize) -> Vec<Vec2> {
         .collect()
 }
 
+/// The piece passing between the showcase's portals: where it stands on each side, how far it
+/// goes down, and where the portals open (z, under the root).
+#[derive(Component)]
+struct Passing {
+    first: Transform,
+    rest: Transform,
+    depth: f32,
+    square: f32,
+    root: Entity,
+}
+
+/// Moves the piece along its passage, again and again, and opens the portals for each.
+fn pass_on(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut pieces: Query<(&Passing, &mut Transform, &mut Visibility)>,
+    mut began: Local<Option<i64>>,
+) {
+    let period = PASSAGE.length() + PASSAGE_PAUSE;
+    let since = time.elapsed_secs() - PASSAGE_START;
+    let which = (since / period).floor() as i64;
+    let secs = since - which as f32 * period;
+    for (passing, mut t, mut visibility) in &mut pieces {
+        // Before the first, it stands where it starts.
+        let stage = if since < 0.0 {
+            portal::Stage::Sinking(0.0)
+        } else {
+            PASSAGE.stage(secs)
+        };
+        let drop = crate::board::DROP_HEIGHT;
+        let (at, seen) = portal::pose(stage, passing.first, passing.rest, passing.depth, drop);
+        *t = at;
+        visibility.set_if_neq(if seen {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        if since >= 0.0 && *began != Some(which) {
+            *began = Some(which);
+            let corners = crate::slab::cell_corners(crate::board::CellShape::Square, SQUARE);
+            let y = PLANK_HEIGHT + portal::LIFT;
+            for ((opens, stays), x) in PASSAGE
+                .portals()
+                .into_iter()
+                .zip([-SQUARES_APART / 2.0, SQUARES_APART / 2.0])
+            {
+                let mut portal = Portal::new(corners.clone(), opens, stays);
+                portal.secs = secs;
+                commands.spawn((
+                    Name::new("Portal"),
+                    portal,
+                    Transform::from_xyz(x, y, passing.square),
+                    ChildOf(passing.root),
+                ));
+            }
+        }
+    }
+}
+
 fn lay_out(
     mut commands: Commands,
     server: Res<AssetServer>,
     all: Res<Appearances>,
     (pictures, bloom): (Res<Pictures>, Res<BloomOn>),
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    (mut materials, mut meshes): (ResMut<Assets<StandardMaterial>>, ResMut<Assets<Mesh>>),
     mut images: ResMut<Assets<Image>>,
     mut built: MessageWriter<BoardBuilt>,
 ) {
@@ -165,7 +253,8 @@ fn lay_out(
     let rings_at = GAP + props::RING_SIZE.x / 2.0;
     let dice_at = rings_at + props::RING_SIZE.x / 2.0 + GAP + props::DIE_SIDE / 2.0;
     let cards_at = dice_at + props::DIE_SIDE / 2.0 + GAP + props::CARD_SIZE.y / 2.0;
-    let front = cards_at + props::CARD_SIZE.y / 2.0;
+    let plank_at = cards_at + props::CARD_SIZE.y / 2.0 + GAP + PLANK.y / 2.0;
+    let front = plank_at + PLANK.y / 2.0;
     // Behind the pieces: the chess clock.
     let clock_at = -(depth + BACK / 2.0 + GAP + chess_clock::DEPTH / 2.0);
     let behind = -clock_at + chess_clock::DEPTH / 2.0;
@@ -313,6 +402,53 @@ fn lay_out(
         ];
         let whole = props::spawn(&mut commands, &server, props::CARD, &card, at);
         commands.entity(whole).insert(ChildOf(root));
+    }
+
+    // The passage: a plank, two squares on it, and the tallest piece going from the left one
+    // to the right one through a portal on each (`pass_on`).
+    let wood = materials.add(look::tray().on_board(look::BOARD_WOODS[0]).build(&server));
+    commands.spawn((
+        Name::new("Plank"),
+        Mesh3d(meshes.add(Cuboid::new(PLANK.x, PLANK_HEIGHT, PLANK.y))),
+        MeshMaterial3d(wood),
+        Transform::from_xyz(0.0, PLANK_HEIGHT / 2.0, plank_at),
+        ChildOf(root),
+    ));
+    let tallest = pieces
+        .iter()
+        .filter(|s| s.sides.is_none())
+        .filter_map(|s| Some((s, assets::model_span(&s.model)?)))
+        .max_by(|(_, (a, b)), (_, (c, d))| (b - a).total_cmp(&(d - c)));
+    if let Some((shown, (low, high))) = tallest {
+        let material = materials.add(shown.material.build(&server));
+        let names = assets::model_parts(&shown.model);
+        let parts: Vec<(&str, Handle<StandardMaterial>)> = names
+            .iter()
+            .map(|name| {
+                let own = shown.parts.iter().find(|(part, _)| part == name);
+                let m = match own {
+                    Some((_, spec)) => materials.add(spec.build(&server)),
+                    None => material.clone(),
+                };
+                (name.as_str(), m)
+            })
+            .collect();
+        let first = Transform::from_xyz(-SQUARES_APART / 2.0, PLANK_HEIGHT - low, plank_at)
+            .with_rotation(Quat::from_rotation_y(0.6));
+        let mut rest = first;
+        rest.translation.x += SQUARES_APART;
+        let piece = props::spawn(&mut commands, &server, &shown.model, &parts, first);
+        commands.entity(piece).insert((
+            Name::new("Passing"),
+            ChildOf(root),
+            Passing {
+                first,
+                rest,
+                depth: high - low + 0.001,
+                square: plank_at,
+                root,
+            },
+        ));
     }
 
     // The chess clock, facing the player: one face with two hours left and its time running,

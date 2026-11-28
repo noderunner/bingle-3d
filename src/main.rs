@@ -47,6 +47,7 @@ mod new_game;
 mod paint_contract;
 mod patience;
 mod play;
+mod portal;
 mod props;
 // Used only by the headset so far.
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
@@ -245,6 +246,7 @@ fn main() -> AppExit {
                 move_tiles::MoveTilesPlugin,
                 highlight::HighlightPlugin,
                 arcs::ArcsPlugin,
+                portal::PortalPlugin,
             ),
             sounds::SoundsPlugin {
                 on: !opts.no_audio_devices,
@@ -294,6 +296,7 @@ fn main() -> AppExit {
         app.add_plugins(showcase::ShowcasePlugin {
             card_face: opts.card_face.clone(),
             card_back: opts.card_back.clone(),
+            scripted: opts.last_frame().is_some(),
         });
     }
     // What a frame costs, for finding what is slow: the frame's time, and each pass of its

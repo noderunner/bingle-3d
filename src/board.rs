@@ -50,6 +50,7 @@ use crate::net::api::{
     Board, BoardPosition, GameInfo, Gesture, LegalSelection, PieceOnBoard, Position,
 };
 use crate::play::{Choice, Hovering, LineAim, SideAim, Spot, Stage, TakeToPlace, TakeUp, Turn};
+use crate::portal::{self, Passage, Portal};
 use crate::slab::{self, Rim};
 use crate::sounds::Cue;
 use crate::table::Table;
@@ -112,6 +113,7 @@ impl Plugin for BoardPlugin {
                     hold_beside,
                     drop_pieces,
                     flip_pieces,
+                    pass_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
                 )
                     .chain(),
@@ -167,6 +169,8 @@ const EDGE_LINE_WIDTH: f32 = 0.07;
 const MARK_SIZE: f32 = 0.2;
 /// How far over the board a point a click lands on lies, so it is picked before the board.
 const POINT_RAISE: f32 = 0.0003;
+/// A portal opening on a point: a disc this far out from it, in pitches, as wide as a stone.
+const PORTAL_ON_POINT: f32 = 0.4;
 
 /// A score's dots (`trays::marks`): how far beyond the outermost positions, and how far apart,
 /// in pitches; room for a ring as wide as most of a pitch round each.
@@ -546,8 +550,28 @@ struct Dropping {
     to: f32,
 }
 
-const DROP_HEIGHT: f32 = 0.06;
+pub const DROP_HEIGHT: f32 = 0.06;
 const DROP_TIME: Duration = Duration::from_millis(280);
+
+/// A piece passing by portal from one of the game's boards to another (`portal::Passage`): it
+/// comes down onto the position of its own board it moved to (`first`, where it is when there),
+/// sinks there by `depth`, and rises at `rest`, on the same position of the other board, in
+/// place of its `Rest` until it is done. It is done at once when another move has been played
+/// since (`seq`, the moves played when it began).
+#[derive(Component, Debug, Clone)]
+struct Passing {
+    passage: Passage,
+    secs: f32,
+    first: Transform,
+    rest: Transform,
+    depth: f32,
+    seq: u64,
+}
+
+/// A portal a passage opened, closed at once when another move has been played since (the
+/// moves played when it opened).
+#[derive(Component, Debug, Clone, Copy)]
+struct PassagePortal(u64);
 
 /// A kind of piece as the board draws it.
 #[derive(Debug, Clone)]
@@ -717,6 +741,9 @@ struct Kit {
     tints: HashMap<String, TintKit>,
     /// What both seats have still to place, beside the board, for a game whose look says.
     stock: Option<StockKit>,
+    /// The outline of a portal on a position, for a game on several boards whose look says a
+    /// piece passes between them by portal (`portal.rs`); none otherwise.
+    portal: Option<Vec<Vec2>>,
 }
 
 /// How the positions the view tints with one key are drawn: a piece laid there (a tile), lit
@@ -1381,6 +1408,13 @@ fn place_pieces(
         .and_then(|cell| layout.centres.get(cell))
         .copied();
     let mut turned: Vec<&PieceAt> = Vec::new();
+    // What left the board, by position and color: where a piece new on another board passed
+    // from, by portal, where the game's look says (`passes_from`).
+    let left: Vec<(&str, &str)> = shown
+        .iter()
+        .filter(|(entity, at)| !wanted.contains(at) && !kept.contains(entity))
+        .map(|(_, at)| (at.cell.as_str(), at.piece.color.as_str()))
+        .collect();
     for (entity, at) in shown {
         if wanted.contains(at) || kept.contains(entity) {
             continue;
@@ -1448,6 +1482,59 @@ fn place_pieces(
         );
         let to = rest.translation.y;
         let settled = Rest(rest);
+        // Passing to another board by portal, from the same position of the board it moved
+        // on.
+        let passage = animate.and(kit.portal.as_ref()).and_then(|corners| {
+            let from = passes_from(&table.info.board, &at.cell, &at.piece.color, &left)?;
+            Some((corners, layout.centres.get(&from)?, from))
+        });
+        if let (Some((corners, first_at, from)), Some(put)) = (passage, animate) {
+            let there = put.contains(&from.as_str());
+            let passage = Passage {
+                arrive: if there { 0.0 } else { DROP_TIME.as_secs_f32() },
+            };
+            let mut first = rest;
+            first.translation += *first_at - *centre;
+            let mut start = first;
+            if !there {
+                start.translation.y += DROP_HEIGHT;
+            }
+            let depth =
+                (at.under as f32 * 1e-6 * kit.scale + kind.height * rest.scale.y) + PASSAGE_CLEAR;
+            let seq = table.state.move_seq;
+            let name = format!("{} at {}", at.piece.piece, at.cell);
+            commands.spawn((
+                Name::new(name),
+                Mesh3d(kind.mesh.clone()),
+                MeshMaterial3d(material),
+                start,
+                // Hidden while it is wholly under.
+                Visibility::default(),
+                Spot(at.cell.clone()),
+                Pickable::default(),
+                at,
+                ChildOf(root),
+                Passing {
+                    passage,
+                    secs: 0.0,
+                    first,
+                    rest,
+                    depth,
+                    seq,
+                },
+            ));
+            let lift = Vec3::Y * (kit.surface + portal::LIFT);
+            for ((opens, stays), place) in passage.portals().into_iter().zip([*first_at, *centre]) {
+                commands.spawn((
+                    Name::new("Portal"),
+                    Portal::new(corners.clone(), opens, stays),
+                    PassagePortal(seq),
+                    Transform::from_translation(place + lift),
+                    ChildOf(root),
+                ));
+            }
+            continue;
+        }
         let animate = animate.is_some_and(|put| !put.contains(&at.cell.as_str()));
         if animate {
             rest.translation.y += DROP_HEIGHT;
@@ -1472,6 +1559,53 @@ fn place_pieces(
             piece.insert(settled);
         }
     }
+}
+
+/// How far under the surface a piece passing by portal goes past its own height, so its top is
+/// well under.
+const PASSAGE_CLEAR: f32 = 0.001;
+
+/// Which of a game's boards (`parts`) the position `cell` is on.
+fn which_board(board: &Board, cell: &str) -> Option<usize> {
+    parts(board)
+        .iter()
+        .position(|part| part.iter().any(|p| p.id == cell))
+}
+
+/// The position of board `on` (of `parts`) at the same place in it as `cell` is in its own: by
+/// their layout coordinates from each board's least, so Alice chess's e4 on board A is m4 on
+/// board B.
+pub fn twin(board: &Board, cell: &str, on: usize) -> Option<String> {
+    let parts = parts(board);
+    let own = parts
+        .iter()
+        .find(|part| part.iter().any(|p| p.id == cell))?;
+    let p = own.iter().find(|p| p.id == cell)?;
+    let other = parts.get(on)?;
+    let offset = Vec2::new(p.x, p.y) - bounds(own).0;
+    let wanted = bounds(other).0 + offset;
+    other
+        .iter()
+        .find(|q| (Vec2::new(q.x, q.y) - wanted).length() < 1e-3)
+        .map(|q| q.id.clone())
+}
+
+/// Where a piece of `color` new on position `cell` passed from, for a game on several boards:
+/// the same position of another board that a piece of its color left in the same change
+/// (`left`, by position and color). A pawn promoted as it passes is another kind of piece, so
+/// the kind is not asked; in castling the king and the rook each pass from their own.
+pub fn passes_from(
+    board: &Board,
+    cell: &str,
+    color: &str,
+    left: &[(&str, &str)],
+) -> Option<String> {
+    let on = which_board(board, cell)?;
+    let from = left
+        .iter()
+        .filter(|(_, c)| *c == color)
+        .find_map(|(at, _)| which_board(board, at).filter(|b| *b != on))?;
+    twin(board, cell, from)
 }
 
 /// Whether the piece shown as `was` is the piece `now` turned over: the same kind of piece, of
@@ -2534,7 +2668,20 @@ fn build_board(
         let half = crate::move_tiles::DEPTH / 2.0;
         taken.push(Rect::new(-reach, -half, reach, half));
     }
+    // A piece passing between the game's boards goes by portal where its look says, each
+    // portal the shape of the position it opens on (a disc on a point).
+    let portal = (table.info.board.boards.len() > 1
+        && tools
+            .look
+            .is_some_and(|l| l.board.passage == appearance::Passage::Portal))
+    .then(|| match surface {
+        Surface::Points => slab::cell_corners(CellShape::Spot, pitch * PORTAL_ON_POINT / 0.3),
+        Surface::Cells(shape) | Surface::Table(shape) => {
+            slab::cell_corners(shape, pitch * CELL_SCALE)
+        }
+    });
     let kit = Kit {
+        portal,
         edge: playing,
         outline: edge,
         taken,
@@ -4710,6 +4857,54 @@ fn flip_pieces(
                 .remove::<Flipping>()
                 .insert(Rest(flip.rest));
         }
+    }
+}
+
+/// Moves each piece passing by portal (`Passing`) as its passage says, and lays it where it lies
+/// once it is done, or at once, with the portals it opened gone, when another move has been
+/// played since it began.
+fn pass_pieces(
+    mut commands: Commands,
+    time: Res<Time>,
+    watch: Res<WatchStatus>,
+    mut pieces: Query<(Entity, &mut Passing, &mut Transform, &mut Visibility)>,
+    portals: Query<(Entity, &PassagePortal)>,
+) {
+    let seq = watch.table.as_ref().map(|t| t.state.move_seq);
+    for (entity, portal) in &portals {
+        if Some(portal.0) != seq {
+            commands.entity(entity).despawn();
+        }
+    }
+    for (entity, mut passing, mut t, mut visibility) in &mut pieces {
+        passing.secs += time.delta_secs();
+        let stage = if Some(passing.seq) == seq {
+            passing.passage.stage(passing.secs)
+        } else {
+            portal::Stage::Done
+        };
+        if stage == portal::Stage::Done {
+            *t = passing.rest;
+            visibility.set_if_neq(Visibility::Inherited);
+            commands
+                .entity(entity)
+                .remove::<Passing>()
+                .insert(Rest(passing.rest));
+            continue;
+        }
+        let (at, seen) = portal::pose(
+            stage,
+            passing.first,
+            passing.rest,
+            passing.depth,
+            DROP_HEIGHT,
+        );
+        *t = at;
+        visibility.set_if_neq(if seen {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 }
 
@@ -7617,6 +7812,132 @@ wood = "contrast"
             assert!(lo < cells["a1"].0.x && hi > cells["f1"].0.x, "{lo} {hi}");
         }
 
+        #[test]
+        fn a_piece_passing_to_the_other_board_sinks_into_a_portal_and_rises_from_another() {
+            let mut app = with_looks();
+            app.add_plugins(crate::portal::PortalSystems)
+                .init_asset::<crate::portal::PortalMaterial>();
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(50),
+            ));
+            let mut t = two_boards("chess-alice");
+            t.state = stacks(1, &[("a1", &[("rook", "white")])]);
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(t);
+            app.update();
+            let centre = |app: &mut App, id: &str| {
+                let mut q = app.world_mut().query::<(&Cell, &Transform)>();
+                q.iter(app.world())
+                    .find(|(c, _)| c.id == id)
+                    .map(|(_, t)| t.translation)
+                    .unwrap()
+            };
+            let (b2, e2) = (centre(&mut app, "b2"), centre(&mut app, "e2"));
+            let portals = |app: &mut App| {
+                let mut q = app
+                    .world_mut()
+                    .query_filtered::<&Transform, With<crate::portal::Portal>>();
+                let mut xs: Vec<f32> = q.iter(app.world()).map(|t| t.translation.x).collect();
+                xs.sort_by(f32::total_cmp);
+                xs
+            };
+            assert!(
+                portals(&mut app).is_empty(),
+                "a board just built plays nothing"
+            );
+
+            // The rook goes a1 to b2 on board A, and passes to e2 on board B.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(2, &[("e2", &[("rook", "white")])]),
+            });
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(Entity, &PieceAt, &Transform, Has<Passing>)>();
+            let (rook, at, start, passing) = q.single(app.world()).unwrap();
+            assert_eq!(at.cell, "e2");
+            assert!(passing);
+            // It comes down onto b2, the square of board A it moved to.
+            assert!((start.translation.x - b2.x).abs() < 1e-5, "{start:?}");
+            assert!(start.translation.y > SURFACE + 0.01, "over it");
+            let depth = app.world().get::<Passing>(rook).unwrap().depth;
+            assert!(depth > 0.02, "a rook's height, and a little more: {depth}");
+            let xs = portals(&mut app);
+            assert_eq!(xs.len(), 2, "a portal on each square");
+            assert!((xs[0] - b2.x).abs() < 1e-5 && (xs[1] - e2.x).abs() < 1e-5);
+
+            // Sunk, then hidden while under, and risen on e2 at last.
+            let mut lowest = f32::MAX;
+            let mut hidden = false;
+            for _ in 0..40 {
+                app.update();
+                let t = app.world().get::<Transform>(rook).unwrap();
+                lowest = lowest.min(t.translation.y);
+                hidden |= app.world().get::<Visibility>(rook) == Some(&Visibility::Hidden);
+            }
+            assert!(hidden);
+            assert!(app.world().get::<Passing>(rook).is_none());
+            let rest = app.world().get::<Rest>(rook).unwrap().0;
+            assert!(
+                (rest.translation.y - depth - lowest).abs() < 1e-5,
+                "its whole height under the board's top: {lowest}"
+            );
+            assert!((rest.translation.x - e2.x).abs() < 1e-5);
+            assert_eq!(*app.world().get::<Transform>(rook).unwrap(), rest);
+            assert!(portals(&mut app).is_empty(), "both closed and gone");
+
+            // Back to b2 (board A's twin is board B's e2), and another move at once: it is
+            // done there at once, the portals gone.
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 3,
+                state: stacks(3, &[("b2", &[("rook", "white")])]),
+            });
+            app.update();
+            assert_eq!(portals(&mut app).len(), 2);
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 4,
+                state: stacks(
+                    4,
+                    &[("b2", &[("rook", "white")]), ("c3", &[("pawn", "black")])],
+                ),
+            });
+            app.update();
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&PieceAt, &Transform, Has<Passing>, Option<&Rest>)>();
+            let (_, t, passing, rest) = q
+                .iter(app.world())
+                .find(|(at, ..)| at.cell == "b2")
+                .unwrap();
+            assert!(!passing);
+            assert_eq!(Some(*t), rest.map(|r| r.0));
+            assert!((t.translation.x - b2.x).abs() < 1e-5);
+            assert!(portals(&mut app).is_empty());
+        }
+
+        #[test]
+        fn a_piece_new_on_a_board_of_a_game_whose_look_says_nothing_comes_down_as_usual() {
+            let mut app = with_looks();
+            // A game on two boards with no look of its own.
+            let mut t = two_boards("two-boards");
+            t.state = stacks(1, &[("a1", &[("stone", "white")])]);
+            app.world_mut().resource_mut::<WatchStatus>().table = Some(t);
+            app.update();
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.table.as_mut().unwrap().apply(&Event::Move {
+                seq: 2,
+                state: stacks(2, &[("e2", &[("stone", "white")])]),
+            });
+            app.update();
+            assert_eq!(pieces(&mut app), [("e2".to_string(), true)], "dropping");
+            let mut q = app.world_mut().query_filtered::<(), With<Passing>>();
+            assert_eq!(q.iter(app.world()).count(), 0);
+        }
+
         fn pieces(app: &mut App) -> Vec<(String, bool)> {
             let mut q = app.world_mut().query::<(&PieceAt, Option<&Dropping>)>();
             let mut out: Vec<_> = q
@@ -8486,6 +8807,52 @@ piece = "ring"
                 .collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_position_has_its_twin_at_the_same_place_on_the_other_board() {
+        // Alice chess's: board A files a to h, board B i to p, laid with no gap between.
+        let board = board_of(&[&files(0, 8, 8), &files(8, 8, 8)]);
+        assert_eq!(twin(&board, "e4", 1).as_deref(), Some("m4"));
+        assert_eq!(twin(&board, "m4", 0).as_deref(), Some("e4"));
+        assert_eq!(twin(&board, "a8", 1).as_deref(), Some("i8"));
+        assert_eq!(
+            twin(&board, "e4", 0).as_deref(),
+            Some("e4"),
+            "its own board's"
+        );
+        assert_eq!(twin(&board, "e4", 2), None, "no such board");
+        assert_eq!(twin(&board, "z9", 1), None);
+    }
+
+    #[test]
+    fn a_piece_new_on_one_board_passed_from_its_twin_where_its_color_left_another() {
+        let board = board_of(&[&files(0, 8, 8), &files(8, 8, 8)]);
+        // A white knight g1 to f3 on board A, which passes to n3 on board B.
+        let left = [("g1", "white")];
+        assert_eq!(
+            passes_from(&board, "n3", "white", &left).as_deref(),
+            Some("f3")
+        );
+        // Castling: the king and the rook each from their own square.
+        let left = [("e1", "white"), ("h1", "white")];
+        assert_eq!(
+            passes_from(&board, "o1", "white", &left).as_deref(),
+            Some("g1")
+        );
+        assert_eq!(
+            passes_from(&board, "n1", "white", &left).as_deref(),
+            Some("f1")
+        );
+        // Not when only the other seat's piece left (one captured), nor from its own board.
+        assert_eq!(passes_from(&board, "n3", "white", &[("f3", "black")]), None);
+        assert_eq!(passes_from(&board, "n3", "white", &[("m1", "white")]), None);
+        // A game on one board has no other.
+        let one = Board {
+            boards: vec![],
+            ..board.clone()
+        };
+        assert_eq!(passes_from(&one, "n3", "white", &[("g1", "white")]), None);
     }
 
     #[test]

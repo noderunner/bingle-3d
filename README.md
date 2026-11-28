@@ -243,10 +243,14 @@ otherwise the log says so, and the rate is set in the runtime's own settings (St
 
 `--showcase` lays every piece's model on the table, with the dice and a few playing cards of the
 usual deck, and nothing else: to look at them. `--card-face FILE` and `--card-back FILE` try a picture (a JPEG or
-a PNG, 5 to 7) on the cards' sides.
+a PNG, 5 to 7) on the cards' sides. In front of them the tallest piece passes from one portal to
+another on a plank, over and over (the passage between Alice chess's boards). In a run `--frames`
+limits, time goes on by a thirtieth of a second a frame, so a frame shows the same moment on any
+machine: the first passage starts at frame 60 and takes about 55 frames.
 
 ```sh
 cargo run -- --showcase --view 15,38,0.5
+cargo run -- --showcase --view 0,40,0.22,0,0.24 --frames 80 --screenshot sinking.png
 ```
 
 **In a headset**: the place and the table at their real size, controllers that point and click,
