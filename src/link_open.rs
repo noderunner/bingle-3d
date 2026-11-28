@@ -8,9 +8,17 @@
 //! wrong with the server stays on the login screen with its reason, and the link goes on once
 //! it is put right. The room is opened as the client connects (`game_panel::WatchOnStart`).
 //!
+//! A link handed over by a copy started while this one runs (`link_channel.rs`) goes the same
+//! way (`take_handed`), with what this copy shows left only once the player has said so: a
+//! game being played is asked about first (`Stage::AskLeave`), and a server never used before
+//! anything is sent there. A link for the game shown only brings the window forward. While a
+//! question is open, a link for the same server and room takes the place of the one asked
+//! about (its code is the newer); any other is not opened, and the question says so.
+//!
 //! On the main screen of a first run (not one a script limits, nor in a headset), a question
 //! offers to open game links with this program; *Settings* turns it on and off after that.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
@@ -18,8 +26,11 @@ use crate::browser::{Action, button, buttons, colors, line};
 use crate::fonts::UiFonts;
 use crate::game_panel::WatchOnStart;
 use crate::link::{self, Identity, Link, Next};
+use crate::link_channel::{Forward, Inbox};
 use crate::login::{Light, LoginScreen, Screen};
-use crate::net::{Connection, Net, Request, ServerStatus};
+use crate::net::server_url::ServerUrl;
+use crate::net::{Connection, Net, Request, ServerStatus, Target, WatchStatus, stop_watching};
+use crate::sign_in::Signing;
 
 pub struct LinkOpenPlugin {
     /// A run a script limits (`--frames`, `--screenshot`): it asks nothing about links and
@@ -67,6 +78,7 @@ impl Plugin for LinkOpenPlugin {
         .add_systems(
             Update,
             (
+                take_handed.run_if(resource_exists::<Inbox>),
                 advance.run_if(resource_exists::<LinkOpen>),
                 rebuild.run_if(
                     resource_changed::<LinkSetting>
@@ -126,10 +138,17 @@ pub struct LinkOpen {
     pub stage: Stage,
     /// What the player is to be told of the trade, until they close it.
     pub said: Option<(String, String)>,
+    /// Handed over while this copy ran: what it shows is left only once the questions before
+    /// going are answered.
+    pub running: bool,
+    /// Another link came while a question was open, and was not opened.
+    pub set_aside: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stage {
+    /// A link handed over while a game is being played: leave it?
+    AskLeave,
     /// The server is shown, and asked about; nothing is sent there yet.
     AskServer,
     /// The login screen checks the server.
@@ -152,6 +171,35 @@ impl LinkOpen {
             used,
             stage,
             said: None,
+            running: false,
+            set_aside: false,
+        }
+    }
+
+    /// A link handed over while this copy runs (`link_channel.rs`): a game being played is
+    /// asked about first, then a server never used; else it goes at once.
+    pub fn handed(link: Link, used: bool, busy: bool) -> Self {
+        let mut open = LinkOpen::new(link, used);
+        if busy {
+            open.stage = Stage::AskLeave;
+        }
+        open.running = true;
+        open
+    }
+
+    /// A question about the link is open.
+    fn asking(&self) -> bool {
+        matches!(
+            self.stage,
+            Stage::AskLeave | Stage::AskServer | Stage::AskIdentity { .. }
+        )
+    }
+
+    /// The game the link opens, once connected.
+    pub fn target(&self) -> Target {
+        match self.link.action {
+            link::Action::Join => Target::Join(self.link.room.clone()),
+            link::Action::Watch => Target::Room(self.link.room.clone()),
         }
     }
 
@@ -164,6 +212,8 @@ impl LinkOpen {
 /// What the link's and the offer's buttons do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
+    /// Leave the game being played for the link's.
+    Leave,
     /// Connect to the server never used before.
     Connect,
     /// Not that server: the login screen, at the one configured.
@@ -185,6 +235,155 @@ fn go(net: &Net, login: &mut LoginScreen, status: &mut ServerStatus) {
     login.entering = true;
     login.problem = None;
     net.send(Request::Connect);
+}
+
+/// What a link handed over does, given the question open, if any, and the game shown (its
+/// server's origin and room).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrival {
+    /// The game shown already: only the window comes forward.
+    Forward,
+    /// The same server and room as the one asked about: it takes its place.
+    Replace,
+    /// Another while a question is open: not opened, and the question says so.
+    SetAside,
+    /// Opened as a link at start is.
+    Open,
+}
+
+pub fn arrival(link: &Link, open: Option<&LinkOpen>, shown: Option<(&str, &str)>) -> Arrival {
+    let origin = link.server.origin();
+    if let Some(open) = open.filter(|open| open.asking()) {
+        return if open.link.server.origin() == origin && open.link.room == link.room {
+            Arrival::Replace
+        } else {
+            Arrival::SetAside
+        };
+    }
+    if shown == Some((origin.as_str(), link.room.as_str())) {
+        return Arrival::Forward;
+    }
+    Arrival::Open
+}
+
+/// What leaving what this copy shows for a link touches, beside the login screen's.
+#[derive(SystemParam)]
+pub struct Leaving<'w> {
+    screen: ResMut<'w, Screen>,
+    signing: ResMut<'w, Signing>,
+    watching: ResMut<'w, WatchStatus>,
+}
+
+/// Leaves the game or the main screen for the link's server, through the login screen's check
+/// as at start; the room is opened once connected.
+fn leave(
+    open: &LinkOpen,
+    net: &Net,
+    login: &mut LoginScreen,
+    status: &mut ServerStatus,
+    pending: &mut WatchOnStart,
+    leaving: &mut Leaving,
+) {
+    if leaving.watching.is_watching() {
+        stop_watching(net, &mut leaving.watching);
+    }
+    pending.set(open.target());
+    login.address = open.address();
+    if *leaving.screen == Screen::Main {
+        crate::login::go_to_login(
+            net,
+            &mut leaving.screen,
+            login,
+            status,
+            &mut leaving.signing,
+        );
+    } else {
+        login.probe(net, true);
+    }
+}
+
+/// A link another copy handed over (`link_channel.rs`), one a frame: read again by the one
+/// reader, then the same questions as a link at start.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Bevy system takes what it touches as parameters"
+)]
+fn take_handed(
+    mut commands: Commands,
+    inbox: Res<Inbox>,
+    net: Res<Net>,
+    open: Option<ResMut<LinkOpen>>,
+    mut forward: ResMut<Forward>,
+    mut login: ResMut<LoginScreen>,
+    mut status: ResMut<ServerStatus>,
+    mut pending: ResMut<WatchOnStart>,
+    mut leaving: Leaving,
+) {
+    let Ok(link) = inbox.0.lock().map(|links| links.try_recv()) else {
+        return;
+    };
+    let Ok(link) = link else { return };
+    forward.0 = true;
+    let origin = ServerUrl::parse(&status.server)
+        .ok()
+        .map(|url| url.origin());
+    let watching = &leaving.watching;
+    let room = watching
+        .table
+        .as_ref()
+        .map(|table| table.room_code.clone())
+        .or_else(|| match &watching.target {
+            Some(Target::Room(code) | Target::Join(code)) => Some(code.clone()),
+            _ => None,
+        });
+    let shown = match (*leaving.screen, &origin, &room) {
+        (Screen::Main, Some(origin), Some(room)) => Some((origin.as_str(), room.as_str())),
+        _ => None,
+    };
+    let busy = watching
+        .table
+        .as_ref()
+        .is_some_and(|table| table.yours().is_some() && !table.finished());
+    match arrival(&link, open.as_deref(), shown) {
+        Arrival::Forward => info!("game links: the link is for the game shown"),
+        Arrival::SetAside => {
+            info!("game links: a link was set aside: a question is open");
+            if let Some(mut open) = open {
+                open.set_aside = true;
+            }
+        }
+        Arrival::Replace => {
+            let Some(mut open) = open else { return };
+            let code = link.code.clone();
+            open.link = link;
+            if let Stage::AskIdentity { would, .. } = &mut open.stage {
+                match code {
+                    Some(code) => *would = code.kind(),
+                    // Nothing to trade: it goes on as the login screen's check says.
+                    None => {
+                        open.stage = Stage::Probing;
+                        login.set_changed();
+                    }
+                }
+            }
+        }
+        Arrival::Open => {
+            let used = crate::config::Store::load(crate::config::Store::default_dir())
+                .has_used(&link.server.origin());
+            let open = LinkOpen::handed(link, used, busy);
+            if open.stage == Stage::Probing {
+                leave(
+                    &open,
+                    &net,
+                    &mut login,
+                    &mut status,
+                    &mut pending,
+                    &mut leaving,
+                );
+            }
+            commands.insert_resource(open);
+        }
+    }
 }
 
 /// Once the login screen's check of the link's server is good: ask, trade or go in.
@@ -247,6 +446,7 @@ fn on_answer(
     mut login: ResMut<LoginScreen>,
     mut status: ResMut<ServerStatus>,
     mut pending: ResMut<WatchOnStart>,
+    mut leaving: Leaving,
 ) {
     let Ok(Action::Link(answer)) = actions.get(activate.entity) else {
         return;
@@ -257,6 +457,39 @@ fn on_answer(
     }
     let Some(mut open) = open else { return };
     match answer {
+        Answer::Leave if open.stage == Stage::AskLeave => {
+            if open.used {
+                open.stage = Stage::Probing;
+                leave(
+                    &open,
+                    &net,
+                    &mut login,
+                    &mut status,
+                    &mut pending,
+                    &mut leaving,
+                );
+            } else {
+                open.stage = Stage::AskServer;
+            }
+        }
+        // Handed over while running, and nothing left yet: stay as it was.
+        Answer::Cancel
+            if open.running && matches!(open.stage, Stage::AskLeave | Stage::AskServer) =>
+        {
+            open.stage = Stage::Done;
+            open.link.code = None;
+        }
+        Answer::Connect if open.stage == Stage::AskServer && open.running => {
+            open.stage = Stage::Probing;
+            leave(
+                &open,
+                &net,
+                &mut login,
+                &mut status,
+                &mut pending,
+                &mut leaving,
+            );
+        }
         Answer::Connect if open.stage == Stage::AskServer => {
             login.address = open.address();
             open.stage = Stage::Probing;
@@ -339,9 +572,31 @@ fn asked(open: Option<&LinkOpen>, setting: &LinkSetting, screen: Screen) -> Opti
                 vec![("OK".into(), Answer::Dismiss)],
             ));
         }
+        // A second link while this is asked: said under the question.
+        let aside = |body: String| {
+            if open.set_aside {
+                format!("{body}\n\nAnother link was not opened: open it again after this.")
+            } else {
+                body
+            }
+        };
         match &open.stage {
+            Stage::AskLeave => {
+                return Some((
+                    "Leave this game?".into(),
+                    aside(format!(
+                        "A link opens game {} on {}.",
+                        open.link.room, open.link.server
+                    )),
+                    vec![
+                        ("Leave".into(), Answer::Leave),
+                        ("Stay".into(), Answer::Cancel),
+                    ],
+                ));
+            }
             Stage::AskServer => {
                 let (title, body) = link::server_question(&open.link);
+                let body = aside(body);
                 return Some((
                     title,
                     body,
@@ -353,6 +608,7 @@ fn asked(open: Option<&LinkOpen>, setting: &LinkSetting, screen: Screen) -> Opti
             }
             Stage::AskIdentity { now, would } => {
                 let (title, body) = link::identity_question(&open.link.server, now, *would);
+                let body = aside(body);
                 return Some((
                     title,
                     body,
@@ -465,6 +721,59 @@ mod tests {
         let (title, _, answers) = asked(Some(&open), &setting(false), Screen::Main).unwrap();
         assert_eq!(title, "The link did not change who you are");
         assert_eq!(answers, [("OK".to_string(), Answer::Dismiss)]);
+    }
+
+    #[test]
+    fn a_link_handed_over_asks_before_leaving_a_game() {
+        let open = LinkOpen::handed(link(false), true, true);
+        assert_eq!(open.stage, Stage::AskLeave);
+        let (title, body, answers) = asked(Some(&open), &setting(false), Screen::Main).unwrap();
+        assert_eq!(title, "Leave this game?");
+        assert!(body.contains("K7MQ2X") && body.contains("https://games.example.com"));
+        assert_eq!(answers[0].1, Answer::Leave);
+        assert_eq!(answers[1], ("Stay".to_string(), Answer::Cancel));
+        // Not busy: a server never used is asked about, one used goes at once.
+        assert_eq!(
+            LinkOpen::handed(link(true), false, false).stage,
+            Stage::AskServer
+        );
+        assert_eq!(
+            LinkOpen::handed(link(true), true, false).stage,
+            Stage::Probing
+        );
+        assert!(LinkOpen::handed(link(true), true, false).running);
+        assert!(!LinkOpen::new(link(true), true).running);
+    }
+
+    #[test]
+    fn what_a_link_handed_over_does() {
+        let room_elsewhere =
+            Link::parse("bingle-3d://watch?server=https%3A%2F%2Fgames.example.com&room=ZZZZ")
+                .unwrap();
+        let shown = Some(("https://games.example.com:443", "K7MQ2X"));
+        // The game shown: only the window comes forward.
+        assert_eq!(arrival(&link(true), None, shown), Arrival::Forward);
+        assert_eq!(arrival(&room_elsewhere, None, shown), Arrival::Open);
+        assert_eq!(arrival(&link(false), None, None), Arrival::Open);
+        // A question open: the same server and room takes its place; another is set aside.
+        let asking = LinkOpen::handed(link(false), true, true);
+        assert_eq!(arrival(&link(true), Some(&asking), None), Arrival::Replace);
+        assert_eq!(
+            arrival(&room_elsewhere, Some(&asking), shown),
+            Arrival::SetAside
+        );
+        // A link gone on already asks nothing.
+        let mut done = LinkOpen::handed(link(false), true, false);
+        done.stage = Stage::Done;
+        assert_eq!(arrival(&room_elsewhere, Some(&done), None), Arrival::Open);
+    }
+
+    #[test]
+    fn a_link_set_aside_is_said_under_the_question() {
+        let mut open = LinkOpen::handed(link(false), false, false);
+        open.set_aside = true;
+        let (_, body, _) = asked(Some(&open), &setting(false), Screen::Main).unwrap();
+        assert!(body.ends_with("Another link was not opened: open it again after this."));
     }
 
     #[test]

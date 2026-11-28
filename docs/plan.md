@@ -1380,10 +1380,54 @@ the maintainer was away, and every choice here is one the maintainer may reverse
   if any, is signed out first (its own token, to that server only). Spent, too old
   or too many (`401`, `429`): the client joins as who it already is, and says so over the game
   (`LinkOpen::said`, closed with *OK*); the code is never tried again, and never logged or kept.
-- **Not built:** a link handed to a copy already running. The client has no channel between two
-  copies, so a second copy opens at the game; one instance only is for an issue of its own. A
-  setup file taken in the same run sets the link aside (both say who to be), and the player is
+- A link handed to a copy already running was not built here; it is *A link clicked while the
+  client runs goes to the running copy*, below. A setup file taken in the same run sets the link aside (both say who to be), and the player is
   told to open it again. A real click in a browser was not tried by an agent.
+
+### A link clicked while the client runs goes to the running copy (2026-11-28, #123)
+
+A link clicked while a copy runs no longer opens a second window: the copy the system starts
+hands the link's text to the one running and quits (`link_channel.rs`). The maintainer was away;
+each choice here is the issue's first suggestion, and one the maintainer may reverse.
+
+- **Only the same user can reach the channel, and never a TCP port.** Linux: a Unix socket,
+  `links.sock`, inside a directory of the client's own, `$XDG_RUNTIME_DIR/bingle-3d` (else
+  `<config dir>/run`), made 0700 and refused when it is anybody else's or wider, so the socket
+  (then set 0600) is never reachable by another user, even for a moment; the umask is left
+  alone. Windows: `\\.\pipe\bingle-3d-links-<the user's SID>`, owned by the user with a protected
+  DACL granting only the user (the default gives Everyone and anonymous read),
+  `PIPE_REJECT_REMOTE_CLIENTS`, `FILE_FLAG_FIRST_PIPE_INSTANCE` and one instance; the handing
+  copy writes only to a pipe the user owns, as another user could make one of that name while
+  no copy holds it. The name says nothing secret. Nothing new in `Cargo.toml` but `windows-sys`
+  features.
+- **Only a link's text crosses it**, and a newline; one byte back says it was taken. The running
+  copy accepts on a thread of its own, reads once (1025 bytes at most, within 250 ms), closes the
+  connection whatever came, and gives the text to `Link::parse`; anything else is dropped with a
+  log line that does not repeat it. A queue of four links waits for the next frame; more are
+  dropped. A copy with no frame for 3 s does not take one.
+- **The handing copy can never hang a start**: 500 ms in all (each read and write 300 ms, the
+  whole on a thread it leaves behind past the bound, which then writes nothing), then it starts
+  on its own exactly as without a copy running. Which copy listens is a lock beside the socket
+  (`links.lock`, `File::try_lock`), so a socket left by a crash (its connect refused) is replaced
+  and one that answers is never taken over; on Windows the first-instance flag.
+- **Only links**: only a run started with `--link` (one that parsed, no script limiting it)
+  hands over. A copy listens unless the run is a script's or a special one (`--frames`,
+  `--screenshot`, `--watch` and its kin, `--new-game`, `--setup`, `--showcase`, `--test-hand`), in
+  a headset, or a build that registers no links. Those, and a second copy started by hand, start
+  as they always have.
+- **The same questions as a link at start** (`link_open::take_handed`): a link for the game shown
+  only brings the window forward; a game being played (a seat of this client's, not finished) is
+  asked about first (*Leave this game?*: *Leave*, *Stay*); then a server never used is asked about
+  before anything is sent there, and nothing is left until it is answered; then the login
+  screen's check and who to be. One question at a time: a second link for the same server and
+  room takes the place of the one asked about (its code is the newer: a code is good for a
+  minute), any other is not opened, and the question says so.
+- **Bringing the window forward**: unminimised, focus asked for and attention asked for. X11:
+  `_NET_ACTIVE_WINDOW`, which a window manager preventing focus stealing shows as urgent
+  instead. Windows: the handing copy, started by the browser, allows the running copy to come
+  forward (`AllowSetForegroundWindow`) before handing over; else the taskbar button flashes.
+  Wayland: a program cannot raise itself; the compositor is asked for attention
+  (xdg-activation), which most show as a flash or a notice, and the question waits in the window.
 
 ### After that
 

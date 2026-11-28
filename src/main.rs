@@ -40,6 +40,7 @@ mod hand_strip;
 mod highlight;
 mod hud;
 mod link;
+mod link_channel;
 mod link_handler;
 mod link_open;
 mod lobby;
@@ -167,6 +168,18 @@ fn main() -> AppExit {
     // From a script: open game links with this program, or with nothing, and quit.
     if let Some(on) = opts.register_link {
         return register_link(on);
+    }
+    // A link clicked while a copy runs goes to that copy, which says it took it; on anything
+    // else (none running, no answer in time) this copy starts on its own, as it always has.
+    if let Some(text) = link_channel::hands_over(&opts) {
+        match link_channel::hand_over(text) {
+            Ok(()) => {
+                println!("bingle-3d: the link was handed over to the copy already running");
+                return AppExit::Success;
+            }
+            Err(link_channel::NotHanded::NoneRunning) => {}
+            Err(why) => eprintln!("bingle-3d: game links: {why}: this copy opens the link"),
+        }
     }
     if opts.voice_check {
         return match voice::check::run() {
@@ -333,6 +346,9 @@ fn main() -> AppExit {
     app.add_plugins(link_open::LinkOpenPlugin {
         limited: opts.last_frame().is_some(),
         in_headset,
+    });
+    app.add_plugins(link_channel::LinkChannelPlugin {
+        listen: link_channel::listens(&opts, in_headset),
     });
     app.add_plugins(display::DisplayPlugin {
         fullscreen: opts.fullscreen,

@@ -30,7 +30,8 @@ Options:
                      connection on this machine, for ten seconds (no window)
   --link URL         open the game a bingle-3d:// link names (a server's Join with
                      Bingle3D): the last option, the link the last argument. The
-                     link is checked, and the server asked about before it is used
+                     link is checked, and the server asked about before it is used;
+                     a copy already running takes it, and this one quits
   --register-link    open bingle-3d:// links with this program, for this user only,
                      then quit (Settings' Open game links does the same)
   --unregister-link  open them with nothing, then quit
@@ -118,6 +119,8 @@ pub struct Options {
     pub setup: Option<PathBuf>,
     /// `--link`: the link the client was started from, read (`link.rs`), or why it was refused.
     pub link: Option<Result<crate::link::Link, crate::link::LinkError>>,
+    /// The link's text, as it came, to hand to a copy already running (`link_channel.rs`).
+    pub link_text: Option<crate::link_channel::Handed>,
     /// `--register-link` (true) or `--unregister-link` (false), then quit.
     pub register_link: Option<bool>,
     /// The private folder of games' looks, for this run (`assets::read_private`).
@@ -251,6 +254,7 @@ impl Options {
                         );
                     }
                     opts.link = Some(crate::link::Link::parse(&link));
+                    opts.link_text = Some(crate::link_channel::Handed(link));
                 }
                 "--register-link" | "--unregister-link" if opts.register_link.is_some() => {
                     return Err("only one of --register-link and --unregister-link".into());
