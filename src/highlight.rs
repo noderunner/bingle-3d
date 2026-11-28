@@ -223,7 +223,7 @@ pub fn walk(corners: &[Vec2], streaks: u32) -> Vec<(Vec2, f32, f32)> {
 }
 
 /// A mesh from its rows: each a position, its normal and its two texture coordinates.
-fn mesh(rows: Vec<(Vec3, Vec3, [f32; 2], [f32; 2])>, indices: Vec<u32>) -> Mesh {
+pub(crate) fn mesh(rows: Vec<(Vec3, Vec3, [f32; 2], [f32; 2])>, indices: Vec<u32>) -> Mesh {
     let mut m = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -249,7 +249,7 @@ fn mesh(rows: Vec<(Vec3, Vec3, [f32; 2], [f32; 2])>, indices: Vec<u32>) -> Mesh 
 }
 
 /// Two vertices for each step of the walk, joined into a strip of quads.
-fn strip(n: usize) -> Vec<u32> {
+pub(crate) fn strip(n: usize) -> Vec<u32> {
     (0..n as u32 - 1)
         .flat_map(|i| {
             let (a, b, c, d) = (2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 3);
@@ -364,6 +364,26 @@ impl Glow {
             // A streak rises in a little under 2 s, a quarter of its place wide.
             ribbon: Vec4::new(streaks, foot, 0.55, 0.12),
             part: Vec4::new(if ribbon { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0),
+        }
+    }
+}
+
+impl Glow {
+    /// A jump's arc (`arcs.rs`): a soft line of the plain tone's light along the middle of a
+    /// ribbon, a little brighter running from where the piece left to where it landed, where
+    /// the camera blooms or does not, as `tuned`.
+    pub fn arc(bloom: bool) -> Self {
+        let (line, halo) = if bloom { (1.5, 0.45) } else { (1.1, 0.7) };
+        Glow {
+            color: GLOW_COLOR,
+            // The line's brightness, its width across the ribbon (a share of half of it), and
+            // the halo's.
+            ring: Vec4::new(line, 0.0, 0.3, halo),
+            // The halo's reach; how much brighter the light running along it is; how often it
+            // runs (a second); how fast the whole breathes.
+            ring_motion: Vec4::new(0.45, 0.5, 0.8, 1.0 / 3.0),
+            ribbon: Vec4::ZERO,
+            part: Vec4::new(2.0, 0.0, 0.0, 0.0),
         }
     }
 }

@@ -22,7 +22,9 @@ struct Glow {
     // The ribbon: its streaks' brightness, the glow hugging its foot, how fast the streaks rise
     // (ribbons a second), and how wide a streak is (a share of its place).
     ribbon: vec4<f32>,
-    // Which part this is: 0 the ring, 1 the ribbon.
+    // Which part this is: 0 the ring, 1 the ribbon, 2 a jump's arc (`arcs.rs`), whose `u` runs
+    // from where the piece left (0) to where it landed (1) and `v` across it; it reads `ring`'s
+    // line, width and halo, and `ring_motion`'s reach, and its light running along it.
     part: vec4<f32>,
 }
 
@@ -67,6 +69,18 @@ fn ribbon(u: f32, v: f32, t: f32) -> f32 {
     return streak + foot;
 }
 
+// A jump's arc: a line along its middle with a halo fading to nothing at its sides, a stretch of
+// brighter light running along it the way the piece went, and its two ends faded in.
+fn arc(u: f32, v: f32, t: f32) -> f32 {
+    let across = abs(v - 0.5) * 2.0;
+    let line = exp(-pow(across / glow.ring.z, 2.0)) * glow.ring.x;
+    let halo = exp(-across / max(glow.ring_motion.x, 0.001)) * glow.ring.w * (1.0 - across);
+    let d = u - fract(t * glow.ring_motion.z) * 1.4 + 0.2;
+    let run = 1.0 + glow.ring_motion.y * exp(-pow(d * 6.0, 2.0));
+    let ends = smoothstep(0.0, 0.05, u) * smoothstep(1.0, 0.95, u);
+    return (line + halo) * run * ends;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let t = globals.time;
@@ -75,8 +89,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var light: f32;
     if glow.part.x < 0.5 {
         light = ring(u, v, in.uv_b.x, t);
-    } else {
+    } else if glow.part.x < 1.5 {
         light = ribbon(u, v, t);
+    } else {
+        light = arc(u, v, t);
     }
     return vec4<f32>(glow.color.rgb * light * breath(t), 0.0);
 }

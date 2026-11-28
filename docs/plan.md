@@ -538,6 +538,19 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   material as the wood round them. The coordinates are smaller, half way across the margin
   between the outermost spaces or lines and the rim, on every board; a column is named only
   where it ends on the first or last row.
+- **A jump is drawn as an arc** (2026-11-27, #101; `arcs.rs`): one for each hop of the move
+  being built, from where the piece left to where it landed, rising over what stands between
+  and coming down on the landing, in the highlight's candlelight with a brighter stretch running
+  the way the piece went. A hop is read, not reasoned about (`Turn::hops`): a selection that
+  moves a piece `from` somewhere along a `path` and is no stack move (it counts its pieces) hops
+  along it, as API 1.20 says (bingle#352), so draughts' jumps and Fist's alike. In a chain each
+  landing clicked adds its arc (`Turn::legs`); they stay while the move waits to be confirmed,
+  each Back takes one off, and they go once it is played. What the jump takes or turns over is
+  shown as before: the arc says only where the piece went. It is two ribbons crossed along a
+  parabola, one lying and one standing, so it reads from over the board and from low across it;
+  it rises over the tallest kind of piece, and further the longer it spans, so a flying king's
+  long jump still clears a piece next to its landing. Not built: an arc for a move another seat
+  has played, or one over the landing under the pointer before the click.
 - Blooms (`assets/appearance/blooms.toml`): stones of polished minerals drawn with numpy
   (`assets-src/blender/minerals.py`), after photographs of real semi-precious Go stones the
   maintainer owns: red jasper and tiger's eye for Warm, lapis lazuli (with a little of

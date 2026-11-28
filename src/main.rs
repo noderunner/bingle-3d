@@ -4,6 +4,7 @@
 //! a game can be watched or played, from the API alone (docs/plan.md).
 
 mod appearance;
+mod arcs;
 mod assets;
 mod board;
 mod bowls;
@@ -241,6 +242,7 @@ fn main() -> AppExit {
                 ),
                 move_tiles::MoveTilesPlugin,
                 highlight::HighlightPlugin,
+                arcs::ArcsPlugin,
             ),
             sounds::SoundsPlugin {
                 on: !opts.no_audio_devices,

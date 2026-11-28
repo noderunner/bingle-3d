@@ -304,6 +304,40 @@ impl Turn {
         self.legs().last().copied()
     }
 
+    /// The hops of the move being built, each from where a piece left to where it landed, in
+    /// order, to draw as arcs (`arcs.rs`): every leg of each selection made that moves a piece
+    /// `from` somewhere along a `path` and is no stack move (a jump, or a chain of them), then
+    /// the legs of the one being entered as far as the player has clicked them (`legs`).
+    /// Waiting to be confirmed, the last selection's are all there; each Back takes one off,
+    /// as it takes back its click. None once the move is sent. It reads no rules: only `from`,
+    /// `path`, and that a stack move counts its pieces.
+    pub fn hops(&self) -> Vec<(&str, &str)> {
+        if !matches!(self.stage, Stage::Asking | Stage::Choosing | Stage::Ready) {
+            return Vec::new();
+        }
+        fn chain<'a>(
+            from: &'a str,
+            landings: impl IntoIterator<Item = &'a str>,
+        ) -> Vec<(&'a str, &'a str)> {
+            let mut left = from;
+            landings
+                .into_iter()
+                .map(|land| (std::mem::replace(&mut left, land), land))
+                .collect()
+        }
+        let mut out: Vec<(&str, &str)> = self
+            .made
+            .iter()
+            .filter(|s| StackMove::of(&s.gestures).is_none())
+            .filter_map(|s| Some(chain(s.from.as_deref()?, s.path.iter().map(String::as_str))))
+            .flatten()
+            .collect();
+        if let Some(entering) = self.entering() {
+            out.extend(chain(entering.from, self.legs()));
+        }
+        out
+    }
+
     /// Where the piece in hand on the board is, lifted over its space, while there is one: the
     /// piece every click moves, picked up (`lifted`); a piece picked up by a click on it and
     /// not yet put anywhere; or a piece part-way through a chain, over where it stands
@@ -1968,6 +2002,120 @@ mod tests {
                 .collect(),
             gestures,
             ..Default::default()
+        }
+    }
+
+    /// A draughts jump or chain from `from`: a click on the piece, then one on each landing,
+    /// each listed in its `path`.
+    fn hopping(from: &str, landings: &[&str]) -> LegalSelection {
+        let mut gestures = vec![g("pos", from)];
+        gestures.extend(landings.iter().map(|l| g("pos", l)));
+        LegalSelection {
+            notation: format!("{from}x{}", landings.join("x")),
+            action: "jump".into(),
+            from: Some(from.into()),
+            to: landings.last().map(|l| l.to_string()),
+            path: landings.iter().map(|l| l.to_string()).collect(),
+            gestures,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_single_jump_is_one_hop_once_its_landing_is_clicked_and_while_it_waits() {
+        let mut t = Turn::new(1);
+        t.answered(answer(1, vec![hopping("c3", &["e5"]), step("c3", "d4")]));
+        assert!(t.hops().is_empty());
+        click(&mut t, "c3");
+        assert!(t.hops().is_empty(), "picked up, not yet landed");
+        assert_eq!(t.gesture(&Gesture::pos("e5")), Outcome::Ask);
+        assert_eq!(t.hops(), [("c3", "e5")], "asking what follows");
+        t.answered(complete(1));
+        assert_eq!(t.stage, Stage::Ready);
+        assert_eq!(t.hops(), [("c3", "e5")], "waiting to be confirmed");
+        assert!(t.back());
+        assert!(t.hops().is_empty(), "back: lifted over c3 again");
+        let mut sent = t.clone();
+        sent.gesture(&Gesture::pos("e5"));
+        sent.answered(complete(1));
+        sent.submit();
+        assert_eq!(sent.stage, Stage::Sending);
+        assert!(sent.hops().is_empty(), "played: gone");
+    }
+
+    #[test]
+    fn a_chain_has_a_hop_for_each_leg_part_way_and_whole_and_back_takes_one_off() {
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            1,
+            vec![
+                hopping("a1", &["c3", "e5", "g7"]),
+                hopping("a1", &["c3", "e5", "c7"]),
+                hopping("a1", &["c3", "a5"]),
+            ],
+        ));
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        assert_eq!(t.hops(), [("a1", "c3")], "part-way: the first leg");
+        click(&mut t, "e5");
+        assert_eq!(t.hops(), [("a1", "c3"), ("c3", "e5")]);
+        assert_eq!(t.gesture(&Gesture::pos("g7")), Outcome::Ask);
+        t.answered(complete(1));
+        let whole = [("a1", "c3"), ("c3", "e5"), ("e5", "g7")];
+        assert_eq!(t.hops(), whole, "whole, waiting to be confirmed");
+        assert!(t.back());
+        assert_eq!(t.hops(), whole[..2]);
+        assert!(t.back());
+        assert_eq!(t.hops(), whole[..1]);
+        assert!(t.back());
+        assert!(t.hops().is_empty());
+    }
+
+    #[test]
+    fn fist_s_chain_has_its_hops_whatever_is_chosen_for_the_piece_jumped() {
+        let path = |s: LegalSelection| LegalSelection {
+            path: ["c3", "e5", "g7"]
+                .into_iter()
+                .take(s.gestures.iter().filter(|g| g.is_pos()).count() - 1)
+                .map(String::from)
+                .collect(),
+            ..s
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(1, chains().into_iter().map(path).collect()));
+        click(&mut t, "a1");
+        click(&mut t, "c3");
+        assert_eq!(t.hops(), [("a1", "c3")], "asked what happens to b2");
+        let mut spared = t.clone();
+        spared.gesture(&g("action", "spare"));
+        assert_eq!(spared.hops(), [("a1", "c3")], "spared");
+        t.gesture(&g("action", "capture"));
+        click(&mut t, "e5");
+        t.gesture(&g("action", "capture"));
+        assert_eq!(t.hops(), [("a1", "c3"), ("c3", "e5")], "captured");
+        assert_eq!(t.end(), Outcome::Ask);
+        assert_eq!(t.made.len(), 1);
+        assert_eq!(t.hops(), [("a1", "c3"), ("c3", "e5")], "ended by Play");
+    }
+
+    #[test]
+    fn a_step_a_slide_a_placement_and_a_stack_move_make_no_hop() {
+        let stack = LegalSelection {
+            from: Some("a1".into()),
+            path: vec!["a2".into(), "a3".into()],
+            ..sel(
+                "2a1+11",
+                Some("a3"),
+                &[("pos", "a1"), ("count", "2"), ("pos", "a2"), ("pos", "a3")],
+            )
+        };
+        for s in [step("a1", "a2"), step("a1", "a5"), place("a1"), stack] {
+            let mut t = Turn::new(1);
+            t.answered(answer(1, vec![s.clone()]));
+            t.enter_all(&s.gestures);
+            assert!(t.hops().is_empty(), "{}", s.notation);
+            t.answered(complete(1));
+            assert!(t.hops().is_empty(), "{} made", s.notation);
         }
     }
 

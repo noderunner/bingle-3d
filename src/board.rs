@@ -497,6 +497,16 @@ struct PieceAt {
     under: u32,
 }
 
+/// What is drawn over the board without knowing its pieces stands on (`arcs.rs`), in metres:
+/// the height pieces stand on, how tall the tallest kind of them is, and the distance between
+/// neighbouring positions. On the board's root, whose space the layout's centres are in.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Footing {
+    pub surface: f32,
+    pub tallest: f32,
+    pub pitch: f32,
+}
+
 /// A position of the board, which is lit while a click on it would be taken (`highlight::Lit`:
 /// how that looks is `highlight.rs`'s).
 #[derive(Component)]
@@ -843,6 +853,20 @@ impl Kit {
 
     fn piece(&self, id: &str) -> &PieceKit {
         self.pieces.get(id).unwrap_or(&self.stone)
+    }
+
+    /// Where its pieces stand and how tall the tallest is (`Footing`).
+    fn footing(&self, pitch: f32) -> Footing {
+        let tallest = self
+            .pieces
+            .values()
+            .map(|p| p.height)
+            .fold(self.stone.height, f32::max);
+        Footing {
+            surface: self.surface,
+            tallest: tallest * self.scale,
+            pitch,
+        }
     }
 
     /// Where a piece of kind `id` that this client's seat (of color word `yours`) places is
@@ -1237,7 +1261,8 @@ fn sync_board(
             &[],
         );
         fill_trays(&mut commands, root, &kit.1, table, &[], &[]);
-        commands.entity(root).insert(kit.1);
+        let footing = kit.1.footing(layout.pitch);
+        commands.entity(root).insert((kit.1, footing));
         return;
     };
 
