@@ -211,7 +211,8 @@ A game's own rules and its players' words keep their terms.
   registry's values and the `.desktop` entry are plain functions; the Windows write is tested in
   CI), not on the Steam Frame. `src/link_open.rs`: a run started from a link, through the login
   screen's probe, its questions, and the first run's offer to open links (`LinkSetting`, a row of
-  *Settings*). The code is traded by `Session::trade_link_code`, with no bearer.
+  *Settings*). The code is traded by `Session::trade_link_code`, with no bearer; a guest key it replaces is
+  set aside in `keys.toml` (`set_aside`), never dropped or sent, and the login screen takes it back.
 - `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
   and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
   or the games being played (*Active*). Its `Action` is what every panel's buttons do. The

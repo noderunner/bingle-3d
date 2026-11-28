@@ -1372,8 +1372,12 @@ the maintainer was away, and every choice here is one the maintainer may reverse
   and that the link would make it the account or the guest who opened the link (a code says no
   more until it is spent), and asks; *Stay as …* joins without trading. Traded with
   `POST /auth/client {code}` **with no bearer** (`Session::trade_link_code`): nothing is merged.
-  An account's session is kept over the guest key, which stays for signing out; a guest's key
-  takes the place of the one kept, and a session kept there is signed out first. Spent, too old
+  An account's session is kept over the guest key, which stays for signing out. A guest's key
+  takes the place of the one kept, **which is set aside, never dropped** (`keys.toml`'s
+  `set_aside`, per server, the newest first; none is ever dropped, and none is sent anywhere):
+  the login screen's *Back to your earlier guest* takes it back, setting the one held aside in
+  its turn, last, so taking back again reaches the older ones. The client's own session there,
+  if any, is signed out first (its own token, to that server only). Spent, too old
   or too many (`401`, `429`): the client joins as who it already is, and says so over the game
   (`LinkOpen::said`, closed with *OK*); the code is never tried again, and never logged or kept.
 - **Not built:** a link handed to a copy already running. The client has no channel between two

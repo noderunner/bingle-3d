@@ -446,7 +446,8 @@ pub fn identity_question(server: &ServerUrl, now: &Identity, would: Kind) -> (St
             "The link would make you the guest that opened it, and sign you out here."
         }
         (Identity::Guest, Kind::Guest) => {
-            "The link would make you the guest that opened it, in place of this one."
+            "The link would make you the guest that opened it. This guest is set aside here, and the \
+             login screen takes you back to it."
         }
     };
     (who, then.to_string())
@@ -876,7 +877,7 @@ mod tests {
         assert!(then.contains("account that opened it"));
         let (who, then) = identity_question(&l.server, &Identity::Guest, Kind::Guest);
         assert!(who.contains("guest"));
-        assert!(then.contains("in place of this one"));
+        assert!(then.contains("This guest is set aside here"));
         assert_eq!(stay_label(&Identity::Account("ana".into())), "Stay as ana");
     }
 }

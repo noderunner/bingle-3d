@@ -289,6 +289,9 @@ pub enum Request {
     /// Go on as a guest: any account's session ended, and this guest key taken if one is given
     /// (else the one kept, or a new one); then connect.
     ContinueAsGuest { key: Option<String> },
+    /// Go back to the guest a link's code set aside for this server (the one held set aside in
+    /// its turn), then connect.
+    RestoreGuest,
     /// Remember the server used (if `server`) and whether to log in by itself next time.
     Remember { server: bool, auto_login: bool },
     /// Keep where the table stands (an environment's id) for the next run.
@@ -929,6 +932,12 @@ fn handle(
                 asked,
                 result: session.probe(),
             })
+        }
+        Request::RestoreGuest => {
+            if let Err(problem) = session.restore_guest() {
+                return Some(Reply::Failed(problem));
+            }
+            Some(connected(session.connect()))
         }
         Request::ContinueAsGuest { key } => {
             // A guest: no account's session is kept (nor left on the server).

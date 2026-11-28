@@ -178,6 +178,8 @@ pub struct Probe {
     pub account: Option<Account>,
     /// Whether this client keeps a guest key for it.
     pub guest_key: bool,
+    /// Whether a guest a link's code took the place of is set aside for it.
+    pub set_aside: bool,
 }
 
 pub struct Session {
@@ -281,6 +283,7 @@ impl Session {
             api_version,
             account: self.account.clone(),
             guest_key: self.store.guest_key(&url.origin()).is_some(),
+            set_aside: self.store.set_aside_guest_key(&url.origin()).is_some(),
         })
     }
 
@@ -541,11 +544,30 @@ impl Session {
         {
             bevy::log::warn!("signing out for the link's guest: {}", problem.message());
         }
-        if let Err(e) = self.store.set_guest_key(&origin, Some(answer.guest_key)) {
+        // The guest held is set aside, never dropped: a click must not lose a guest.
+        if let Err(e) = self.store.replace_guest_key(&origin, answer.guest_key) {
             bevy::log::warn!("could not save the guest key: {e}");
         }
         self.account = None;
         Ok(Traded::Guest)
+    }
+
+    /// Goes back to the guest a link's code set aside here, setting the one held aside in its
+    /// turn (`Store::restore_guest_key`); any account's session here is signed out first.
+    pub fn restore_guest(&mut self) -> Result<(), Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let origin = url.origin();
+        if self.store.set_aside_guest_key(&origin).is_none() {
+            return Ok(());
+        }
+        if self.store.session_token(&origin).is_some() {
+            let _ = self.sign_out();
+        }
+        if let Err(e) = self.store.restore_guest_key(&origin) {
+            bevy::log::warn!("could not save the guest key: {e}");
+        }
+        self.account = None;
+        Ok(())
     }
 
     /// The second step: a code, after the password was right.
@@ -2314,10 +2336,18 @@ pub(crate) mod tests {
         ));
         assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
 
-        // A guest's code: its key in place of the one kept, and the session ended.
+        // A guest's code: its key in place of the one kept, which is set aside, and the
+        // client's own session there signed out, to this server only.
         assert_eq!(s.trade_link_code(&link_code(guest)).unwrap(), Traded::Guest);
         assert_eq!(s.store().guest_key(&origin), Some("bgg_theirs"));
         assert_eq!(s.store().session_token(&origin), None);
+        assert_eq!(s.store().set_aside_guest_key(&origin), Some("bgg_mine"));
+        // Probing and connecting as the link's guest never send the one set aside.
+        assert!(s.probe().unwrap().set_aside);
+        // And it is taken back, the link's set aside in its turn.
+        s.restore_guest().unwrap();
+        assert_eq!(s.store().guest_key(&origin), Some("bgg_mine"));
+        assert_eq!(s.store().set_aside_guest_key(&origin), Some("bgg_theirs"));
         assert_eq!(
             s.store().guest_key("https://other.example:443"),
             Some("bgg_other"),
