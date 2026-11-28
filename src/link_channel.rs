@@ -1217,6 +1217,8 @@ mod tests {
         assert!(!is_private(false, 1000, 1000, 0o120777), "a link to one");
     }
 
+    /// Linux's paths: the channel is a pipe on Windows.
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_runtime_directory_first_then_the_configs() {
         let config = Some(std::path::PathBuf::from("/c/bingle-3d"));
