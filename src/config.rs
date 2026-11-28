@@ -85,6 +85,10 @@ pub struct Config {
     /// a game the server marks private is shown only when the folder has its look.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_dir: Option<PathBuf>,
+    /// Whether `bingle-3d://` links open this program (`link_handler.rs`): asked once, and
+    /// changed in *Settings*. While it is on, a copy started elsewhere takes the links over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_links: Option<bool>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
@@ -274,6 +278,31 @@ impl Store {
         }
         self.config.max_fps = Some(fps);
         self.save_config()
+    }
+
+    /// Remembers whether links open this program.
+    pub fn remember_open_links(&mut self, on: bool) -> io::Result<()> {
+        if self.config.open_links == Some(on) {
+            return Ok(());
+        }
+        self.config.open_links = Some(on);
+        self.save_config()
+    }
+
+    /// Whether this client has used the server at `origin` before: it keeps a guest key, a
+    /// session or a trusted certificate for it, or it is the server configured. A link to any
+    /// other is asked about before anything is sent there (`link.rs`).
+    pub fn has_used(&self, origin: &str) -> bool {
+        let configured = self
+            .config
+            .server
+            .as_deref()
+            .and_then(|s| crate::net::server_url::ServerUrl::parse(s).ok())
+            .is_some_and(|url| url.origin() == origin);
+        configured
+            || self.guest_key(origin).is_some()
+            || self.session_token(origin).is_some()
+            || self.trusted(origin).next().is_some()
     }
 
     /// Whether what is remembered can be written down: there is a config directory, and both

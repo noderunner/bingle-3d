@@ -55,6 +55,11 @@ impl WatchOnStart {
     pub fn is_pending(&self) -> bool {
         self.0.is_some()
     }
+
+    /// Opens nothing after all: a link whose server the player turned down.
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
 }
 
 /// A game waiting for the look the server offers: how far it has been fetched, and the way to

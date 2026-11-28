@@ -28,6 +28,12 @@ Options:
                      keep your address from the others
   --voice-check      hear your microphone back through your speaker, over a voice
                      connection on this machine, for ten seconds (no window)
+  --link URL         open the game a bingle-3d:// link names (a server's Join with
+                     Bingle3D): the last option, the link the last argument. The
+                     link is checked, and the server asked about before it is used
+  --register-link    open bingle-3d:// links with this program, for this user only,
+                     then quit (Settings' Open game links does the same)
+  --unregister-link  open them with nothing, then quit
   --setup FILE       a server's setup file (its address, and who you are there):
                      taken in once and deleted; one named bingle-3d-setup.toml
                      beside the program is taken without being asked for
@@ -110,6 +116,10 @@ pub struct Options {
     pub environment: Option<String>,
     /// A server's setup file to take in (`setup.rs`).
     pub setup: Option<PathBuf>,
+    /// `--link`: the link the client was started from, read (`link.rs`), or why it was refused.
+    pub link: Option<Result<crate::link::Link, crate::link::LinkError>>,
+    /// `--register-link` (true) or `--unregister-link` (false), then quit.
+    pub register_link: Option<bool>,
     /// The private folder of games' looks, for this run (`assets::read_private`).
     pub private_dir: Option<PathBuf>,
     /// Where the camera starts, as `YAW,PITCH,RADIUS[,X,Z]`.
@@ -146,7 +156,7 @@ impl Options {
     /// Where the run starts: an option that does something on the server goes straight in,
     /// with what is kept; `--sign-in` shows the login screen; else as the config says.
     pub fn start(&self) -> crate::net::Start {
-        if self.sign_in {
+        if self.sign_in || self.link.is_some() {
             crate::net::Start::Login
         } else if self.watch.is_some()
             || self.new_game.is_some()
@@ -230,6 +240,23 @@ impl Options {
                 "--environment" => opts.environment = Some(value("an environment's name")?),
                 "--private-dir" => opts.private_dir = Some(PathBuf::from(value("a folder")?)),
                 "--setup" => opts.setup = Some(PathBuf::from(value("a setup file")?)),
+                // The link is the last argument, so a link that splits on its way here (a
+                // quote in it, on Windows) cannot add an option: what follows refuses the run.
+                // The link itself is never repeated in a message.
+                "--link" => {
+                    let link = value("a link")?;
+                    if args.next().is_some() {
+                        return Err(
+                            "--link is the last option, and its link the last argument".into()
+                        );
+                    }
+                    opts.link = Some(crate::link::Link::parse(&link));
+                }
+                "--register-link" | "--unregister-link" if opts.register_link.is_some() => {
+                    return Err("only one of --register-link and --unregister-link".into());
+                }
+                "--register-link" => opts.register_link = Some(true),
+                "--unregister-link" => opts.register_link = Some(false),
                 "--view" => {
                     let v = value("YAW,PITCH,RADIUS[,X,Z]")?;
                     crate::camera::StartView::parse(&v).map_err(|e| format!("--view: {e}"))?;
@@ -276,6 +303,19 @@ impl Options {
                 "--join" => opts.watch = Some(Watch::Join(value("a room code")?)),
                 _ => return Err(format!("unknown option {arg:?}")),
             }
+        }
+        if opts.link.is_some()
+            && (opts.watch.is_some()
+                || opts.server.is_some()
+                || opts.setup.is_some()
+                || opts.new_game.is_some()
+                || opts.register_link.is_some())
+        {
+            return Err(
+                "a link says which server and game: not with --server, --setup, --watch, \
+                 --join, --new-game or --register-link"
+                    .into(),
+            );
         }
         if opts.vr && opts.desktop {
             return Err("only one of --vr and --desktop".into());
@@ -536,6 +576,68 @@ mod tests {
             "a picture with nothing to put it on"
         );
         assert!(Options::parse(["--showcase", "--card-face"]).is_err());
+    }
+
+    const LINK: &str = "bingle-3d://join?server=https%3A%2F%2Fgames.example.com&room=K7MQ2X";
+
+    #[test]
+    fn a_link_is_the_last_argument_and_only_that() {
+        let opts = parse(&["--frames", "5", "--link", LINK]).unwrap();
+        let link = opts.link.unwrap().unwrap();
+        assert_eq!(link.room, "K7MQ2X");
+        assert_eq!(opts.frames, Some(5));
+        assert!(
+            parse(&[&format!("--link={LINK}")])
+                .unwrap()
+                .link
+                .unwrap()
+                .is_ok()
+        );
+        // Whatever follows it refuses the run: a link that split cannot add an option.
+        for after in ["--setup", "x", "--frames", ""] {
+            let err = parse(&["--link", LINK, after]).unwrap_err();
+            assert!(err.contains("last argument"), "{err}");
+        }
+        let split = parse(&["--link", "bingle-3d://join?server=x\"", "--setup", "C:\\x"]);
+        assert!(split.is_err());
+        // A link that does not parse is kept as refused, to say so, and its text is not.
+        let refused = parse(&["--link", "--private-dir"]).unwrap().link.unwrap();
+        assert_eq!(refused, Err(crate::link::LinkError::Scheme));
+        assert!(parse(&["--link"]).unwrap_err().contains("needs"));
+        // It says where to go; nothing else may.
+        for other in [["--server", "x"], ["--join", "ABCD"], ["--setup", "f"]] {
+            assert!(parse(&[other[0], other[1], "--link", LINK]).is_err());
+        }
+        assert!(parse(&["--sign-in", "--link", LINK]).is_ok());
+        assert_eq!(
+            parse(&["--link", LINK]).unwrap().start(),
+            crate::net::Start::Login,
+            "through the login screen's check"
+        );
+    }
+
+    #[test]
+    fn a_link_error_never_repeats_the_link() {
+        let code = "bgc_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+        let err = parse(&["--link", &format!("{LINK}&code={code}"), "--x"]).unwrap_err();
+        assert!(
+            !err.contains(code) && !err.contains("games.example.com"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn registering_the_link_from_a_script() {
+        assert_eq!(
+            parse(&["--register-link"]).unwrap().register_link,
+            Some(true)
+        );
+        assert_eq!(
+            parse(&["--unregister-link"]).unwrap().register_link,
+            Some(false)
+        );
+        assert!(parse(&["--register-link", "--unregister-link"]).is_err());
+        assert_eq!(parse(&[]).unwrap().register_link, None);
     }
 
     #[test]

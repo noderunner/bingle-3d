@@ -19,11 +19,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// several side by side (`Board::boards`: Alice chess), 1.17 the files a game offers each
 /// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), 1.18 the
 /// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`), and 1.20 the pieces
-/// a legal selection turns over and the color each becomes (`converts_to`), and 1.26 the games
-/// the viewer has a seat in (`GET /api/me/games`, [`OwnGames`]).
+/// a legal selection turns over and the color each becomes (`converts_to`), 1.26 the games
+/// the viewer has a seat in (`GET /api/me/games`, [`OwnGames`]), and 1.30 the code of a link
+/// that opens the client at a game, traded for who to be ([`ClientSignIn`], `link.rs`).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 26,
+    minor: 30,
     patch: 0,
 };
 
@@ -52,6 +53,18 @@ pub struct LoginRequest {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CodeLoginRequest {
     pub code: String,
+}
+
+/// `POST /auth/client`'s answer, for a link's code (Bingle's ADR 0163): an account's session as
+/// `POST /auth/login` answers one (`token`, `me`), or a new key of a guest (`guest_key`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ClientSignIn {
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub me: Option<Me>,
+    #[serde(default)]
+    pub guest_key: String,
 }
 
 /// `POST /auth/second`'s body: the second step of a sign-in, with a code from the account's
@@ -1653,12 +1666,12 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.26.0")), Compatible);
-        assert_eq!(compatibility(Some("1.27.2")), Compatible);
+        assert_eq!(compatibility(Some("1.30.0")), Compatible);
+        assert_eq!(compatibility(Some("1.31.2")), Compatible);
         assert_eq!(
-            compatibility(Some("1.25.0")),
-            ServerTooOld(Some("1.25.0".into())),
-            "1.25 has no list of the games a viewer has a seat in"
+            compatibility(Some("1.29.0")),
+            ServerTooOld(Some("1.29.0".into())),
+            "1.29 cannot trade a link's code"
         );
         assert_eq!(
             compatibility(Some("1.19.0")),
@@ -1814,7 +1827,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.26.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.30.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -2031,6 +2044,7 @@ mod tests {
         reads::<AddBotResult>("POST /api/games/{code}/bots");
         reads::<SessionTokenResponse>("POST /auth/login");
         reads::<SessionTokenResponse>("POST /auth/second");
+        reads::<ClientSignIn>("POST /auth/client");
         reads::<Me>("GET /auth/me");
         reads::<LogoutResponse>("POST /auth/logout");
         reads::<FriendsList>("GET /api/friends");
@@ -2286,6 +2300,12 @@ mod tests {
             "POST /auth/login",
             json(CodeLoginRequest {
                 code: "bgc_once".into(),
+            }),
+        );
+        sends(
+            "POST /auth/client",
+            json(CodeLoginRequest {
+                code: "bgj_once".into(),
             }),
         );
         for (code, recovery_code) in [("123456", ""), ("", "abcd-efgh")] {

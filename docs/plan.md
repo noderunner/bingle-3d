@@ -66,7 +66,7 @@ being changed:
 | JSON | `serde` structs written by hand for the parts of the API we use, tolerant of unknown fields | The API adds fields often; we should not break when it does |
 | Picking | Bevy's built-in picking | Clicks become gestures; gestures narrow the legal selections |
 | Config | `config.toml` in the platform's config directory (server, trusted fingerprints) and `keys.toml` beside it (a guest key per server, owner-only on Linux) | Same places on Linux (XDG) and Windows (`%APPDATA%`); the config can be shared without giving a guest away; a file that cannot be read is reported and never overwritten |
-| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.26.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
+| API types | checked against the JSON Schema Bingle publishes (`schema/bingle-api-1.30.0.schema.json`): a test builds the smallest and the fullest message the schema allows and reads both | Catches a field that is renamed, required or retyped when the schema is updated |
 | Voice | `rtc` (webrtc-rs's sans-I/O stack, on *ring*) and `rusty-opus`, on a thread of its own; devices through `cpal`; echo cancellation through `sonora` | Speaks what browsers speak with no async runtime and no aws-lc-rs; sound must leave every 20 ms, which the network thread's blocking calls cannot promise (decision 7) |
 | Text | Fira Sans (SIL OFL), compiled into the binary | Bevy's built-in font is ASCII only, and game names are not ("Hex (11×11)") |
 | Assets | Made by Blender 5.3, run headless from Python scripts (`assets-src/`), from CC0 sources listed with their hashes; the results committed in `assets/` and compiled into the binary | Scripts can be read, reviewed and run again by a person or an agent; a `.blend` file cannot. CC0 ships with no conditions (decision 8) |
@@ -1208,8 +1208,8 @@ for the first time then starts as that player with nothing to type (#82).
 - **Its server is the run's**, whatever `--server` says: the code is good nowhere else.
 - **`release.json`** is published with each release (`scripts/release-json.sh`: the version and
   `API_VERSION`), for a server to offer only the builds its API can be used by.
-- Not built: a private folder found beside the program by itself; a link that opens the
-  installed client with the same code and no file (#77).
+- Not built: a private folder found beside the program by itself. A link that opens the
+  installed client at a game is *A link opens the client at a game*, below.
 
 ### A card game of several seats: a table laid round its seats (2026-11-25)
 
@@ -1333,6 +1333,53 @@ look of its own:
   shuffle's and a card's sounds come later, with the pipeline's.
 - `--test-hand N --test-deal`: the made-up table at its start, dealt from frame 60 of a run a
   script limits, time going on a thirtieth of a second a frame.
+
+### A link opens the client at a game (2026-11-28, #77)
+
+A server's page offers *Join with Bingle3D* and *Watch with Bingle3D* beside *Join* and
+*Watch* (Bingle's ADR 0163, bingle#312, API 1.30): a link in the client's own scheme,
+`bingle-3d://join?server=…&room=…&code=…`, which the client registers. Built to that contract;
+the maintainer was away, and every choice here is one the maintainer may reverse.
+
+- **A link is hostile input.** `link::Link::parse` is the one reader: exactly the contract's form
+  (the scheme, `join` or `watch`, `server`, `room` and an optional `code`, each percent-decoded
+  once), and the whole link refused for anything else: another scheme or action, user info, a
+  port or a path after the action, a fragment, a parameter not listed or given twice, a missing
+  `server` or `room`, a value failing its pattern, over 1024 characters, a raw character the
+  page would have encoded. Its `server` is read by a grammar narrower than the client's address
+  rule (`https://host[:port]`, `http://` to `localhost`, `127.0.0.0/8` or `[::1]` only; a name of
+  letters, digits and dashes, or an address written as an address), then by that rule, and the
+  two must agree. A message about a link never repeats it, and its `Debug` leaves the code out.
+- **`--link URL` is the only way in**, and the last argument: anything after the link refuses the
+  run, so a link that splits on its way (a quote in it, on Windows) cannot add an option. Nothing
+  in a link becomes an option or reaches a shell.
+- **Registered for the current user only**, no administrator's rights (`link_handler.rs`): on
+  Windows `HKCU\Software\Classes\bingle-3d`, its command `"<program>" --link "%1"`; on Linux a
+  `.desktop` entry, `Exec="<program>" --link %u`, made the default with `xdg-mime` (run as a
+  program with fixed arguments). What each is given is a plain function, tested everywhere; the
+  registry's write, read back and removal is tested on Windows in CI. Offered once, on the main
+  screen of a first run that no script limits (`open_links` in `config.toml` keeps the answer);
+  *Settings* turns it on and off; `--register-link` and `--unregister-link` from a script.
+  **While it is on, each start points the links at the copy started** if they point elsewhere,
+  so a copy moved or unpacked anew takes them over. The Steam Frame registers nothing.
+- **The server in a link is not trusted** (`link_open.rs`). One this client has never used (no
+  key, session or trusted certificate for it, and not the configured one) is shown and asked
+  about before anything is sent there, not even the login screen's probe. Then the login
+  screen's check, as for any server: its certificate, `http` to this machine only, the API
+  version; anything wrong stays on the login screen with its reason, and the link goes on once
+  it is put right. A link carries no fingerprint, and none is taken from one.
+- **The code** (`link::decide`): when the client is somebody on that server already, it says who,
+  and that the link would make it the account or the guest who opened the link (a code says no
+  more until it is spent), and asks; *Stay as …* joins without trading. Traded with
+  `POST /auth/client {code}` **with no bearer** (`Session::trade_link_code`): nothing is merged.
+  An account's session is kept over the guest key, which stays for signing out; a guest's key
+  takes the place of the one kept, and a session kept there is signed out first. Spent, too old
+  or too many (`401`, `429`): the client joins as who it already is, and says so; the code is
+  never tried again, and never logged or kept.
+- **Not built:** a link handed to a copy already running. The client has no channel between two
+  copies, so a second copy opens at the game; one instance only is for an issue of its own. A
+  setup file taken in the same run sets the link aside (both say who to be), and the player is
+  told to open it again. A real click in a browser was not tried by an agent.
 
 ### After that
 

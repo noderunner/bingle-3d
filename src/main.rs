@@ -39,6 +39,9 @@ mod hand;
 mod hand_strip;
 mod highlight;
 mod hud;
+mod link;
+mod link_handler;
+mod link_open;
 mod lobby;
 mod login;
 mod look;
@@ -104,6 +107,51 @@ fn private_dir(opts: &cli::Options) -> Option<std::path::PathBuf> {
         })
 }
 
+/// The game a link opens, once connected: its room, to sit in or to watch.
+fn link_target(opts: &cli::Options) -> Option<net::Target> {
+    let link = opts.link.as_ref()?.as_ref().ok()?;
+    Some(match link.action {
+        link::Action::Join => net::Target::Join(link.room.clone()),
+        link::Action::Watch => net::Target::Room(link.room.clone()),
+    })
+}
+
+/// `--register-link` and `--unregister-link`: done for the current user, said, and kept in the
+/// config as *Settings* keeps it.
+fn register_link(on: bool) -> AppExit {
+    if !link_handler::supported() {
+        eprintln!("bingle-3d: this build does not open game links");
+        return AppExit::from_code(2);
+    }
+    let done = if on {
+        std::env::current_exe()
+            .map_err(|e| format!("where this program is cannot be read ({e})"))
+            .and_then(|exe| {
+                link_handler::register(&exe)
+                    .map(|()| format!("bingle-3d:// links now open {}", exe.display()))
+                    .map_err(|e| e.to_string())
+            })
+    } else {
+        link_handler::unregister()
+            .map(|()| "bingle-3d:// links no longer open this program".to_string())
+            .map_err(|e| e.to_string())
+    };
+    match done {
+        Ok(said) => {
+            let mut store = config::Store::load(config::Store::default_dir());
+            if let Err(e) = store.remember_open_links(on) {
+                eprintln!("bingle-3d: the config could not be written ({e})");
+            }
+            println!("{said}");
+            AppExit::Success
+        }
+        Err(e) => {
+            eprintln!("bingle-3d: {e}");
+            AppExit::from_code(1)
+        }
+    }
+}
+
 fn main() -> AppExit {
     let opts = match cli::Options::parse(std::env::args().skip(1)) {
         Ok(opts) => opts,
@@ -115,6 +163,10 @@ fn main() -> AppExit {
     if opts.help {
         println!("{}", cli::USAGE);
         return AppExit::Success;
+    }
+    // From a script: open game links with this program, or with nothing, and quit.
+    if let Some(on) = opts.register_link {
+        return register_link(on);
     }
     if opts.voice_check {
         return match voice::check::run() {
@@ -200,6 +252,7 @@ fn main() -> AppExit {
             server: opts.server.clone(),
             start: opts.start(),
             setup: opts.setup.clone(),
+            link: opts.link.clone(),
         })
         // The looks a server offers, fetched as the games are listed and opened.
         .add_plugins(downloads::DownloadsPlugin)
@@ -260,13 +313,13 @@ fn main() -> AppExit {
             escape_menu::EscapeMenuPlugin,
             (play::PlayPlugin, drag::DragPlugin),
             game_panel::GamePanelPlugin {
-                on_start: opts.watch.clone().map(|w| match w {
+                on_start: link_target(&opts).or(opts.watch.clone().map(|w| match w {
                     cli::Watch::Room(code) => net::Target::Room(code),
                     cli::Watch::Bots(game_def_id) => net::Target::Bots { game_def_id },
                     cli::Watch::PlayBots(game_def_id) => net::Target::AgainstBots { game_def_id },
                     cli::Watch::Host(game_def_id) => net::Target::Host { game_def_id },
                     cli::Watch::Join(code) => net::Target::Join(code),
-                }),
+                })),
             },
         ));
     // A headset's eyes never bloom, so what glows is tuned for them there.
@@ -277,6 +330,10 @@ fn main() -> AppExit {
     if !in_headset {
         app.add_plugins(cursor::CursorPlugin);
     }
+    app.add_plugins(link_open::LinkOpenPlugin {
+        limited: opts.last_frame().is_some(),
+        in_headset,
+    });
     app.add_plugins(display::DisplayPlugin {
         fullscreen: opts.fullscreen,
         limited: opts.last_frame().is_some(),

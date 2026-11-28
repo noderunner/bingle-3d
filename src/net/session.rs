@@ -26,7 +26,7 @@ use super::api::{
     PlayerRequest, Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
-use super::api::{CLIENT, ClientFile, ClientIndex};
+use super::api::{CLIENT, ClientFile, ClientIndex, ClientSignIn};
 use super::api::{
     CodeLoginRequest, LoginRequest, LogoutResponse, Me, SecondRequest, SessionTokenResponse,
 };
@@ -159,6 +159,13 @@ impl Problem {
     pub fn worth_retrying(&self) -> bool {
         matches!(self, Problem::Unreachable(_))
     }
+}
+
+/// Who a link's code made this client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Traded {
+    Account(Account),
+    Guest,
 }
 
 /// What the login screen learns of a server before logging in.
@@ -340,6 +347,12 @@ impl Session {
         }
     }
 
+    pub fn remember_open_links(&mut self, on: bool) {
+        if let Err(e) = self.store.remember_open_links(on) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
     pub fn remember_max_fps(&mut self, fps: u32) {
         if let Err(e) = self.store.remember_max_fps(fps) {
             bevy::log::warn!("could not save the config: {e}");
@@ -483,6 +496,56 @@ impl Session {
                  does not."
             ))),
         }
+    }
+
+    /// Trades a link's one-time code (Bingle's ADR 0163) with this server, the link's, for who
+    /// to be here: an account's session, or a new key of a guest. **No bearer goes with it**:
+    /// the server merges nothing whatever is sent, and what this client holds is not the link's
+    /// business. An account's session is kept over the guest key, which stays for when it signs
+    /// out; a guest's key takes the place of the one kept, and an account's session kept here is
+    /// ended first. A code refused (`401`: spent, too old or never one) is never tried again.
+    pub fn trade_link_code(&mut self, code: &crate::link::Code) -> Result<Traded, Problem> {
+        let url = self.url.clone().map_err(Problem::BadAddress)?;
+        let body = serde_json::to_value(CodeLoginRequest {
+            code: code.secret().to_string(),
+        })
+        .expect("a code is JSON");
+        let answer: ClientSignIn = self.call(&url, "POST", "/auth/client", None, Some(&body))?;
+        let origin = url.origin();
+        let not_bingle = || {
+            Problem::NotBingle(format!(
+                "{url} answered the link's code, but not with somebody to be, as Bingle does."
+            ))
+        };
+        if !answer.token.is_empty() {
+            let account = match answer.me {
+                Some(me) => Account::from_me(me),
+                None => self
+                    .call::<Me>(&url, "GET", "/auth/me", Some(&answer.token), None)
+                    .ok()
+                    .and_then(Account::from_me),
+            }
+            .ok_or_else(not_bingle)?;
+            if let Err(e) = self.store.set_session_token(&origin, Some(answer.token)) {
+                bevy::log::warn!("could not save the session: {e}");
+            }
+            self.account = Some(account.clone());
+            self.session_ended = false;
+            return Ok(Traded::Account(account));
+        }
+        if !answer.guest_key.starts_with("bgg_") {
+            return Err(not_bingle());
+        }
+        if self.store.session_token(&origin).is_some()
+            && let Err(problem) = self.sign_out()
+        {
+            bevy::log::warn!("signing out for the link's guest: {}", problem.message());
+        }
+        if let Err(e) = self.store.set_guest_key(&origin, Some(answer.guest_key)) {
+            bevy::log::warn!("could not save the guest key: {e}");
+        }
+        self.account = None;
+        Ok(Traded::Guest)
     }
 
     /// The second step: a code, after the password was right.
@@ -1733,7 +1796,7 @@ pub(crate) mod tests {
         assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.26.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.30.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
@@ -1774,7 +1837,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.26.0");
+        assert_eq!(probe.api_version, "1.30.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1819,7 +1882,7 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.26.0");
+        assert_eq!(snap.api_version, "1.30.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
@@ -2182,6 +2245,93 @@ pub(crate) mod tests {
                 (401, format!(r#"{{"error":"{error}"}}"#))
             }
         })
+    }
+
+    /// A server that trades a link's codes once each (`bgc_` an account's, `bgj_` a guest's),
+    /// whoever brings them, and refuses any with a bearer, to show none is sent.
+    fn trades_link_codes() -> Box<Handler> {
+        let inner = accounts(false, Arc::new(Mutex::new(false)));
+        let spent = Mutex::new(Vec::<String>::new());
+        Box::new(move |req: &Seen| {
+            if req.path != "/auth/client" {
+                return inner(req);
+            }
+            let body: serde_json::Value = serde_json::from_str(&req.body).unwrap_or_default();
+            let code = body["code"].as_str().unwrap_or_default().to_string();
+            let mut spent = spent.lock().unwrap();
+            if req.auth.is_some() || spent.contains(&code) {
+                return (401, r#"{"error":"auth: that code does not work"}"#.into());
+            }
+            spent.push(code.clone());
+            let me = r#"{"kind":"account","handle":"ana","display_name":"Ana","accounts":true,"signup":false}"#;
+            if code.starts_with("bgc_") {
+                (
+                    200,
+                    format!(r#"{{"token":"bgs_ana","expires":"x","me":{me}}}"#),
+                )
+            } else {
+                (200, r#"{"guest_key":"bgg_theirs"}"#.into())
+            }
+        })
+    }
+
+    fn link_code(code: &str) -> crate::link::Code {
+        let link = crate::link::Link::parse(&format!(
+            "bingle-3d://join?server=https%3A%2F%2Fx.example&room=ABCD&code={code}"
+        ))
+        .unwrap();
+        link.code.unwrap()
+    }
+
+    #[test]
+    fn a_links_code_is_traded_once_with_no_bearer_and_merges_nothing() {
+        let account = "bgc_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+        let guest = "bgj_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+        let (addr, seen) = serve(trades_link_codes());
+        let origin = ServerUrl::parse(&addr).unwrap().origin();
+        let mut store = Store::load(None);
+        store
+            .set_guest_key(&origin, Some("bgg_mine".into()))
+            .unwrap();
+        store
+            .set_guest_key("https://other.example:443", Some("bgg_other".into()))
+            .unwrap();
+        let mut s = Session::new(Some(&addr), store);
+
+        // An account's code: its session, over the guest, which stays for signing out.
+        let traded = s.trade_link_code(&link_code(account)).unwrap();
+        assert!(matches!(traded, Traded::Account(ref a) if a.handle == "ana"));
+        assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
+        assert_eq!(
+            s.store().guest_key(&origin),
+            Some("bgg_mine"),
+            "nothing merged"
+        );
+        // Spent: refused, and nothing changes.
+        assert!(matches!(
+            s.trade_link_code(&link_code(account)),
+            Err(Problem::Refused { status: 401, .. })
+        ));
+        assert_eq!(s.store().session_token(&origin), Some("bgs_ana"));
+
+        // A guest's code: its key in place of the one kept, and the session ended.
+        assert_eq!(s.trade_link_code(&link_code(guest)).unwrap(), Traded::Guest);
+        assert_eq!(s.store().guest_key(&origin), Some("bgg_theirs"));
+        assert_eq!(s.store().session_token(&origin), None);
+        assert_eq!(
+            s.store().guest_key("https://other.example:443"),
+            Some("bgg_other"),
+            "another server's is not its business"
+        );
+
+        let seen = seen.lock().unwrap();
+        let trades: Vec<&Seen> = seen.iter().filter(|r| r.path == "/auth/client").collect();
+        assert_eq!(trades.len(), 3);
+        assert!(
+            trades
+                .iter()
+                .all(|r| r.method == "POST" && r.auth.is_none())
+        );
     }
 
     #[test]
