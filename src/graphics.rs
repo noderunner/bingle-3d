@@ -263,6 +263,12 @@ fn read_choice<T: Choice>(key: &str, text: Option<&str>, problems: &mut Vec<Stri
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct Kept(pub Graphics);
 
+/// Whether this run was started with `--no-bloom` and bloom has not been chosen since: its
+/// being off is the run's, so what the page keeps leaves the kept choice of bloom alone, until
+/// the Bloom row itself is clicked.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct BloomHeldOff(pub bool);
+
 /// In a headset's run: the cameras are the headset's, and the settings do nothing.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct HeadsetRun;
@@ -283,7 +289,8 @@ impl Plugin for GraphicsPlugin {
             .get_resource::<Kept>()
             .copied()
             .unwrap_or_default();
-        app.insert_resource(Graphics::chosen(self.limited, self.no_bloom, kept.0));
+        app.insert_resource(Graphics::chosen(self.limited, self.no_bloom, kept.0))
+            .insert_resource(BloomHeldOff(self.no_bloom));
         if self.in_headset {
             app.insert_resource(HeadsetRun);
         }
@@ -431,5 +438,6 @@ mod tests {
         let g = *app.world().resource::<Graphics>();
         assert!(!g.depth_of_field && !g.bloom);
         assert!(app.world().get_resource::<HeadsetRun>().is_some());
+        assert!(app.world().resource::<BloomHeldOff>().0);
     }
 }

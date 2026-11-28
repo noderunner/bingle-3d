@@ -22,7 +22,9 @@ use crate::browser::{Action, colors};
 use crate::display::{self, DisplaySettings};
 use crate::fonts::UiFonts;
 use crate::frame_pace::{self, FrameTime};
-use crate::graphics::{AmbientOcclusion, AntiAliasing, Graphics, HeadsetRun, Setting, Shadows};
+use crate::graphics::{
+    AmbientOcclusion, AntiAliasing, BloomHeldOff, Graphics, HeadsetRun, Setting, Shadows,
+};
 use crate::login::{self, LoginScreen, Screen};
 use crate::net::{Connection, Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
 use crate::sign_in::Signing;
@@ -247,7 +249,9 @@ fn on_item(
     mut exit: MessageWriter<AppExit>,
     (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
     display: Option<ResMut<DisplaySettings>>,
-    (graphics, frame_time): (Option<ResMut<Graphics>>, Option<ResMut<FrameTime>>),
+    graphics: Option<ResMut<Graphics>>,
+    frame_time: Option<ResMut<FrameTime>>,
+    held_off: Option<ResMut<BloomHeldOff>>,
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
@@ -269,7 +273,17 @@ fn on_item(
         MenuAction::Effect(setting) => {
             if let Some(mut graphics) = graphics {
                 graphics.cycle(*setting);
-                net.send(Request::RememberGraphics(*graphics));
+                // A click on Bloom itself is a choice; another row's is not one about bloom.
+                let mut held_off = held_off;
+                if *setting == Setting::Bloom
+                    && let Some(held_off) = held_off.as_deref_mut()
+                {
+                    held_off.0 = false;
+                }
+                net.send(Request::RememberGraphics {
+                    graphics: *graphics,
+                    keep_bloom: held_off.is_some_and(|h| h.0),
+                });
             }
         }
         MenuAction::FrameLimit => {
@@ -876,7 +890,44 @@ mod tests {
         assert_eq!(g.shadows, Shadows::High);
         let asked: Vec<Request> = requests.try_iter().collect();
         assert_eq!(asked.len(), 3);
-        assert_eq!(asked.last(), Some(&Request::RememberGraphics(g)));
+        assert_eq!(
+            asked.last(),
+            Some(&Request::RememberGraphics {
+                graphics: g,
+                keep_bloom: false
+            })
+        );
+    }
+
+    #[test]
+    fn a_run_with_no_bloom_keeps_what_was_kept_of_bloom_until_its_row_is_clicked() {
+        let (mut app, requests) = app();
+        app.insert_resource(BloomHeldOff(true));
+        app.world_mut().resource_mut::<Graphics>().bloom = false;
+        requests.try_iter().count();
+        let kept = |asked: &Request| {
+            matches!(
+                asked,
+                Request::RememberGraphics {
+                    keep_bloom: true,
+                    ..
+                }
+            )
+        };
+        // Another row: bloom stays off in the run, and what is kept of it is left alone.
+        choose(&mut app, MenuAction::Effect(Setting::Shadows));
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert!(kept(&asked[0]), "{asked:?}");
+        assert!(!graphics(&app).bloom);
+        // The Bloom row: a choice, written.
+        choose(&mut app, MenuAction::Effect(Setting::Bloom));
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert!(!kept(&asked[0]), "{asked:?}");
+        assert!(graphics(&app).bloom);
+        // And from then on every row writes it.
+        choose(&mut app, MenuAction::Effect(Setting::Shadows));
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert!(!kept(&asked[0]), "{asked:?}");
     }
 
     #[test]

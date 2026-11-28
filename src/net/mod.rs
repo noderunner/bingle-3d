@@ -256,7 +256,11 @@ pub enum Request {
         resolution: Option<(u32, u32)>,
     },
     /// Remember which effects are on (`graphics.rs`).
-    RememberGraphics(crate::graphics::Graphics),
+    /// With `keep_bloom`, the kept choice of bloom stays as it is (`--no-bloom`'s run).
+    RememberGraphics {
+        graphics: crate::graphics::Graphics,
+        keep_bloom: bool,
+    },
     /// Remember the most frames a second to draw, 0 for the monitor's pace.
     RememberMaxFps(u32),
     /// Read the account's friends list.
@@ -904,8 +908,11 @@ fn handle(
             session.remember_display(fullscreen, resolution);
             None
         }
-        Request::RememberGraphics(graphics) => {
-            session.remember_graphics(&graphics);
+        Request::RememberGraphics {
+            graphics,
+            keep_bloom,
+        } => {
+            session.remember_graphics(&graphics, keep_bloom);
             None
         }
         Request::RememberMaxFps(fps) => {

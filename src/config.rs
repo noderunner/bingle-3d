@@ -217,14 +217,20 @@ impl Store {
         self.save_config()
     }
 
-    /// Remembers which effects are on (`graphics.rs`).
-    pub fn remember_graphics(&mut self, graphics: &Graphics) -> io::Result<()> {
+    /// Remembers which effects are on (`graphics.rs`). With `keep_bloom`, whether it blooms is
+    /// left as it was kept: a run started with `--no-bloom` has it off for the run only.
+    pub fn remember_graphics(&mut self, graphics: &Graphics, keep_bloom: bool) -> io::Result<()> {
+        let bloom = if keep_bloom {
+            self.config.bloom
+        } else {
+            Some(graphics.bloom)
+        };
         let [ambient_occlusion, anti_aliasing, shadows] = graphics.names().map(|n| Some(n.into()));
         let kept = (
             &ambient_occlusion,
             &anti_aliasing,
             &Some(graphics.depth_of_field),
-            &Some(graphics.bloom),
+            &bloom,
             &shadows,
             &Some(graphics.contact_shadows),
         );
@@ -242,7 +248,7 @@ impl Store {
         self.config.ambient_occlusion = ambient_occlusion;
         self.config.anti_aliasing = anti_aliasing;
         self.config.depth_of_field = Some(graphics.depth_of_field);
-        self.config.bloom = Some(graphics.bloom);
+        self.config.bloom = bloom;
         self.config.shadows = shadows;
         self.config.contact_shadows = Some(graphics.contact_shadows);
         self.save_config()
@@ -458,7 +464,7 @@ mod tests {
             shadows: Shadows::High,
             contact_shadows: false,
         };
-        store.remember_graphics(&graphics).unwrap();
+        store.remember_graphics(&graphics, false).unwrap();
         store.remember_max_fps(0).unwrap();
         let again = Store::load(Some(tmp.0.clone()));
         let c = &again.config;
@@ -476,6 +482,35 @@ mod tests {
         let text = fs::read_to_string(tmp.0.join("config.toml")).unwrap();
         assert!(text.contains("anti_aliasing = \"smaa\""), "{text}");
         assert!(text.contains("bloom = false"), "{text}");
+    }
+
+    #[test]
+    fn a_bloom_held_back_is_left_as_it_was_kept() {
+        let tmp = TempDir::new("bloom");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        let off = Graphics {
+            bloom: false,
+            ..Graphics::default()
+        };
+        // Nothing kept: another row's change leaves bloom unwritten.
+        store.remember_graphics(&off, true).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, None);
+        assert_eq!(
+            Store::load(Some(tmp.0.clone()))
+                .config
+                .anti_aliasing
+                .as_deref(),
+            Some("taa"),
+            "the rest is kept"
+        );
+        // Kept on: stays on.
+        store
+            .remember_graphics(&Graphics::default(), false)
+            .unwrap();
+        store.remember_graphics(&off, true).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, Some(true));
+        store.remember_graphics(&off, false).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, Some(false));
     }
 
     #[test]

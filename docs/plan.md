@@ -1498,6 +1498,6 @@ Proposed 2026-11-27, for the maintainer to settle (the graphics options' pull re
     highlights' glow and the arcs retune. A headset's cameras (4× MSAA, nothing screen-space)
     are never touched and a headset has no limit of ours, so the *Graphics* item is greyed
     there. A run limited by `--frames` or `--screenshot` uses the defaults, and ignores
-    `max_fps`, whatever `config.toml` says; `--no-bloom` still starts without bloom. Kept as
+    `max_fps`, whatever `config.toml` says; `--no-bloom` still starts without bloom (the page shows it off, but is not kept: another row's change leaves the kept `bloom` as it was, and only a click on the Bloom row writes it). Kept as
     `ambient_occlusion`, `anti_aliasing`, `depth_of_field`, `bloom`, `shadows` and
     `contact_shadows`; a value it does not know is the default, with a warning.

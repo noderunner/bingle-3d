@@ -318,8 +318,8 @@ impl Session {
         }
     }
 
-    pub fn remember_graphics(&mut self, graphics: &crate::graphics::Graphics) {
-        if let Err(e) = self.store.remember_graphics(graphics) {
+    pub fn remember_graphics(&mut self, graphics: &crate::graphics::Graphics, keep_bloom: bool) {
+        if let Err(e) = self.store.remember_graphics(graphics, keep_bloom) {
             bevy::log::warn!("could not save the config: {e}");
         }
     }
