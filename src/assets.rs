@@ -53,6 +53,7 @@ files![
     "models/bowl_fences.glb",
     "models/bowl_stones.glb",
     "models/card.glb",
+    "models/chess_clock.glb",
     "models/checkers/king.glb",
     "models/checkers/man.glb",
     "models/chess/bishop.glb",
@@ -366,6 +367,12 @@ pub fn model_span(file: &str) -> Option<(f32, f32)> {
 
 /// The least and greatest corners of a model's first mesh's box, in metres.
 pub fn model_bounds(file: &str) -> Option<(Vec3, Vec3)> {
+    mesh_bounds(file, 0)
+}
+
+/// The least and greatest corners of one of a model's meshes' box, by its place in the file, in
+/// its node's own space.
+pub fn mesh_bounds(file: &str, mesh: usize) -> Option<(Vec3, Vec3)> {
     let doc = model_json(file)?;
     let corner = |v: &serde_json::Value| -> Option<Vec3> {
         Some(Vec3::new(
@@ -375,7 +382,7 @@ pub fn model_bounds(file: &str) -> Option<(Vec3, Vec3)> {
         ))
     };
     let mut bounds: Option<(Vec3, Vec3)> = None;
-    for part in doc["meshes"][0]["primitives"].as_array()? {
+    for part in doc["meshes"][mesh]["primitives"].as_array()? {
         let positions = &doc["accessors"][part["attributes"]["POSITION"].as_u64()? as usize];
         let (low, high) = (corner(&positions["min"])?, corner(&positions["max"])?);
         bounds = Some(bounds.map_or((low, high), |(a, b)| (a.min(low), b.max(high))));
@@ -386,6 +393,11 @@ pub fn model_bounds(file: &str) -> Option<(Vec3, Vec3)> {
 /// The parts of a model's first mesh, in order, each by the name of its material: a card's
 /// face, back and edge. A model with no materials has one part, with no name.
 pub fn model_parts(file: &str) -> Vec<String> {
+    mesh_parts(file, 0)
+}
+
+/// The parts of one of a model's meshes, by its place in the file, as `model_parts`.
+pub fn mesh_parts(file: &str, mesh: usize) -> Vec<String> {
     let Some(doc) = model_json(file) else {
         return Vec::new();
     };
@@ -396,10 +408,57 @@ pub fn model_parts(file: &str) -> Vec<String> {
             .unwrap_or_default()
             .to_string()
     };
-    doc["meshes"][0]["primitives"]
+    doc["meshes"][mesh]["primitives"]
         .as_array()
         .map(|parts| parts.iter().map(name).collect())
         .unwrap_or_default()
+}
+
+/// A node of a model of several (a chess clock's case and each hand): its name, the place of
+/// its mesh in the file, and where it stands in the model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelNode {
+    pub name: String,
+    pub mesh: usize,
+    pub at: Transform,
+}
+
+/// A model's nodes that have a mesh, in the file's order. Each stands where the file puts it
+/// (none of ours has a node inside another).
+pub fn model_nodes(file: &str) -> Vec<ModelNode> {
+    let Some(doc) = model_json(file) else {
+        return Vec::new();
+    };
+    let numbers = |v: &serde_json::Value| -> Option<Vec<f32>> {
+        v.as_array()?
+            .iter()
+            .map(|n| n.as_f64().map(|n| n as f32))
+            .collect()
+    };
+    let Some(nodes) = doc["nodes"].as_array() else {
+        return Vec::new();
+    };
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let mesh = node["mesh"].as_u64()? as usize;
+            let mut at = Transform::default();
+            if let Some([x, y, z]) = numbers(&node["translation"]).as_deref() {
+                at.translation = Vec3::new(*x, *y, *z);
+            }
+            if let Some([x, y, z, w]) = numbers(&node["rotation"]).as_deref() {
+                at.rotation = Quat::from_xyzw(*x, *y, *z, *w);
+            }
+            if let Some([x, y, z]) = numbers(&node["scale"]).as_deref() {
+                at.scale = Vec3::new(*x, *y, *z);
+            }
+            Some(ModelNode {
+                name: node["name"].as_str().unwrap_or_default().to_string(),
+                mesh,
+                at,
+            })
+        })
+        .collect()
 }
 
 pub struct AssetsPlugin {

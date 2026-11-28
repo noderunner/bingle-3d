@@ -73,6 +73,10 @@ pub struct Config {
     /// Whether the shadows under a stone and in a cut line are drawn; true when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_shadows: Option<bool>,
+    /// Whether a timed game of two seats has a chess clock beside the board (`chess_clock.rs`);
+    /// true when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chess_clock: Option<bool>,
     /// The display rate to ask a headset for, in Hz (72, 90, 120…), where its runtime lets the
     /// client choose; the runtime's own when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,6 +255,15 @@ impl Store {
         self.config.bloom = bloom;
         self.config.shadows = shadows;
         self.config.contact_shadows = Some(graphics.contact_shadows);
+        self.save_config()
+    }
+
+    /// Remembers whether a timed game of two seats has a chess clock on the table.
+    pub fn remember_chess_clock(&mut self, on: bool) -> io::Result<()> {
+        if self.config.chess_clock == Some(on) {
+            return Ok(());
+        }
+        self.config.chess_clock = Some(on);
         self.save_config()
     }
 
@@ -482,6 +495,20 @@ mod tests {
         let text = fs::read_to_string(tmp.0.join("config.toml")).unwrap();
         assert!(text.contains("anti_aliasing = \"smaa\""), "{text}");
         assert!(text.contains("bloom = false"), "{text}");
+    }
+
+    #[test]
+    fn whether_the_chess_clock_stands_is_kept() {
+        let tmp = TempDir::new("chess-clock");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        assert_eq!(store.config.chess_clock, None, "on, when nothing is kept");
+        store.remember_chess_clock(false).unwrap();
+        let text = std::fs::read_to_string(tmp.0.join("config.toml")).unwrap();
+        assert!(text.contains("chess_clock = false"), "{text}");
+        assert_eq!(
+            Store::load(Some(tmp.0.clone())).config.chess_clock,
+            Some(false)
+        );
     }
 
     #[test]

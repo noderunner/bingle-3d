@@ -13,6 +13,7 @@ mod call;
 mod camera;
 mod card_layout;
 mod card_table;
+mod chess_clock;
 mod choice_grid;
 mod cli;
 mod clock;
@@ -277,6 +278,9 @@ fn main() -> AppExit {
         limited: opts.last_frame().is_some(),
         no_bloom: opts.no_bloom,
         in_headset,
+    });
+    app.add_plugins(chess_clock::ChessClockPlugin {
+        limited: opts.last_frame().is_some(),
     });
     app.add_plugins(frame_pace::FramePacePlugin {
         max_fps: opts.max_fps,

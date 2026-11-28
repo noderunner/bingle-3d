@@ -1,5 +1,6 @@
 //! `--showcase`: every model the client has for a piece, in each material its games give it,
-//! with two-sided discs and their rings, the dice and a few playing cards of the usual deck,
+//! with two-sided discs and their rings, the dice, a chess clock and a few playing cards of the
+//! usual deck,
 //! laid out on the table with nothing
 //! else: to look at an asset in the client's own light, as the asset pipeline asks before one
 //! is called done (`assets-src/README.md`). A face is seen from one side here, as nowhere in
@@ -17,7 +18,8 @@ use bevy::prelude::*;
 use crate::appearance::{Appearances, Stands};
 use crate::board::BoardBuilt;
 use crate::look::{self, MaterialSpec};
-use crate::{assets, props};
+use crate::scene::BloomOn;
+use crate::{assets, chess_clock, props};
 
 pub struct ShowcasePlugin {
     /// Pictures to try on the cards' sides, from files outside the client.
@@ -151,7 +153,7 @@ fn lay_out(
     mut commands: Commands,
     server: Res<AssetServer>,
     all: Res<Appearances>,
-    pictures: Res<Pictures>,
+    (pictures, bloom): (Res<Pictures>, Res<BloomOn>),
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut built: MessageWriter<BoardBuilt>,
@@ -164,7 +166,10 @@ fn lay_out(
     let dice_at = rings_at + props::RING_SIZE.x / 2.0 + GAP + props::DIE_SIDE / 2.0;
     let cards_at = dice_at + props::DIE_SIDE / 2.0 + GAP + props::CARD_SIZE.y / 2.0;
     let front = cards_at + props::CARD_SIZE.y / 2.0;
-    let shift = (depth - front) / 2.0;
+    // Behind the pieces: the chess clock.
+    let clock_at = -(depth + BACK / 2.0 + GAP + chess_clock::DEPTH / 2.0);
+    let behind = -clock_at + chess_clock::DEPTH / 2.0;
+    let shift = (behind - front) / 2.0;
     let root = commands
         .spawn((
             Name::new("Showcase"),
@@ -310,10 +315,28 @@ fn lay_out(
         commands.entity(whole).insert(ChildOf(root));
     }
 
+    // The chess clock, facing the player: one face with two hours left and its time running,
+    // the other with nothing left and its flag fallen.
+    let kit = chess_clock::Kit::new(&mut materials, &server, bloom.0);
+    let frame = materials.add(look::tray().on_board(look::BOARD_WOODS[0]).build(&server));
+    let clock = chess_clock::spawn(
+        &mut commands,
+        &server,
+        &kit,
+        &frame,
+        Transform::from_xyz(0.0, 0.0, clock_at),
+        chess_clock::Showing {
+            left: 7200.0,
+            right: 0.0,
+            running: Some(chess_clock::End::Left),
+        },
+    );
+    commands.entity(clock).insert(ChildOf(root));
+
     // The camera frames it as it frames a board.
     let widest = ROW.min(pieces.len()) as f32 * ACROSS;
     built.write(BoardBuilt {
-        size: Vec2::new(widest.max(count as f32 * step), depth + front),
+        size: Vec2::new(widest.max(count as f32 * step), behind + front),
         middle: Vec2::ZERO,
     });
 }

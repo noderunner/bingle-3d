@@ -324,6 +324,12 @@ impl Session {
         }
     }
 
+    pub fn remember_chess_clock(&mut self, on: bool) {
+        if let Err(e) = self.store.remember_chess_clock(on) {
+            bevy::log::warn!("could not save the config: {e}");
+        }
+    }
+
     pub fn remember_max_fps(&mut self, fps: u32) {
         if let Err(e) = self.store.remember_max_fps(fps) {
             bevy::log::warn!("could not save the config: {e}");

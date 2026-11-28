@@ -425,6 +425,67 @@ pub fn trim_silver() -> MaterialSpec {
     }
 }
 
+/// A chess clock's dials: white enamel, a little glossy.
+pub fn clock_face() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.94, 0.93, 0.89]),
+        roughness: Some(0.35),
+        clearcoat: Some(0.6),
+        clearcoat_roughness: Some(0.08),
+        ..default()
+    }
+}
+
+/// A chess clock's marks and its hour and minute hands: black, as printed and as blued steel.
+pub fn clock_ink() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.03, 0.03, 0.035]),
+        roughness: Some(0.4),
+        ..default()
+    }
+}
+
+/// A chess clock's second hands and flags: red.
+pub fn clock_red() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.75, 0.06, 0.04]),
+        roughness: Some(0.4),
+        ..default()
+    }
+}
+
+/// A chess clock's bezels and buttons: brass, a little worn.
+pub fn clock_brass() -> MaterialSpec {
+    MaterialSpec {
+        tint: Some([0.95, 0.78, 0.48]),
+        roughness: Some(0.32),
+        ..trim_gold()
+    }
+}
+
+/// A chess clock's lamp: amber glass, unlit or lit. Lit, it is a little brighter than white
+/// where the camera blooms, so its core blooms, and a strong amber of its own where it does not
+/// (`scene::BloomOn`), as the highlight is tuned.
+pub fn clock_lamp(lit: bool, bloom: bool) -> MaterialSpec {
+    let glow = match (lit, bloom) {
+        (false, _) => None,
+        (true, true) => Some([4.0, 1.7, 0.25]),
+        (true, false) => Some([1.0, 0.45, 0.06]),
+    };
+    MaterialSpec {
+        tint: Some(if lit {
+            [1.0, 0.72, 0.30]
+        } else {
+            [0.30, 0.16, 0.05]
+        }),
+        roughness: Some(0.15),
+        clearcoat: Some(0.8),
+        clearcoat_roughness: Some(0.05),
+        glow,
+        ..default()
+    }
+}
+
 /// The paint a seat is drawn in, in the standard look (Bingle's ADR 0154). A seat's color is a
 /// name, not a value to draw with, but most games name their colors after a color word players
 /// know, so a color whose name is a word this client knows is painted as the word says. Any

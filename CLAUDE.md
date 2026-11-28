@@ -216,7 +216,7 @@ A game's own rules and its players' words keep their terms.
   name; a choice is labelled in the view's words where it has them (`Position::choice_words`).
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, settings, logout to the login screen, quit; game options and profile greyed). While it is open, play's keys and the camera
-  stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display, and leads to *Graphics*
+  stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display and the chess clock, and leads to *Graphics*
   (`Page::Graphics`), a row for each effect that steps to its next value, and the frame limit.
 - `src/display.rs`: fullscreen (the default: borderless at the desktop's resolution) or a
   window, and the resolution (`DisplaySettings`; `offered`, `mode_for` and `window_mode` have no
@@ -255,6 +255,13 @@ A game's own rules and its players' words keep their terms.
   password or a token.**
 - `src/clock.rs`: time in a timed game: the server's RFC 3339 timestamps, the time each seat has
   left (counted down between the server's reports) and how it reads.
+- `src/chess_clock.rs`: a chess clock beside the board in a game of two seats with a game clock
+  (`stands_for`), at the first seat's right hand clear of what lies there (`place`, from
+  `board::BesideBoard`, which the board fills with what it lays beside itself), each face at its
+  seat's end (`End::of_seat`). A face shows twelve less the time left (`hands`); the lamp under
+  the face whose time runs is lit, tuned by `scene::BloomOn`; it only shows. Its model is the one
+  of several nodes (`assets::model_nodes`): the case, and each hand, flag and button turned about
+  its own. `ChessClockOn` (*Settings*' row, `chess_clock` in `config.toml`; on in a scripted run).
 - `src/fonts.rs`: Fira Sans, compiled in. Use `UiFonts` for every text; Bevy's built-in font is
   ASCII only.
 - `src/environment.rs`: where the table stands, as data (`assets/environments/<id>.toml`): the

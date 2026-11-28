@@ -19,6 +19,7 @@ use bevy::ui_widgets::{Activate, Button, observe};
 use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow};
 
 use crate::browser::{Action, colors};
+use crate::chess_clock::ChessClockOn;
 use crate::display::{self, DisplaySettings};
 use crate::fonts::UiFonts;
 use crate::frame_pace::{self, FrameTime};
@@ -45,6 +46,7 @@ impl Plugin for EscapeMenuPlugin {
                             .or_eager(resource_changed::<WatchStatus>)
                             .or_eager(resource_exists_and_changed::<DisplaySettings>)
                             .or_eager(resource_exists_and_changed::<Graphics>)
+                            .or_eager(resource_exists_and_changed::<ChessClockOn>)
                             .or_eager(resource_exists_and_changed::<FrameTime>),
                     ),
                     color_items,
@@ -97,6 +99,8 @@ pub enum MenuAction {
     Effect(Setting),
     /// The frame limit, to its next value.
     FrameLimit,
+    /// The chess clock on the table, or none.
+    ChessClock,
 }
 
 /// The menu's items, in order: a name, and what it does (`None`: greyed). In a game, or on the
@@ -235,6 +239,14 @@ fn greyed_in(f: &UiFonts, label: &str, node: Node) -> impl Bundle {
     )
 }
 
+/// What the settings' other rows change: the frame limit, whether bloom is held off, and the
+/// chess clock.
+type Rows<'w> = (
+    Option<ResMut<'w, FrameTime>>,
+    Option<ResMut<'w, BloomHeldOff>>,
+    Option<ResMut<'w, ChessClockOn>>,
+);
+
 #[expect(
     clippy::too_many_arguments,
     reason = "a Bevy observer takes what it touches as parameters"
@@ -250,8 +262,7 @@ fn on_item(
     (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
     display: Option<ResMut<DisplaySettings>>,
     graphics: Option<ResMut<Graphics>>,
-    frame_time: Option<ResMut<FrameTime>>,
-    held_off: Option<ResMut<BloomHeldOff>>,
+    (frame_time, held_off, clock): Rows,
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
@@ -293,6 +304,12 @@ fn on_item(
                 net.send(Request::RememberMaxFps(next));
             }
         }
+        MenuAction::ChessClock => {
+            if let Some(mut clock) = clock {
+                clock.0 = !clock.0;
+                net.send(Request::RememberChessClock(clock.0));
+            }
+        }
         MenuAction::Fullscreen => set(&|d| d.fullscreen = !d.fullscreen),
         MenuAction::Resolution(size) => set(&|d| d.resolution = *size),
         _ => menu.open = false,
@@ -305,7 +322,8 @@ fn on_item(
         | MenuAction::Resolution(_)
         | MenuAction::Graphics
         | MenuAction::Effect(_)
-        | MenuAction::FrameLimit => {}
+        | MenuAction::FrameLimit
+        | MenuAction::ChessClock => {}
         MenuAction::MainMenu => {
             // As the game panel's Back: stop watching, and read the server's lists again.
             stop_watching(&net, &mut watching);
@@ -378,7 +396,7 @@ fn show(
     fonts: Res<UiFonts>,
     display: Option<Res<DisplaySettings>>,
     graphics: Option<Res<Graphics>>,
-    frame_time: Option<Res<FrameTime>>,
+    (frame_time, clock): (Option<Res<FrameTime>>, Option<Res<ChessClockOn>>),
     headset: Option<Res<HeadsetRun>>,
     window: Query<Option<&OnMonitor>, With<PrimaryWindow>>,
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
@@ -429,7 +447,8 @@ fn show(
             .despawn_related::<Children>()
             .with_children(|list| {
                 title(list, "Settings");
-                settings(list, f, display, monitor, headset.is_none());
+                let clock = clock.as_deref().is_none_or(|c| c.0);
+                settings(list, f, display, monitor, clock, headset.is_none());
                 list.spawn(item(f, "Back", MenuAction::Back));
             });
         return;
@@ -459,6 +478,7 @@ fn settings(
     f: &UiFonts,
     display: DisplaySettings,
     monitor: Option<((u32, u32), Vec<bevy::window::VideoMode>)>,
+    clock: bool,
     flat: bool,
 ) {
     list.spawn(choice(
@@ -524,6 +544,17 @@ fn settings(
             }
         }
     });
+    list.spawn(choice(
+        f,
+        if clock {
+            "Chess clock: On"
+        } else {
+            "Chess clock: Off"
+        },
+        MenuAction::ChessClock,
+        clock,
+        item_node(),
+    ));
     // A headset's cameras are its own, and none of the page means anything there.
     if flat {
         list.spawn(item(f, "Graphics", MenuAction::Graphics));
@@ -944,6 +975,28 @@ mod tests {
             "not offered with MSAA"
         );
         assert_eq!(value(Setting::AntiAliasing, &g), "MSAA 4×");
+    }
+
+    #[test]
+    fn the_chess_clock_is_left_out_and_put_back_and_kept() {
+        let (mut app, requests) = app();
+        app.insert_resource(ChessClockOn(true));
+        requests.try_iter().count();
+        choose(&mut app, MenuAction::ChessClock);
+        assert!(!app.world().resource::<ChessClockOn>().0);
+        choose(&mut app, MenuAction::ChessClock);
+        assert!(app.world().resource::<ChessClockOn>().0);
+        let asked: Vec<Request> = requests.try_iter().collect();
+        assert!(
+            matches!(
+                asked[..],
+                [
+                    Request::RememberChessClock(false),
+                    Request::RememberChessClock(true)
+                ]
+            ),
+            "{asked:?}"
+        );
     }
 
     #[test]

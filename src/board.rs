@@ -642,6 +642,13 @@ struct Flipping {
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub struct BoardOutline(pub Vec<Vec2>);
 
+/// What the board being shown has laid on the table beside it (bowls, supplies, trays, the
+/// score's dots, a move card at the side), each as the box it covers (x, z): what else stands
+/// there (the chess clock) keeps clear of them. The stock and the bowl of fences, at the first
+/// seat's left, are left out: nothing else stands there. Empty with no board.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct BesideBoard(pub Vec<Rect>);
+
 /// The meshes and materials of the board being shown.
 #[derive(Component)]
 struct Kit {
@@ -680,6 +687,8 @@ struct Kit {
     /// The slab's own outline, its margin round the playing area too: what lies beside the
     /// board keeps clear of it (`BoardOutline`).
     outline: Vec<Vec2>,
+    /// What lies beside the board, as boxes on the table (`BesideBoard`).
+    taken: Vec<Rect>,
     /// The width (X) and depth (Z) the camera frames: the board's, or the middle of the table
     /// for a game with no board.
     size: Vec2,
@@ -1162,6 +1171,8 @@ struct Drawing<'w> {
     server: Res<'w, AssetServer>,
     appearances: Res<'w, Appearances>,
     wood: Res<'w, BoardWood>,
+    /// Whether a timed game of two seats has a chess clock beside the board, for the camera.
+    clock_on: Option<Res<'w, crate::chess_clock::ChessClockOn>>,
 }
 
 /// A piece the scene shows: what and where it is, whether the move being built holds it, and
@@ -1197,6 +1208,7 @@ fn sync_board(
         }
         commands.insert_resource(BoardEdge::default());
         commands.insert_resource(BoardOutline::default());
+        commands.insert_resource(BesideBoard::default());
         return;
     };
     let previews = watch.turn.as_ref().map(Turn::previews).unwrap_or_default();
@@ -1222,6 +1234,7 @@ fn sync_board(
             server,
             appearances,
             wood,
+            clock_on,
         } = &mut drawing;
         let mut tools = Tools {
             server,
@@ -1234,12 +1247,17 @@ fn sync_board(
         let kit = build_board(&mut commands, &mut tools, table, &layout);
         commands.insert_resource(BoardEdge(kit.1.edge.clone()));
         commands.insert_resource(BoardOutline(kit.1.outline.clone()));
-        // Framed with the player's tray in front of it, if it has one, and the move tiles
-        // round it (`move_tiles.rs`).
+        commands.insert_resource(BesideBoard(kit.1.taken.clone()));
+        // Framed with the player's tray in front of it, if it has one, the move tiles round it
+        // (`move_tiles.rs`), and the chess clock beside it.
         let (mut front, mut beside) = (kit.1.front, kit.1.beside);
         if tools.look.is_some_and(|l| l.move_tiles.is_some()) {
             let (f, b) = crate::move_tiles::reaches(&kit.1.outline);
             (front, beside) = (front.max(f), beside.max(b));
+        }
+        if clock_on.as_ref().is_none_or(|on| on.0) && crate::chess_clock::stands(table) {
+            let at = crate::chess_clock::place(&kit.1.outline, &kit.1.taken);
+            beside = beside.max(crate::chess_clock::reach(at));
         }
         let size = kit.1.size;
         let extra = (front - size.y / 2.0).max(0.0);
@@ -2105,6 +2123,7 @@ fn build_board(
     // A bowl of each color's stones beside the board, for a game whose look has them: a click
     // on one takes a stone of the piece in that color.
     let edge: Vec<Vec2> = outline.iter().map(|(point, _)| *point).collect();
+    let mut taken: Vec<Rect> = Vec::new();
     let mut bowls_at = HashMap::new();
     if let Some(bowls) = tools.look.and_then(|l| l.bowls.as_ref())
         && let Some(spec) = tools.look.and_then(|l| l.materials.get(&bowls.material))
@@ -2137,6 +2156,12 @@ fn build_board(
             })
             .collect();
         bowls_at = crate::bowls::spawn(commands, root, tools.server, bowls, bowl, seats, &edge);
+        let half = Vec2::splat(crate::bowls::BOWL_RADIUS * bowls.size.unwrap_or(1.0));
+        taken.extend(
+            bowls_at
+                .values()
+                .map(|at| Rect::from_center_half_size(Vec2::new(at.x, at.z), half)),
+        );
     }
     // A tray in front of each seat for a game that counts what each captures, a square for each
     // capture its win wants; or, for a game whose look keeps a score with the seats' own pieces,
@@ -2168,6 +2193,8 @@ fn build_board(
         );
         let dot = slab::cell_corners(CellShape::Spot, pitch * MARK_SIZE / 0.6);
         let all: Vec<Vec2> = at.iter().flatten().copied().collect();
+        let half = Vec2::splat(pitch * MARK_SIZE / 2.0);
+        taken.extend(all.iter().map(|d| Rect::from_center_half_size(*d, half)));
         let ink = tools.material(&look::groove());
         commands.spawn((
             Name::new("Score's dots"),
@@ -2216,6 +2243,7 @@ fn build_board(
             if i == 0 {
                 front = place.0.y + depth;
             }
+            taken.push(turned_box(place.0, trays::half_size(n, side), place.1));
             let s = &seats[i];
             let squares = trays::spawn(
                 commands,
@@ -2321,6 +2349,8 @@ fn build_board(
                 kinds.iter().zip(places).zip(&stances)
             {
                 for t in &slots {
+                    let half = Vec2::splat(stance.out.max(stance.along) / 2.0);
+                    taken.push(Rect::from_center_half_size(t.translation.xz(), half));
                     beside = beside.max(t.translation.x.abs() + stance.out);
                     if t.translation.x < 0.0 {
                         left = left.max(-t.translation.x + stance.out / 2.0);
@@ -2498,9 +2528,16 @@ fn build_board(
     } else {
         layout.size
     };
+    // The move card at the side, at the right hand of the seat on impulse: either side.
+    if tools.look.is_some_and(|l| l.move_tiles.is_some()) {
+        let reach = crate::move_tiles::reaches(&edge).1;
+        let half = crate::move_tiles::DEPTH / 2.0;
+        taken.push(Rect::new(-reach, -half, reach, half));
+    }
     let kit = Kit {
         edge: playing,
         outline: edge,
+        taken,
         size,
         on_table,
         fences,
@@ -2538,6 +2575,16 @@ fn build_board(
         stock,
     };
     (root, kit)
+}
+
+/// The box on the table (x, z) that a box of these half sizes covers, its middle at `at`, turned
+/// `turn` about the vertical.
+fn turned_box(at: Vec2, half: Vec2, turn: f32) -> Rect {
+    let (sin, cos) = (turn.sin().abs(), turn.cos().abs());
+    Rect::from_center_half_size(
+        at,
+        Vec2::new(cos * half.x + sin * half.y, sin * half.x + cos * half.y),
+    )
 }
 
 /// Whose goal the slab's edge `i` runs along: the seat (or `None` for a goal every seat shares)
