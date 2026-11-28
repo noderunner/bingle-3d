@@ -42,7 +42,8 @@ Options:
                      towards you (for pictures)
   --showcase         lay every piece's model, some cards and the dice on the table,
                      with nothing else: to look at an asset (with --view, --frames,
-                     --screenshot)
+                     --screenshot); in front, a piece passes between two portals
+                     (with --frames, from frame 60, the same frame on any machine)
   --card-face FILE   in the showcase, a picture (JPEG or PNG, 5 to 7) for the cards'
                      faces
   --card-back FILE   and one for their backs, in place of the client's own

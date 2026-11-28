@@ -471,6 +471,22 @@ pub struct BoardLook {
     /// How far the wood reaches beyond the outermost spaces or points, in the spacing of the
     /// positions, when it is wider than the usual (room for a score kept on it).
     pub margin: Option<f32>,
+    /// How a piece goes from one of the game's boards to another, for a game on several (the
+    /// API's `boards`): put down there as any piece moved is, or by portal (`portal.rs`).
+    #[serde(default)]
+    pub passage: Passage,
+}
+
+/// How a piece passes from one of a game's boards to another (`BoardLook::passage`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Passage {
+    /// Put down where it goes, as any piece moved is.
+    #[default]
+    Put,
+    /// It sinks into a portal on the position of its own board it moved to, and rises out of
+    /// another on the same position of the board it goes to.
+    Portal,
 }
 
 impl BoardLook {

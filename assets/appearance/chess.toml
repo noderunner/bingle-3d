@@ -17,6 +17,9 @@ games = [
 [board]
 squares = ["dark_square", "light_square"]
 border = "inlay"
+# A piece passing to the other board of a game on two (Alice's) sinks into a portal on its square
+# and rises out of another on the same square of the other board.
+passage = "portal"
 
 # Each piece, by the id the game gives it (`upright`: turned any way, never leaning; `forward`:
 # looking across the board from its seat's side).

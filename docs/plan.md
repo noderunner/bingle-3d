@@ -558,6 +558,18 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   it rises over the tallest kind of piece, and further the longer it spans, so a flying king's
   long jump still clears a piece next to its landing. Not built: an arc for a move another seat
   has played, or one over the landing under the pointer before the click.
+- **A piece passes between boards by portal** (2026-11-27, #69; `portal.rs`), for a game whose
+  look says so (`[board] passage = "portal"`: Alice chess). It comes down on the square of its
+  own board it moved to, as any moved piece does (or is there already, carried by the player),
+  a portal opens under it in the square's own outline, it sinks in, a portal opens on the same
+  square of the other board, and it rises out of it; about 1.8 s in all, finished at once when
+  the next move comes, nothing played for a position loaded whole. The pieces of one move pass
+  together (castling's king and rook); a piece captured on the square goes at once, as before.
+  Nothing is cut from a piece going in: the board is opaque, so what is under its top is not
+  drawn, and the pieces keep their own materials. The portal darkens the square and traces a
+  cool line of light round it, arms of light turning inside; tuned for bloom and without. The
+  shape (the position's outline) and the pieces of a move passing together were chosen in the
+  maintainer's absence, and are easy to change.
 - Blooms (`assets/appearance/blooms.toml`): stones of polished minerals drawn with numpy
   (`assets-src/blender/minerals.py`), after photographs of real semi-precious Go stones the
   maintainer owns: red jasper and tiger's eye for Warm, lapis lazuli (with a little of
