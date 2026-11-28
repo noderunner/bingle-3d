@@ -1293,6 +1293,9 @@ look of its own:
 - Ray tracing in the lighting: a plan in phases, with what Bevy 0.20's Solari offers and costs
   on a real card, is [ray-tracing.md](ray-tracing.md), for the maintainer to decide on (#80).
   Nothing of it is built.
+- Other languages: a plan with what it would cost (the client's words counted, Bevy's text tried with
+  Arabic, Chinese, Japanese and Korean) and whether to do it or send players to the web page, is
+  [languages.md](languages.md), for the maintainer to decide on (#75). Nothing of it is built.
 - Maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles. (Release builds:
   decision 11.)
 
