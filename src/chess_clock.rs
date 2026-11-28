@@ -38,12 +38,12 @@ use crate::table::Table;
 
 pub const MODEL: &str = "models/chess_clock.glb";
 /// The case's length (along its faces) and depth at its foot, in metres (`chess_clock.py`).
-pub const LENGTH: f32 = 0.200;
-pub const DEPTH: f32 = 0.072;
+pub const LENGTH: f32 = 0.160;
+pub const DEPTH: f32 = 0.058;
 /// The space left between the clock and what it stands beside.
 const GAP: f32 = 0.03;
 /// How far a button goes down, and how fast it gets there (a share of the way a second).
-const TRAVEL: f32 = 0.006;
+const TRAVEL: f32 = 0.005;
 const PRESS: f32 = 18.0;
 /// How far a flag turns as it falls.
 const FALLEN: f32 = 2.6;

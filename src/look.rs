@@ -469,8 +469,8 @@ pub fn clock_brass() -> MaterialSpec {
 pub fn clock_lamp(lit: bool, bloom: bool) -> MaterialSpec {
     let glow = match (lit, bloom) {
         (false, _) => None,
-        (true, true) => Some([4.0, 1.7, 0.25]),
-        (true, false) => Some([1.0, 0.45, 0.06]),
+        (true, true) => Some([8.0, 2.8, 0.3]),
+        (true, false) => Some([2.6, 1.15, 0.15]),
     };
     MaterialSpec {
         tint: Some(if lit {

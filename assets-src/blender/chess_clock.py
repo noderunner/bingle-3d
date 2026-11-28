@@ -26,39 +26,39 @@ import common
 import meshkit
 
 # The case: how long, how deep at its foot, how tall, and how far its front leans back.
-LENGTH = 0.200
-DEPTH = 0.072
-HEIGHT = 0.108
+LENGTH = 0.160
+DEPTH = 0.058
+HEIGHT = 0.086
 TILT = math.radians(15.0)
-EASE = 0.004
+EASE = 0.0035
 # Each dial: its middle along x, how high up the front (along it), and its radius.
-DIAL_X = 0.051
-DIAL_UP = 0.066
-RADIUS = 0.035
+DIAL_X = 0.041
+DIAL_UP = 0.053
+RADIUS = 0.028
 # The dial stands this proud of the front, its marks a little more; the bezel's ring.
 DIAL_PROUD = 0.0015
 MARKS_PROUD = 0.0003
-BEZEL = (0.0028, 0.0035)
+BEZEL = (0.0024, 0.003)
 # Each lamp, under its dial: how far below the dial's middle, along the front, and its radius.
-LAMP_BELOW = RADIUS + 0.014
-LAMP_RADIUS = 0.0055
+LAMP_BELOW = RADIUS + 0.011
+LAMP_RADIUS = 0.0045
 # The hands: length, width at the pivot and at the tip, and how far over the dial each lies.
 HANDS = {
-    "hour": (0.56 * RADIUS, 0.0034, 0.0016, 0.0008),
-    "minute": (0.86 * RADIUS, 0.0026, 0.0010, 0.0014),
-    "second": (0.92 * RADIUS, 0.0009, 0.0006, 0.0020),
+    "hour": (0.56 * RADIUS, 0.003, 0.0014, 0.0008),
+    "minute": (0.86 * RADIUS, 0.0022, 0.0009, 0.0014),
+    "second": (0.92 * RADIUS, 0.0008, 0.0005, 0.0020),
 }
 HAND_THICK = 0.0005
 # How far behind the pivot the second hand reaches, and the hub over all three.
 SECOND_TAIL = 0.22 * RADIUS
-HUB = 0.0021
+HUB = 0.0018
 # The flag: its pivot on the dial (right of the twelve, up), its length, and how far over it is.
 FLAG_AT = (0.07 * RADIUS, 0.64 * RADIUS)
-FLAG = (0.25 * RADIUS, 0.0034, 0.0011)
+FLAG = (0.25 * RADIUS, 0.003, 0.0011)
 # The buttons: across, how tall they stand over the top, and where on the top (from the front).
-BUTTON_X = 0.062
-BUTTON = (0.0095, 0.013)
-BUTTON_SINK = 0.006
+BUTTON_X = 0.050
+BUTTON = (0.0078, 0.011)
+BUTTON_SINK = 0.005
 
 CASE_PARTS = ["frame", "face", "marks", "bezel", "lamp_left", "lamp_right"]
 MOVING = ["hour", "minute", "second", "flag", "button"]
