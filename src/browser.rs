@@ -257,6 +257,8 @@ pub(crate) enum Action {
     AllGames,
     /// The escape menu's (`escape_menu.rs` acts on it).
     Menu(crate::escape_menu::MenuAction),
+    /// A link's questions, and the offer to open links here (`link_open.rs` acts on it).
+    Link(crate::link_open::Answer),
     /// List only this game's family (or every game), named as `name`.
     FindGames {
         family: Option<String>,
@@ -1302,7 +1304,11 @@ fn on_activate(
             }
         }
         Action::SignOut => net.send(Request::SignOut),
-        Action::Friends(_) | Action::Voice(_) | Action::Menu(_) | Action::Login(_) => {}
+        Action::Friends(_)
+        | Action::Voice(_)
+        | Action::Menu(_)
+        | Action::Login(_)
+        | Action::Link(_) => {}
         Action::SkipLook => {
             if let Some(downloads) = downloads.as_mut() {
                 downloads.skip(&net, &mut watching);

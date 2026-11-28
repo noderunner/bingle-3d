@@ -202,6 +202,17 @@ A game's own rules and its players' words keep their terms.
   kept nowhere: the network thread spends it first (`Request::SetupSignIn`), from the login
   screen. **The file is deleted once it is used up, and never when the code may still be
   good** (the server was not reached). No Bevy in it. **Never log the code or the key.**
+- `src/link.rs`: a `bingle-3d://` link (Bingle's ADR 0163), **hostile input**: `Link::parse`,
+  the one reader, accepts exactly the contract's form and refuses the whole link for anything
+  else; `decide` says what to do with one given what the client holds for its server (ask about
+  a server never used, ask before a code makes it somebody else, trade, join). No Bevy in it.
+  **Never log a link or its code**; `--link` is the last argument, and nothing in a link
+  becomes an option. `src/link_handler.rs`: the scheme registered for the current user (the
+  registry's values and the `.desktop` entry are plain functions; the Windows write is tested in
+  CI), not on the Steam Frame. `src/link_open.rs`: a run started from a link, through the login
+  screen's probe, its questions, and the first run's offer to open links (`LinkSetting`, a row of
+  *Settings*). The code is traded by `Session::trade_link_code`, with no bearer; a guest key it replaces is
+  set aside in `keys.toml` (`set_aside`), never dropped or sent, and the login screen takes it back.
 - `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
   and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
   or the games being played (*Active*). Its `Action` is what every panel's buttons do. The
@@ -649,7 +660,8 @@ A game's own rules and its players' words keep their terms.
   `unversioned` transport API `src/net/tls.rs` uses), `rustls`, `ring`, `webpki-roots`, `serde`,
   `serde_json`, `toml`, `tungstenite` (only its `handshake` feature: TLS is ours), and for voice
   `rtc` (its `crypto-ring` feature only), `rusty-opus`, `cpal` (which Bevy's audio already builds),
-  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation); and, only
+  `bytes` (rtc's packets) and `sonora` (WebRTC's audio processing in Rust: echo cancellation);
+  on Windows only, `windows-sys` (its registry, to open links here; Bevy already builds it); and, only
   with the `vr` feature, `bevy_mod_openxr` and `bevy_mod_xr` (by git revision until released for
   this Bevy: plan, decision 10) and `openxr`, which they already build.
   Bevy's `jpeg` feature reads the scanned textures.

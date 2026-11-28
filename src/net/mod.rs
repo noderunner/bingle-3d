@@ -62,6 +62,8 @@ pub struct NetPlugin {
     /// A server's setup file named on the command line (`setup.rs`); one beside the program is
     /// taken without being named.
     pub setup: Option<std::path::PathBuf>,
+    /// The link the run was started from (`--link`), or why it was refused.
+    pub link: Option<Result<crate::link::Link, crate::link::LinkError>>,
 }
 
 /// Where a run starts.
@@ -82,15 +84,43 @@ impl Plugin for NetPlugin {
         // A server's setup file says which server and who to be there, before anything connects.
         let setup = crate::setup::take(&mut store, self.setup.as_deref());
         notices.extend(setup.notices);
+        // A link is set aside when a setup file was taken, which says who to be as well.
+        let link = match self.link.clone() {
+            Some(Err(why)) => {
+                notices.push(format!(
+                    "The link this client was opened with was refused: {why}."
+                ));
+                None
+            }
+            Some(Ok(_)) if setup.taken => {
+                notices.push(
+                    "The link was not used, since a setup file was taken in: open it again.".into(),
+                );
+                None
+            }
+            Some(Ok(link)) => {
+                let used = store.has_used(&link.server.origin());
+                Some(crate::link_open::LinkOpen::new(link, used))
+            }
+            None => None,
+        };
         for notice in &notices {
             warn!("{notice}");
         }
         // Its server is the run's: its sign-in code is good nowhere else.
+        // A link's server is the run's once it is one this client has used; one never used
+        // is asked about first, and nothing is sent there until then (`link_open.rs`).
+        let link_server = link
+            .as_ref()
+            .filter(|open| open.used)
+            .map(crate::link_open::LinkOpen::address);
         let server = if setup.taken {
             if self.server.is_some() {
                 warn!("--server is left aside: the setup file names the server");
             }
             None
+        } else if link.is_some() {
+            link_server.as_deref()
         } else {
             self.server.as_deref()
         };
@@ -146,7 +176,14 @@ impl Plugin for NetPlugin {
             Start::StraightIn => true,
             Start::Login => false,
         };
-        let screen = if let Some(pending) = setup.pending {
+        let screen = if let Some(open) = link {
+            // Through the login screen's check: once it is good, the link goes on.
+            if open.stage == crate::link_open::Stage::Probing {
+                login.probe(&net, true);
+            }
+            app.insert_resource(open);
+            Screen::Login
+        } else if let Some(pending) = setup.pending {
             // The file's sign-in code is spent first, from the login screen: signed in, the
             // main screen follows; refused, the player is where they can sign in.
             info!("signing in with the setup file's code");
@@ -240,6 +277,10 @@ pub enum Request {
         code: String,
         file: std::path::PathBuf,
     },
+    /// Trade a link's one-time code with the server now used, for who to be there
+    /// (`link.rs`). Sent only once the player has agreed to the server and to being who the
+    /// link makes them; the code is never tried again.
+    TradeLinkCode { code: crate::link::Code },
     /// End the account's session.
     SignOut,
     /// The login screen's server: use this address from now on, and say whether it is there,
@@ -248,6 +289,9 @@ pub enum Request {
     /// Go on as a guest: any account's session ended, and this guest key taken if one is given
     /// (else the one kept, or a new one); then connect.
     ContinueAsGuest { key: Option<String> },
+    /// Go back to the guest a link's code set aside for this server (the one held set aside in
+    /// its turn), then connect.
+    RestoreGuest,
     /// Remember the server used (if `server`) and whether to log in by itself next time.
     Remember { server: bool, auto_login: bool },
     /// Keep where the table stands (an environment's id) for the next run.
@@ -265,6 +309,8 @@ pub enum Request {
     },
     /// Remember the most frames a second to draw, 0 for the monitor's pace.
     RememberMaxFps(u32),
+    /// Remember whether game links open this program (`link_open.rs`).
+    RememberOpenLinks(bool),
     /// Whether a timed game of two seats has a chess clock on the table, kept in the config.
     RememberChessClock(bool),
     /// Read the account's friends list.
@@ -451,6 +497,8 @@ enum Reply {
         result: Result<SignIn, Problem>,
         notice: Option<String>,
     },
+    /// A link's code was traded, or why not.
+    LinkTraded(Result<session::Traded, Problem>),
     SignedOut(Result<(), Problem>),
     Friends(Result<FriendsList, Problem>),
     /// A friends call was made; the list as it stands afterwards, or why it was not.
@@ -885,6 +933,12 @@ fn handle(
                 result: session.probe(),
             })
         }
+        Request::RestoreGuest => {
+            if let Err(problem) = session.restore_guest() {
+                return Some(Reply::Failed(problem));
+            }
+            Some(connected(session.connect()))
+        }
         Request::ContinueAsGuest { key } => {
             // A guest: no account's session is kept (nor left on the server).
             if let Err(problem) = session.sign_out() {
@@ -917,6 +971,10 @@ fn handle(
             keep_bloom,
         } => {
             session.remember_graphics(&graphics, keep_bloom);
+            None
+        }
+        Request::RememberOpenLinks(on) => {
+            session.remember_open_links(on);
             None
         }
         Request::RememberMaxFps(fps) => {
@@ -1065,6 +1123,7 @@ fn handle(
             };
             Some(Reply::SetupSignIn { result, notice })
         }
+        Request::TradeLinkCode { code } => Some(Reply::LinkTraded(session.trade_link_code(&code))),
         Request::SignOut => Some(Reply::SignedOut(session.sign_out())),
         Request::Friends => Some(Reply::Friends(session.friends())),
         Request::Friend(call) => {
@@ -1187,6 +1246,13 @@ pub enum Connection {
 /// How long to wait before trying an unreachable server again.
 pub const RETRY_AFTER: Duration = Duration::from_secs(5);
 
+/// The screen up, the login screen, and a link the run was started from.
+type Screens<'w> = (
+    Option<Res<'w, Screen>>,
+    Option<ResMut<'w, LoginScreen>>,
+    Option<ResMut<'w, crate::link_open::LinkOpen>>,
+);
+
 // A system: each resource it fills is a parameter.
 #[allow(clippy::too_many_arguments)]
 pub fn poll_network(
@@ -1199,7 +1265,7 @@ pub fn poll_network(
     mut friends: ResMut<Friends>,
     mut call: ResMut<DirectCalling>,
     mut voice: ResMut<VoiceChat>,
-    (screen, mut login): (Option<Res<Screen>>, Option<ResMut<LoginScreen>>),
+    (screen, mut login, mut link): Screens,
     (mut downloads, appearances): (
         Option<ResMut<Downloads>>,
         Option<Res<crate::appearance::Appearances>>,
@@ -1408,6 +1474,16 @@ pub fn poll_network(
                             login.entering = false;
                             login.problem = Some(problem);
                         }
+                    }
+                }
+            }
+            Ok(Reply::LinkTraded(result)) => {
+                if let Some((title, body)) = crate::link::traded_notice(&result) {
+                    warn!("{title}. {body}");
+                    // Said over whatever shows by then, the game itself most often.
+                    match link.as_mut() {
+                        Some(open) => open.said = Some((title, body)),
+                        None => status.notices.push(format!("{title}. {body}")),
                     }
                 }
             }

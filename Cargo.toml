@@ -37,6 +37,11 @@ bevy_mod_xr = { git = "https://github.com/MaximilianHausen/bevy_oxr.git", rev = 
 # OpenXR itself, as the plugin above has it: the controllers' actions are made with its types.
 openxr = { version = "0.22.0", optional = true }
 
+# The registry, to open `bingle-3d://` links with this program (`src/link_handler.rs`). Already
+# built for Bevy and others; this asks only for its registry's functions.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Registry"] }
+
 [features]
 # Faster incremental builds while developing on Linux: `cargo run --features dev`.
 # Not for release builds, and unreliable on Windows.

@@ -186,7 +186,7 @@ wood with a dark border, and red checkers for arrows. Blooms' stones are polishe
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each color in a small wooden
 bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
 captures is carried to a small wooden tray in front of them, with a square for every capture the win
-needs. The client needs a Bingle whose API is 1.26 or newer. Games a server builds from its private
+needs. The client needs a Bingle whose API is 1.30 or newer. Games a server builds from its private
 overlay (commercial games, marked `private`) are shown only when the client has their look: one the
 server offers, or one in the private folder.
 
@@ -402,6 +402,16 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   server cannot be reached the file stays for the next start; one the client cannot read (a
   newer format, a server it may not use) is left alone, and the login screen says why. With a
   setup file, its server is the run's, whatever `--server` says.
+- **Game links** (*Join with Bingle3D* and *Watch with Bingle3D* on a server's page; Bingle's
+  [ADR 0163](https://github.com/noderunner/bingle/blob/main/docs/decisions/0163-a-link-opens-the-3d-client-at-a-game.md)):
+  the client offers once, on its first run, to open `bingle-3d://` links, and *Settings* turns
+  it on and off (`--register-link` and `--unregister-link` from a script). It is for you alone,
+  with no administrator's rights: on Windows a key under `HKEY_CURRENT_USER\Software\Classes`,
+  on Linux `~/.local/share/applications/bingle-3d.desktop`, made the default with `xdg-mime`.
+  While it is on, the copy you started last is the one links open. A link opens the client at
+  its game, through the login screen's check of its server; a server you have not used is
+  shown and asked about first, and a link that would make you somebody else there asks before
+  it does. Not on the Steam Frame. A second copy opens if one is running already.
 - **A game's look from the server**: a server may offer the look of a game this client does not
   ship (an install pack's `clients/bingle-3d/`, Bingle's ADR 0147). The client fetches it when the
   game is opened (its card's picture when the list shows it), checks it, and keeps it in the

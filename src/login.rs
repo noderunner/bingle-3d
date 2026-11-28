@@ -201,6 +201,8 @@ pub enum LoginAction {
     Trust(Fingerprint),
     /// Turn auto-login on or off.
     AutoLogin,
+    /// Go back to the guest a link set aside here, and go in as it.
+    RestoreGuest,
 }
 
 /// Goes to the login screen: from the main screen's *Sign in*, or the escape menu's *Logout*.
@@ -271,6 +273,10 @@ fn on_login_action(
             login.probe(&net, true);
         }
         LoginAction::AutoLogin => login.auto_login = !login.auto_login,
+        LoginAction::RestoreGuest => {
+            enter(&mut status, &mut login);
+            net.send(Request::RestoreGuest);
+        }
     }
 }
 
@@ -696,6 +702,17 @@ fn rebuild_messages(
                         ));
                     });
                 }
+                // The guest a link's code took the place of: never lost, and taken back here.
+                if matches!(&login.light, Light::Good(probe) if probe.set_aside) && !login.entering
+                {
+                    area.spawn(buttons()).with_children(|row| {
+                        row.spawn(button(
+                            f,
+                            "Back to your earlier guest",
+                            Action::Login(LoginAction::RestoreGuest),
+                        ));
+                    });
+                }
             });
     }
 }
@@ -780,6 +797,7 @@ mod tests {
                 must_change_password: false,
             }),
             guest_key: false,
+            set_aside: false,
         }
     }
 

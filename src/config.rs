@@ -85,6 +85,10 @@ pub struct Config {
     /// a game the server marks private is shown only when the folder has its look.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub private_dir: Option<PathBuf>,
+    /// Whether `bingle-3d://` links open this program (`link_handler.rs`): asked once, and
+    /// changed in *Settings*. While it is on, a copy started elsewhere takes the links over.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_links: Option<bool>,
     /// Certificates the player has said are their server's, by fingerprint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trusted: Vec<TrustedCertificate>,
@@ -106,6 +110,11 @@ pub struct Keys {
     /// The session token (`bgs_…`) of the account signed in, per server origin.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub session: BTreeMap<String, String>,
+    /// Guest keys a link's code took the place of, per server origin, the newest first: kept
+    /// so a guest is never lost to a click, never sent anywhere, and taken back from the login
+    /// screen (`Store::restore_guest_key`). None is ever dropped.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub set_aside: BTreeMap<String, Vec<String>>,
 }
 
 /// The two files, read at start-up and written when something worth remembering changes.
@@ -276,6 +285,31 @@ impl Store {
         self.save_config()
     }
 
+    /// Remembers whether links open this program.
+    pub fn remember_open_links(&mut self, on: bool) -> io::Result<()> {
+        if self.config.open_links == Some(on) {
+            return Ok(());
+        }
+        self.config.open_links = Some(on);
+        self.save_config()
+    }
+
+    /// Whether this client has used the server at `origin` before: it keeps a guest key, a
+    /// session or a trusted certificate for it, or it is the server configured. A link to any
+    /// other is asked about before anything is sent there (`link.rs`).
+    pub fn has_used(&self, origin: &str) -> bool {
+        let configured = self
+            .config
+            .server
+            .as_deref()
+            .and_then(|s| crate::net::server_url::ServerUrl::parse(s).ok())
+            .is_some_and(|url| url.origin() == origin);
+        configured
+            || self.guest_key(origin).is_some()
+            || self.session_token(origin).is_some()
+            || self.trusted(origin).next().is_some()
+    }
+
     /// Whether what is remembered can be written down: there is a config directory, and both
     /// files in it could be read (one that could not is never overwritten). A setup file is
     /// taken only then (`setup.rs`), or it would be used up and nothing kept of it.
@@ -331,6 +365,52 @@ impl Store {
             None => self.keys.guest.remove(origin),
         };
         self.save_keys()
+    }
+
+    /// Puts `key` in the guest key's place for `origin`, setting the one held aside rather than
+    /// dropping it (a link's guest, `Session::trade_link_code`).
+    pub fn replace_guest_key(&mut self, origin: &str, key: String) -> io::Result<()> {
+        if let Some(old) = self.keys.guest.insert(origin.to_string(), key.clone())
+            && old != key
+        {
+            let aside = self.keys.set_aside.entry(origin.to_string()).or_default();
+            aside.retain(|k| *k != old);
+            aside.insert(0, old);
+        }
+        self.save_keys()
+    }
+
+    /// The guest key set aside last for `origin`, if any.
+    pub fn set_aside_guest_key(&self, origin: &str) -> Option<&str> {
+        self.keys
+            .set_aside
+            .get(origin)
+            .and_then(|a| a.first())
+            .map(String::as_str)
+    }
+
+    /// Takes back the guest key set aside last for `origin`, setting the one held aside in its
+    /// turn, last, so nothing is lost either way and taking back again goes on to the older
+    /// ones. False when none is set aside.
+    pub fn restore_guest_key(&mut self, origin: &str) -> io::Result<bool> {
+        let Some(aside) = self.keys.set_aside.get_mut(origin) else {
+            return Ok(false);
+        };
+        if aside.is_empty() {
+            return Ok(false);
+        }
+        let back = aside.remove(0);
+        if let Some(now) = self.keys.guest.insert(origin.to_string(), back.clone())
+            && now != back
+        {
+            aside.retain(|k| *k != now);
+            aside.push(now);
+        }
+        if aside.is_empty() {
+            self.keys.set_aside.remove(origin);
+        }
+        self.save_keys()?;
+        Ok(true)
     }
 
     /// The token of the account signed in to this server, if one is.
@@ -434,6 +514,33 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn a_guest_replaced_by_a_link_is_set_aside_and_taken_back() {
+        let mut store = Store::load(None);
+        let o = "http://127.0.0.1:8080";
+        store.set_guest_key(o, Some("bgg_mine".into())).unwrap();
+        store.replace_guest_key(o, "bgg_link".into()).unwrap();
+        assert_eq!(store.guest_key(o), Some("bgg_link"));
+        assert_eq!(store.set_aside_guest_key(o), Some("bgg_mine"));
+        store.replace_guest_key(o, "bgg_link2".into()).unwrap();
+        assert_eq!(
+            store.keys.set_aside[o],
+            ["bgg_link", "bgg_mine"],
+            "an older one is kept too"
+        );
+        assert!(store.restore_guest_key(o).unwrap());
+        assert_eq!(store.guest_key(o), Some("bgg_link"));
+        assert_eq!(store.keys.set_aside[o], ["bgg_mine", "bgg_link2"]);
+        assert!(store.restore_guest_key(o).unwrap());
+        assert_eq!(store.guest_key(o), Some("bgg_mine"));
+        assert_eq!(store.keys.set_aside[o], ["bgg_link2", "bgg_link"]);
+        assert!(
+            !store
+                .restore_guest_key("https://other.example:443")
+                .unwrap()
+        );
     }
 
     #[test]

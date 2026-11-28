@@ -26,6 +26,7 @@ use crate::frame_pace::{self, FrameTime};
 use crate::graphics::{
     AmbientOcclusion, AntiAliasing, BloomHeldOff, Graphics, HeadsetRun, Setting, Shadows,
 };
+use crate::link_open::LinkSetting;
 use crate::login::{self, LoginScreen, Screen};
 use crate::net::{Connection, Net, Request, ServerStatus, WatchStatus, reconnect, stop_watching};
 use crate::sign_in::Signing;
@@ -47,6 +48,7 @@ impl Plugin for EscapeMenuPlugin {
                             .or_eager(resource_exists_and_changed::<DisplaySettings>)
                             .or_eager(resource_exists_and_changed::<Graphics>)
                             .or_eager(resource_exists_and_changed::<ChessClockOn>)
+                            .or_eager(resource_exists_and_changed::<LinkSetting>)
                             .or_eager(resource_exists_and_changed::<FrameTime>),
                     ),
                     color_items,
@@ -101,6 +103,8 @@ pub enum MenuAction {
     FrameLimit,
     /// The chess clock on the table, or none.
     ChessClock,
+    /// Whether game links open this program (`link_open.rs`).
+    OpenLinks,
 }
 
 /// The menu's items, in order: a name, and what it does (`None`: greyed). In a game, or on the
@@ -245,6 +249,14 @@ type Rows<'w> = (
     Option<ResMut<'w, FrameTime>>,
     Option<ResMut<'w, BloomHeldOff>>,
     Option<ResMut<'w, ChessClockOn>>,
+    Option<ResMut<'w, LinkSetting>>,
+);
+
+/// What the settings' rows show: the frame limit, the chess clock, and game links.
+type ShownRows<'w> = (
+    Option<Res<'w, FrameTime>>,
+    Option<Res<'w, ChessClockOn>>,
+    Option<Res<'w, LinkSetting>>,
 );
 
 #[expect(
@@ -262,7 +274,7 @@ fn on_item(
     (mut screen, mut login, mut signing): (ResMut<Screen>, ResMut<LoginScreen>, ResMut<Signing>),
     display: Option<ResMut<DisplaySettings>>,
     graphics: Option<ResMut<Graphics>>,
-    (frame_time, held_off, clock): Rows,
+    (frame_time, held_off, clock, links): Rows,
 ) {
     let Ok(Action::Menu(action)) = actions.get(activate.entity) else {
         return;
@@ -310,6 +322,12 @@ fn on_item(
                 net.send(Request::RememberChessClock(clock.0));
             }
         }
+        MenuAction::OpenLinks => {
+            if let Some(mut links) = links {
+                let on = !links.on;
+                links.set(&net, on);
+            }
+        }
         MenuAction::Fullscreen => set(&|d| d.fullscreen = !d.fullscreen),
         MenuAction::Resolution(size) => set(&|d| d.resolution = *size),
         _ => menu.open = false,
@@ -323,7 +341,8 @@ fn on_item(
         | MenuAction::Graphics
         | MenuAction::Effect(_)
         | MenuAction::FrameLimit
-        | MenuAction::ChessClock => {}
+        | MenuAction::ChessClock
+        | MenuAction::OpenLinks => {}
         MenuAction::MainMenu => {
             // As the game panel's Back: stop watching, and read the server's lists again.
             stop_watching(&net, &mut watching);
@@ -396,7 +415,7 @@ fn show(
     fonts: Res<UiFonts>,
     display: Option<Res<DisplaySettings>>,
     graphics: Option<Res<Graphics>>,
-    (frame_time, clock): (Option<Res<FrameTime>>, Option<Res<ChessClockOn>>),
+    (frame_time, clock, links): ShownRows,
     headset: Option<Res<HeadsetRun>>,
     window: Query<Option<&OnMonitor>, With<PrimaryWindow>>,
     monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
@@ -448,7 +467,8 @@ fn show(
             .with_children(|list| {
                 title(list, "Settings");
                 let clock = clock.as_deref().is_none_or(|c| c.0);
-                settings(list, f, display, monitor, clock, headset.is_none());
+                let links = links.as_deref().filter(|l| l.shown).map(|l| l.on);
+                settings(list, f, display, monitor, (clock, links), headset.is_none());
                 list.spawn(item(f, "Back", MenuAction::Back));
             });
         return;
@@ -478,7 +498,7 @@ fn settings(
     f: &UiFonts,
     display: DisplaySettings,
     monitor: Option<((u32, u32), Vec<bevy::window::VideoMode>)>,
-    clock: bool,
+    (clock, links): (bool, Option<bool>),
     flat: bool,
 ) {
     list.spawn(choice(
@@ -555,6 +575,20 @@ fn settings(
         clock,
         item_node(),
     ));
+    // Only where links can be opened here, and the run may change it.
+    if let Some(on) = links {
+        list.spawn(choice(
+            f,
+            if on {
+                "Open game links: On"
+            } else {
+                "Open game links: Off"
+            },
+            MenuAction::OpenLinks,
+            on,
+            item_node(),
+        ));
+    }
     // A headset's cameras are its own, and none of the page means anything there.
     if flat {
         list.spawn(item(f, "Graphics", MenuAction::Graphics));
