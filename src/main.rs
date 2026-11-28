@@ -78,6 +78,7 @@ mod vr;
 mod vr_keyboard;
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 mod vr_panels;
+mod warm;
 mod wood_choice;
 #[cfg_attr(not(feature = "vr"), allow(dead_code))]
 mod world_panel;
@@ -241,6 +242,7 @@ fn main() -> AppExit {
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             (
                 board::BoardPlugin,
+                board::WarmBoardsPlugin,
                 card_table::CardTablePlugin,
                 hand_strip::HandStripPlugin,
                 (

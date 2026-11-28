@@ -48,7 +48,14 @@ impl Plugin for GamePanelPlugin {
 }
 
 #[derive(Resource)]
-struct WatchOnStart(Option<Target>);
+pub struct WatchOnStart(Option<Target>);
+
+impl WatchOnStart {
+    /// Whether a game is still to be opened as the client starts.
+    pub fn is_pending(&self) -> bool {
+        self.0.is_some()
+    }
+}
 
 /// A game waiting for the look the server offers: how far it has been fetched, and the way to
 /// play on without it.

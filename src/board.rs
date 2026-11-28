@@ -56,6 +56,7 @@ use crate::sounds::Cue;
 use crate::table::Table;
 use crate::tints::{self, Tinted};
 use crate::trays;
+use crate::warm::{self, Warm};
 
 pub struct BoardPlugin;
 
@@ -4928,6 +4929,131 @@ fn drop_pieces(
     }
 }
 
+/// Keeps a warm board (`warm.rs`) in the scene, so that a board opened draws its wood and its
+/// pieces in the first frame it is seen.
+pub struct WarmBoardsPlugin;
+
+impl Plugin for WarmBoardsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, warm_boards);
+    }
+}
+
+/// Puts a warm board in the scene, if none is yet, once the client is between games: a board's
+/// wood, and each kind of piece of every look and of the standard one, made as a board makes
+/// them (`Tools`), each model's parts in each material a seat's pieces of it are. Not while a
+/// game is open or about to be at start-up, whose own pipelines would wait behind these; it is
+/// done when the player leaves it. Nor before the sky's light has loaded, which every pipeline
+/// is made again for. See-through pieces and the highlight are left to be made when first
+/// shown.
+fn warm_boards(
+    mut commands: Commands,
+    mut drawing: Drawing,
+    watch: Res<WatchStatus>,
+    on_start: Option<Res<crate::game_panel::WatchOnStart>>,
+    skies: Query<&EnvironmentMapLight, With<Camera3d>>,
+    images: Res<Assets<Image>>,
+    warm: Query<&Warm>,
+) {
+    let lit = |sky: &EnvironmentMapLight| {
+        images.contains(&sky.diffuse_map) && images.contains(&sky.specular_map)
+    };
+    if warm::has(&warm, Warm::Boards)
+        || watch.target.is_some()
+        || on_start.is_some_and(|s| s.is_pending())
+        || !skies.iter().any(lit)
+    {
+        return;
+    }
+    let Drawing {
+        meshes,
+        materials,
+        server,
+        appearances,
+        wood,
+        ..
+    } = &mut drawing;
+    let mut drawn: Vec<(Handle<Mesh>, Handle<StandardMaterial>)> = Vec::new();
+    for look in std::iter::once(None).chain(appearances.0.iter().map(Some)) {
+        let mut tools = Tools {
+            server,
+            meshes,
+            materials,
+            look,
+            wood: wood.0,
+            woodwork: Vec::new(),
+        };
+        if look.is_none() {
+            // The board: its top, sides and lines are all of one wood, on meshes alike.
+            let outline = slab::grown(&slab::hull(&[Vec2::ZERO, Vec2::X, Vec2::Y]), 0.1, 6);
+            let rim = Rim {
+                height: BOARD_HEIGHT,
+                radius: RIM_RADIUS,
+                steps: 5,
+            };
+            let top = look::world_uvs(slab::top(&outline, &rim), Vec3::ZERO);
+            drawn.push((tools.meshes.add(top), tools.material(&look::board())));
+        }
+        let seats: Vec<Handle<StandardMaterial>> = std::iter::once("")
+            .chain(
+                look.into_iter()
+                    .flat_map(|l| l.seats.keys().map(String::as_str)),
+            )
+            .enumerate()
+            .map(|(seat, color)| {
+                let spec = tools.piece_material(color, seat as u32 + 1);
+                tools.material(&spec)
+            })
+            .collect();
+        let kits: Vec<PieceKit> = std::iter::once(None)
+            .chain(look.into_iter().flat_map(|l| l.pieces.values().map(Some)))
+            .map(|piece| tools.piece_kit(piece))
+            .collect();
+        for kit in kits {
+            if let Some(sides) = &kit.sides {
+                for material in &sides.solid {
+                    drawn.push((kit.mesh.clone(), material.clone()));
+                    drawn.push((sides.under.clone(), material.clone()));
+                }
+                continue;
+            }
+            let own = kit.material.clone().map(|m| vec![m]);
+            for material in own.unwrap_or_else(|| seats.clone()) {
+                for part in &kit.parts {
+                    let made = part.own.iter().chain(part.seats.values());
+                    drawn.extend(made.map(|m| (part.mesh.clone(), m.solid.clone())));
+                    drawn.push((part.mesh.clone(), material.clone()));
+                }
+                drawn.push((kit.mesh.clone(), material));
+            }
+        }
+    }
+    // One of each pipeline: a mesh (its vertex attributes) with a kind of material.
+    let mut made = Vec::new();
+    let whole = warm::whole(&mut commands, Warm::Boards);
+    for (mesh, material) in drawn {
+        let Some(m) = materials.get(&material) else {
+            continue;
+        };
+        let kind = (
+            mesh.id(),
+            bevy::pbr::StandardMaterialKey::from(m).bits(),
+            std::mem::discriminant(&m.alpha_mode),
+        );
+        if made.contains(&kind) {
+            continue;
+        }
+        made.push(kind);
+        commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::default(),
+            Pickable::IGNORE,
+            ChildOf(whole),
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8955,5 +9081,107 @@ piece = "ring"
             "points far and near: {size}"
         );
         assert!(lo.y.abs() < 1e-5 && (hi.y - 0.1).abs() < 1e-5);
+    }
+}
+
+#[cfg(test)]
+mod warm_tests {
+    use super::*;
+    use crate::net::Target;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), WarmBoardsPlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<Image>()
+            .insert_resource(Appearances::built_in())
+            .init_resource::<BoardWood>()
+            .init_resource::<WatchStatus>();
+        app
+    }
+
+    /// A camera lit by a sky whose maps have loaded.
+    fn sky(app: &mut App) {
+        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+        let (diffuse_map, specular_map) =
+            (images.add(Image::default()), images.add(Image::default()));
+        app.world_mut().spawn((
+            Camera3d::default(),
+            EnvironmentMapLight {
+                diffuse_map,
+                specular_map,
+                ..default()
+            },
+        ));
+    }
+
+    fn warm(app: &mut App) -> Vec<(Handle<Mesh>, StandardMaterial)> {
+        let world = app.world_mut();
+        let mut parts = world.query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &ChildOf)>();
+        let mut wholes = world.query::<(Entity, &Warm, &Transform)>();
+        let wholes: Vec<Entity> = wholes
+            .iter(world)
+            .filter(|(_, w, t)| **w == Warm::Boards && t.scale.max_element() < 1.0e-3)
+            .map(|(e, ..)| e)
+            .collect();
+        let materials = world.resource::<Assets<StandardMaterial>>();
+        parts
+            .iter(world)
+            .filter(|(.., parent)| wholes.contains(&parent.parent()))
+            .map(|(mesh, material, _)| {
+                (mesh.0.clone(), materials.get(&material.0).unwrap().clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_warm_board_is_made_of_a_boards_own_wood_and_pieces_between_games() {
+        let mut app = app();
+        app.world_mut().resource_mut::<WatchStatus>().target = Some(Target::Room("AB12CD".into()));
+        app.update();
+        app.update();
+        assert!(warm(&mut app).is_empty(), "not while a game is open");
+
+        app.world_mut().resource_mut::<WatchStatus>().target = None;
+        app.update();
+        app.update();
+        assert!(warm(&mut app).is_empty(), "not before the sky's light");
+
+        sky(&mut app);
+        app.update();
+        app.update();
+        let found = warm(&mut app);
+        // The board's wood, on a mesh with the second set of coordinates its relief is read
+        // from: a pipeline of its own, which a stone's mesh would not have warmed.
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        assert!(found.iter().any(|(mesh, m)| {
+            m.normal_map_channel == bevy::mesh::UvChannel::Uv1
+                && meshes
+                    .get(mesh)
+                    .is_some_and(|mesh| mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some())
+        }));
+        // Pieces of more than one kind of material, but each kind once on each mesh.
+        let kinds: Vec<_> = found
+            .iter()
+            .map(|(mesh, m)| (mesh.id(), bevy::pbr::StandardMaterialKey::from(m).bits()))
+            .collect();
+        assert!(kinds.len() > 2, "{}", kinds.len());
+        assert!(
+            kinds
+                .iter()
+                .enumerate()
+                .all(|(i, k)| !kinds[..i].contains(k)),
+            "each once"
+        );
+        assert!(found.iter().all(|(_, m)| m.alpha_mode == AlphaMode::Opaque));
+
+        // Not again when the player opens a game and leaves it.
+        let before = found.len();
+        app.world_mut().resource_mut::<WatchStatus>().target = Some(Target::Room("AB12CD".into()));
+        app.update();
+        app.world_mut().resource_mut::<WatchStatus>().target = None;
+        app.update();
+        assert_eq!(warm(&mut app).len(), before);
     }
 }
