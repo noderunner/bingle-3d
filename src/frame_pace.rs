@@ -59,9 +59,28 @@ impl FrameTime {
     }
 }
 
-/// The run's limit: the command line's, else the config's, else the default.
-pub fn chosen(cli: Option<u32>, kept: Option<u32>) -> u32 {
-    cli.or(kept).unwrap_or(DEFAULT_MAX_FPS)
+/// The limits the settings step through, the monitor's pace (0) last.
+pub const LIMITS: [u32; 4] = [30, 60, 120, 0];
+
+/// The limit after this one: the next of `LIMITS` above it, the first after the monitor's pace.
+/// A limit that is not one of them (`config.toml` takes any) goes to the next above.
+pub fn next_limit(current: u32) -> u32 {
+    let rank = |fps: u32| if fps == 0 { u32::MAX } else { fps };
+    LIMITS
+        .into_iter()
+        .find(|l| rank(*l) > rank(current))
+        .unwrap_or(LIMITS[0])
+}
+
+/// The run's limit: the command line's, else the config's (not in a run a script limits, which
+/// takes no setting from it), else the default.
+pub fn chosen(cli: Option<u32>, limited: bool, kept: Option<u32>) -> u32 {
+    cli.or(kept.filter(|_| !limited)).unwrap_or(DEFAULT_MAX_FPS)
+}
+
+/// Frames a second as a limit is spoken of: none for the monitor's pace.
+pub fn fps(time: FrameTime) -> u32 {
+    time.0.map_or(0, |d| (1.0 / d.as_secs_f64()).round() as u32)
 }
 
 /// When the frame after one ending `now` is due, given when this one was (`due`), and how long
@@ -83,6 +102,8 @@ pub struct FramePacePlugin {
     pub max_fps: Option<u32>,
     /// `--vr-refresh`, which comes before the config's.
     pub vr_refresh_rate: Option<u32>,
+    /// A run a script limits (`--frames`, `--screenshot`): the config's limit is not used.
+    pub limited: bool,
     /// Drawing in a headset, which sets the pace.
     pub in_headset: bool,
 }
@@ -99,7 +120,7 @@ impl Plugin for FramePacePlugin {
             app.insert_resource(HeadsetRate(rate.filter(|hz| *hz > 0)));
             return;
         }
-        let fps = chosen(self.max_fps, kept.max_fps);
+        let fps = chosen(self.max_fps, self.limited, kept.max_fps);
         info!(
             "drawing at most {}",
             if fps == 0 {
@@ -133,10 +154,33 @@ mod tests {
 
     #[test]
     fn the_command_line_comes_before_the_config_and_both_before_the_default() {
-        assert_eq!(chosen(None, None), 60);
-        assert_eq!(chosen(None, Some(30)), 30);
-        assert_eq!(chosen(Some(0), Some(30)), 0);
-        assert_eq!(chosen(Some(144), None), 144);
+        assert_eq!(chosen(None, false, None), 60);
+        assert_eq!(chosen(None, false, Some(30)), 30);
+        assert_eq!(chosen(Some(0), false, Some(30)), 0);
+        assert_eq!(chosen(Some(144), false, None), 144);
+    }
+
+    #[test]
+    fn a_run_a_script_limits_does_not_read_the_config_s_limit() {
+        assert_eq!(chosen(None, true, Some(30)), 60);
+        assert_eq!(chosen(Some(30), true, Some(0)), 30, "the command line does");
+    }
+
+    #[test]
+    fn the_settings_step_through_the_limits() {
+        assert_eq!(next_limit(30), 60);
+        assert_eq!(next_limit(60), 120);
+        assert_eq!(next_limit(120), 0);
+        assert_eq!(next_limit(0), 30);
+        assert_eq!(next_limit(75), 120, "a limit of the config's own");
+        assert_eq!(next_limit(144), 0);
+    }
+
+    #[test]
+    fn a_limit_is_spoken_of_in_frames_a_second() {
+        for fps_wanted in [30, 60, 120, 144, 0] {
+            assert_eq!(fps(FrameTime::from_fps(fps_wanted)), fps_wanted);
+        }
     }
 
     #[test]
@@ -164,6 +208,7 @@ mod tests {
             .add_plugins(FramePacePlugin {
                 max_fps: None,
                 vr_refresh_rate: None,
+                limited: false,
                 in_headset: true,
             });
         assert!(app.world().get_resource::<FrameTime>().is_none());
@@ -177,6 +222,7 @@ mod tests {
             .add_plugins(FramePacePlugin {
                 max_fps: None,
                 vr_refresh_rate: Some(0),
+                limited: false,
                 in_headset: true,
             });
         assert_eq!(*app.world().resource::<HeadsetRate>(), HeadsetRate(None));
@@ -235,6 +281,7 @@ mod tests {
             .add_plugins(FramePacePlugin {
                 max_fps: None,
                 vr_refresh_rate: None,
+                limited: false,
                 in_headset: false,
             });
         assert!(app.world().get_resource::<HeadsetRate>().is_none());

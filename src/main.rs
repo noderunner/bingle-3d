@@ -32,6 +32,7 @@ mod frame_pace;
 mod friends;
 mod game_panel;
 mod gpu_memory;
+mod graphics;
 mod hand;
 mod highlight;
 mod hud;
@@ -272,9 +273,15 @@ fn main() -> AppExit {
         limited: opts.last_frame().is_some(),
         in_headset,
     });
+    app.add_plugins(graphics::GraphicsPlugin {
+        limited: opts.last_frame().is_some(),
+        no_bloom: opts.no_bloom,
+        in_headset,
+    });
     app.add_plugins(frame_pace::FramePacePlugin {
         max_fps: opts.max_fps,
         vr_refresh_rate: opts.vr_refresh_rate,
+        limited: opts.last_frame().is_some(),
         in_headset,
     });
     app.insert_resource(scene::BloomOn(!opts.no_bloom && !in_headset))

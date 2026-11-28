@@ -216,12 +216,22 @@ A game's own rules and its players' words keep their terms.
   name; a choice is labelled in the view's words where it has them (`Position::choice_words`).
 - `src/escape_menu.rs`: the menu Esc opens over a game or the main screen (resume, back to the
   main screen, settings, logout to the login screen, quit; game options and profile greyed). While it is open, play's keys and the camera
-  stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display.
+  stand aside (`escape_menu::closed`). Its *Settings* page (`Page::Settings`) sets the display, and leads to *Graphics*
+  (`Page::Graphics`), a row for each effect that steps to its next value, and the frame limit.
 - `src/display.rs`: fullscreen (the default: borderless at the desktop's resolution) or a
   window, and the resolution (`DisplaySettings`; `offered`, `mode_for` and `window_mode` have no
   Bevy systems in them), kept as `fullscreen` and `resolution` in `config.toml`. A run limited
   by `--frames` or `--screenshot` is a 1280×720 window unless `--fullscreen`; a headset leaves
   the window alone.
+- `src/graphics.rs`: which effects the flat cameras and the sun have (`Graphics`: ambient
+  occlusion, anti-aliasing, depth of field, bloom, shadows, contact shadows), the *Graphics*
+  page's to change (`Graphics::cycle`; MSAA turns ambient occlusion off, since neither it nor TAA
+  goes with MSAA), kept in `config.toml` as `ambient_occlusion`, `anti_aliasing`, `depth_of_field`,
+  `bloom`, `shadows` and `contact_shadows`. `scene::set_effects` puts them on a camera and takes
+  them off, `scene::retune` and `tune_sun` again at once on a change, and bloom's flips
+  `scene::BloomOn`. A run limited by `--frames` or `--screenshot` has the defaults whatever is
+  kept, and `--no-bloom` bloom off; a headset's eyes are never touched (`HeadsetRun`: the page is
+  greyed there). **A new effect is a field, a row of the page and an arm in `set_effects`.**
 - `src/new_game.rs`: the form that sets up a new game (seats, bots, time, whether it waits for the
   player's start), drawn on the list panel in place of the lists while it is open; `Form` has no
   Bevy in it.
@@ -580,7 +590,8 @@ A game's own rules and its players' words keep their terms.
   is slow, run it with `--frame-times` on the maintainer's desktop before changing the
   scene**: under gamescope the same build may be fast.
 - `src/frame_pace.rs`: the most frames a second the window draws (60 by default; `max_fps` in
-  `config.toml`, `--max-fps`): each frame ends waiting for the next to be due. Not in a headset,
+  `config.toml`, `--max-fps`; stepped by *Settings, Graphics*, `next_limit`; a run a script limits
+  ignores the config's): each frame ends waiting for the next to be due. Not in a headset,
   whose runtime paces it to the headset's display: there `vr_refresh_rate` (`--vr-refresh`) is
   the rate asked of the headset itself (`HeadsetRate`, asked by `vr.rs` as the session starts,
   where the runtime has `XR_FB_display_refresh_rate`), never the PC monitor's.

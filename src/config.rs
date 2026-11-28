@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::graphics::Graphics;
+
 /// Where the client looks first, which is what `cargo run` on Bingle's defaults needs.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8080";
 
@@ -51,6 +53,26 @@ pub struct Config {
     /// the desktop's (in a window, the player's sizing) when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
+    /// How much ambient occlusion darkens the creases: `off`, `low` or `high` (`graphics.rs`);
+    /// `high` when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ambient_occlusion: Option<String>,
+    /// How edges are smoothed: `off`, `fxaa`, `smaa`, `taa` or `msaa`; `taa` when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anti_aliasing: Option<String>,
+    /// Whether the far side of the table is softened; true when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_of_field: Option<bool>,
+    /// Whether the highlights glow; true when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<bool>,
+    /// How sharp the sun's shadows are: `off`, `low`, `medium` or `high`; `medium` when there
+    /// is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadows: Option<String>,
+    /// Whether the shadows under a stone and in a cut line are drawn; true when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_shadows: Option<bool>,
     /// The display rate to ask a headset for, in Hz (72, 90, 120…), where its runtime lets the
     /// client choose; the runtime's own when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,6 +214,52 @@ impl Store {
         }
         self.config.fullscreen = Some(fullscreen);
         self.config.resolution = resolution;
+        self.save_config()
+    }
+
+    /// Remembers which effects are on (`graphics.rs`). With `keep_bloom`, whether it blooms is
+    /// left as it was kept: a run started with `--no-bloom` has it off for the run only.
+    pub fn remember_graphics(&mut self, graphics: &Graphics, keep_bloom: bool) -> io::Result<()> {
+        let bloom = if keep_bloom {
+            self.config.bloom
+        } else {
+            Some(graphics.bloom)
+        };
+        let [ambient_occlusion, anti_aliasing, shadows] = graphics.names().map(|n| Some(n.into()));
+        let kept = (
+            &ambient_occlusion,
+            &anti_aliasing,
+            &Some(graphics.depth_of_field),
+            &bloom,
+            &shadows,
+            &Some(graphics.contact_shadows),
+        );
+        let now = (
+            &self.config.ambient_occlusion,
+            &self.config.anti_aliasing,
+            &self.config.depth_of_field,
+            &self.config.bloom,
+            &self.config.shadows,
+            &self.config.contact_shadows,
+        );
+        if kept == now {
+            return Ok(());
+        }
+        self.config.ambient_occlusion = ambient_occlusion;
+        self.config.anti_aliasing = anti_aliasing;
+        self.config.depth_of_field = Some(graphics.depth_of_field);
+        self.config.bloom = bloom;
+        self.config.shadows = shadows;
+        self.config.contact_shadows = Some(graphics.contact_shadows);
+        self.save_config()
+    }
+
+    /// Remembers the most frames a second to draw, 0 for the monitor's pace.
+    pub fn remember_max_fps(&mut self, fps: u32) -> io::Result<()> {
+        if self.config.max_fps == Some(fps) {
+            return Ok(());
+        }
+        self.config.max_fps = Some(fps);
         self.save_config()
     }
 
@@ -380,6 +448,69 @@ mod tests {
         let again = Store::load(Some(tmp.0.clone()));
         assert_eq!(again.config.fullscreen, Some(true));
         assert_eq!(again.config.resolution, None);
+    }
+
+    #[test]
+    fn the_graphics_and_the_frame_limit_are_remembered() {
+        use crate::graphics::{AmbientOcclusion, AntiAliasing, Shadows};
+        let tmp = TempDir::new("graphics");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        assert_eq!(store.config.anti_aliasing, None);
+        let graphics = Graphics {
+            ambient_occlusion: AmbientOcclusion::Low,
+            anti_aliasing: AntiAliasing::Smaa,
+            depth_of_field: false,
+            bloom: false,
+            shadows: Shadows::High,
+            contact_shadows: false,
+        };
+        store.remember_graphics(&graphics, false).unwrap();
+        store.remember_max_fps(0).unwrap();
+        let again = Store::load(Some(tmp.0.clone()));
+        let c = &again.config;
+        let (read, problems) = Graphics::read(
+            c.ambient_occlusion.as_deref(),
+            c.anti_aliasing.as_deref(),
+            c.depth_of_field,
+            c.bloom,
+            c.shadows.as_deref(),
+            c.contact_shadows,
+        );
+        assert!(problems.is_empty());
+        assert_eq!(read, graphics);
+        assert_eq!(c.max_fps, Some(0));
+        let text = fs::read_to_string(tmp.0.join("config.toml")).unwrap();
+        assert!(text.contains("anti_aliasing = \"smaa\""), "{text}");
+        assert!(text.contains("bloom = false"), "{text}");
+    }
+
+    #[test]
+    fn a_bloom_held_back_is_left_as_it_was_kept() {
+        let tmp = TempDir::new("bloom");
+        let mut store = Store::load(Some(tmp.0.clone()));
+        let off = Graphics {
+            bloom: false,
+            ..Graphics::default()
+        };
+        // Nothing kept: another row's change leaves bloom unwritten.
+        store.remember_graphics(&off, true).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, None);
+        assert_eq!(
+            Store::load(Some(tmp.0.clone()))
+                .config
+                .anti_aliasing
+                .as_deref(),
+            Some("taa"),
+            "the rest is kept"
+        );
+        // Kept on: stays on.
+        store
+            .remember_graphics(&Graphics::default(), false)
+            .unwrap();
+        store.remember_graphics(&off, true).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, Some(true));
+        store.remember_graphics(&off, false).unwrap();
+        assert_eq!(Store::load(Some(tmp.0.clone())).config.bloom, Some(false));
     }
 
     #[test]

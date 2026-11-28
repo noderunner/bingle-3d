@@ -13,6 +13,10 @@
 //! - a little bloom on the brightest highlights, unless it is turned off (`BloomOn`);
 //! - a shallow depth of field, focused where the orbit camera looks.
 //!
+//! Which of these there are, and the sun's shadows, are the player's to choose (`graphics.rs`):
+//! `set_effects` puts them on a camera and takes them off, and `retune` does so again at once
+//! when the choice changes. A headset's eyes are left as they are.
+//!
 //! A model is drawn node by node from its glTF file, which has no materials of its own: each
 //! part's material is named for one in the environment's file. So a texture is loaded once
 //! through `textures.rs`, which gives it mipmaps, and a look is changed by editing data.
@@ -21,17 +25,25 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bevy::anti_alias::fxaa::Fxaa;
+use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
-use bevy::camera::Exposure;
+use bevy::camera::{Exposure, Hdr};
+use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
-use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster, ShadowFilteringMethod, Skybox};
+use bevy::light::{
+    CascadeShadowConfigBuilder, DirectionalLightShadowMap, NotShadowCaster, ShadowFilteringMethod,
+    Skybox,
+};
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::{Bloom, BloomPrefilter};
 use bevy::post_process::dof::{DepthOfField, DepthOfFieldMode};
 use bevy::prelude::*;
+use bevy::render::camera::{MipBias, TemporalJitter};
 
 use crate::camera::{OrbitCamera, Reach};
 use crate::environment::{self, Chosen, Environments};
+use crate::graphics::{AmbientOcclusion, AntiAliasing, Graphics, HeadsetRun};
 use crate::net::WatchStatus;
 use crate::{assets, look};
 
@@ -46,11 +58,20 @@ impl Plugin for ScenePlugin {
         })
         .init_resource::<Built>()
         .init_resource::<BloomOn>()
+        .init_resource::<Graphics>()
+        .init_resource::<DirectionalLightShadowMap>()
         .add_systems(
             Update,
             (
                 build_environment.run_if(resource_changed::<Chosen>),
                 light_cameras,
+                (
+                    retune,
+                    tune_sun,
+                    // A headset's eyes never bloom, whatever was chosen.
+                    sync_bloom.run_if(not(resource_exists::<HeadsetRun>)),
+                )
+                    .run_if(resource_changed::<Graphics>),
                 focus_on_orbit,
                 spawn_model,
                 lay_seats,
@@ -71,6 +92,11 @@ impl Default for BloomOn {
     fn default() -> Self {
         BloomOn(true)
     }
+}
+
+/// Makes the glow's tuning (`BloomOn`) follow the choice of whether the cameras bloom.
+fn sync_bloom(graphics: Res<Graphics>, mut bloom_on: ResMut<BloomOn>) {
+    bloom_on.set_if_neq(BloomOn(graphics.bloom));
 }
 
 /// Only what is brighter than white glows (a highlight on a stone), so nothing else is veiled.
@@ -136,6 +162,7 @@ fn srgb([r, g, b]: [f32; 3]) -> Color {
 fn build_environment(
     mut commands: Commands,
     chosen: Res<Chosen>,
+    graphics: Res<Graphics>,
     all: Res<Environments>,
     server: Res<AssetServer>,
     mut built: ResMut<Built>,
@@ -171,9 +198,9 @@ fn build_environment(
         DirectionalLight {
             illuminance: env.sun.illuminance,
             color: env.sun.color.map_or(Color::WHITE, srgb),
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: graphics.shadows.map_size().is_some(),
             // The shadows the shadow map is too coarse for: under a stone, in a cut line.
-            contact_shadows_enabled: true,
+            contact_shadows_enabled: graphics.contact_shadows,
             // Bevy's default bias (2 cm) is larger than our pieces: at table scale it hides
             // every shadow they would cast.
             shadow_depth_bias: 0.002,
@@ -237,7 +264,7 @@ fn light_cameras(
     chosen: Res<Chosen>,
     all: Res<Environments>,
     server: Res<AssetServer>,
-    bloom_on: Res<BloomOn>,
+    graphics: Res<Graphics>,
     cameras: Query<CameraToLight, (With<Camera3d>, Without<Apart>)>,
 ) {
     let Some(env) = all.chosen(&chosen) else {
@@ -274,26 +301,8 @@ fn light_cameras(
         if headset {
             commands.entity(camera).insert(Msaa::Sample4);
         } else {
-            if bloom_on.0 {
-                commands.entity(camera).insert(bloom());
-            }
-            commands.entity(camera).insert((
-                Msaa::Off,
-                TemporalAntiAliasing::default(),
-                ShadowFilteringMethod::Temporal,
-                ScreenSpaceAmbientOcclusion {
-                    quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
-                    // At table scale: a stone, a cut line, the board's edge.
-                    radius: 0.02,
-                    constant_object_thickness: 0.004,
-                },
-                DepthOfField {
-                    mode: DepthOfFieldMode::Gaussian,
-                    focal_distance: orbit.map_or(0.75, |o| o.radius),
-                    aperture_f_stops: env.camera.f_stops.unwrap_or(F_STOPS),
-                    ..default()
-                },
-            ));
+            let focal = orbit.map_or(0.75, |o| o.radius);
+            set_effects(&mut commands, camera, &graphics, focal, f_stops(env));
         }
         match &env.sky.backdrop {
             Some(file) => {
@@ -306,6 +315,141 @@ fn light_cameras(
             None => {
                 commands.entity(camera).remove::<Skybox>();
             }
+        }
+    }
+}
+
+/// The lens's aperture for this environment.
+fn f_stops(env: &environment::Environment) -> f32 {
+    env.camera.f_stops.unwrap_or(F_STOPS)
+}
+
+/// Puts on a flat camera the effects chosen, and takes off the others, with what each needs
+/// (a prepass) or leaves behind (a jitter): each is added or removed whole, so a camera with
+/// the defaults has what it has always had. MSAA is on only as the anti-aliasing, and the
+/// shadows are filtered over time only with TAA.
+fn set_effects(
+    commands: &mut Commands,
+    camera: Entity,
+    graphics: &Graphics,
+    focal_distance: f32,
+    aperture_f_stops: f32,
+) {
+    let mut camera = commands.entity(camera);
+    let aa = graphics.anti_aliasing;
+    camera.insert((
+        if aa == AntiAliasing::Msaa {
+            Msaa::Sample4
+        } else {
+            Msaa::Off
+        },
+        if graphics.temporal() {
+            ShadowFilteringMethod::Temporal
+        } else {
+            ShadowFilteringMethod::Gaussian
+        },
+    ));
+    // Without bloom the camera has no high dynamic range target either, as `--no-bloom` has
+    // always drawn it.
+    if graphics.bloom {
+        camera.insert(bloom());
+    } else {
+        camera.remove::<(Bloom, Hdr)>();
+    }
+    match graphics.ambient_occlusion {
+        AmbientOcclusion::Off => {
+            camera.remove::<(ScreenSpaceAmbientOcclusion, NormalPrepass)>();
+        }
+        level => {
+            camera.insert(ScreenSpaceAmbientOcclusion {
+                quality_level: match level {
+                    AmbientOcclusion::Low => ScreenSpaceAmbientOcclusionQualityLevel::Low,
+                    _ => ScreenSpaceAmbientOcclusionQualityLevel::High,
+                },
+                // At table scale: a stone, a cut line, the board's edge.
+                radius: 0.02,
+                constant_object_thickness: 0.004,
+            });
+        }
+    }
+    if graphics.temporal() {
+        camera.insert(TemporalAntiAliasing::default());
+    } else {
+        camera.remove::<(
+            TemporalAntiAliasing,
+            TemporalJitter,
+            MipBias,
+            MotionVectorPrepass,
+        )>();
+    }
+    if !graphics.wants_depth() {
+        camera.remove::<DepthPrepass>();
+    }
+    if aa == AntiAliasing::Fxaa {
+        camera.insert(Fxaa::default());
+    } else {
+        camera.remove::<Fxaa>();
+    }
+    if aa == AntiAliasing::Smaa {
+        camera.insert(Smaa::default());
+    } else {
+        camera.remove::<Smaa>();
+    }
+    if graphics.depth_of_field {
+        camera.insert(DepthOfField {
+            mode: DepthOfFieldMode::Gaussian,
+            focal_distance,
+            aperture_f_stops,
+            ..default()
+        });
+    } else {
+        camera.remove::<DepthOfField>();
+    }
+}
+
+/// A camera that has the effects chosen: lit, and neither a headset's eye nor the pointer's.
+type FlatCamera = (
+    With<Camera3d>,
+    With<LitFor>,
+    Without<Apart>,
+    Without<Headset>,
+);
+
+/// Gives the cameras already lit the effects as they are chosen now.
+fn retune(
+    mut commands: Commands,
+    graphics: Res<Graphics>,
+    chosen: Res<Chosen>,
+    all: Res<Environments>,
+    cameras: Query<(Entity, Option<&OrbitCamera>), FlatCamera>,
+) {
+    let Some(env) = all.chosen(&chosen) else {
+        return;
+    };
+    for (camera, orbit) in &cameras {
+        let focal = orbit.map_or(0.75, |o| o.radius);
+        set_effects(&mut commands, camera, &graphics, focal, f_stops(env));
+    }
+}
+
+/// Gives the sun the shadows chosen: none, or a shadow map of a size, and contact shadows.
+fn tune_sun(
+    graphics: Res<Graphics>,
+    mut map: ResMut<DirectionalLightShadowMap>,
+    mut suns: Query<&mut DirectionalLight, With<Part>>,
+) {
+    if let Some(size) = graphics.shadows.map_size()
+        && map.size != size
+    {
+        map.size = size;
+    }
+    for mut sun in &mut suns {
+        let shadows = graphics.shadows.map_size().is_some();
+        if sun.shadow_maps_enabled != shadows {
+            sun.shadow_maps_enabled = shadows;
+        }
+        if sun.contact_shadows_enabled != graphics.contact_shadows {
+            sun.contact_shadows_enabled = graphics.contact_shadows;
         }
     }
 }
@@ -510,6 +654,7 @@ pub fn lit_for(world: &World, camera: Entity) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graphics::Shadows;
     use crate::net::api::{Board, Game, GameInfo, GameState, SeatDef};
     use crate::net::session::Opened;
     use crate::table::Table;
@@ -642,6 +787,239 @@ mod tests {
         assert!(world.get::<ScreenSpaceAmbientOcclusion>(eye).is_none());
         assert!(world.get::<DepthOfField>(eye).is_none());
         assert_eq!(world.get::<Msaa>(eye), Some(&Msaa::Sample4));
+    }
+
+    /// The effects a flat camera has, as names, for comparing.
+    fn effects_of(app: &App, camera: Entity) -> Vec<&'static str> {
+        let w = app.world();
+        let mut has = Vec::new();
+        let mut note = |name, yes: bool| {
+            if yes {
+                has.push(name)
+            }
+        };
+        note("taa", w.get::<TemporalAntiAliasing>(camera).is_some());
+        note("jitter", w.get::<TemporalJitter>(camera).is_some());
+        note("mip", w.get::<MipBias>(camera).is_some());
+        note("motion", w.get::<MotionVectorPrepass>(camera).is_some());
+        note("depth", w.get::<DepthPrepass>(camera).is_some());
+        note("normals", w.get::<NormalPrepass>(camera).is_some());
+        note(
+            "ssao",
+            w.get::<ScreenSpaceAmbientOcclusion>(camera).is_some(),
+        );
+        note("dof", w.get::<DepthOfField>(camera).is_some());
+        note("bloom", w.get::<Bloom>(camera).is_some());
+        note("hdr", w.get::<Hdr>(camera).is_some());
+        note("fxaa", w.get::<Fxaa>(camera).is_some());
+        note("smaa", w.get::<Smaa>(camera).is_some());
+        has
+    }
+
+    fn settle(app: &mut App) {
+        app.update();
+        app.update();
+    }
+
+    #[test]
+    fn by_default_a_camera_has_what_it_has_always_had() {
+        let mut app = app(environment::DEFAULT);
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        settle(&mut app);
+        assert_eq!(
+            effects_of(&app, camera),
+            [
+                "taa", "jitter", "mip", "motion", "depth", "normals", "ssao", "dof", "bloom", "hdr"
+            ]
+        );
+        let world = app.world();
+        assert_eq!(world.get::<Msaa>(camera), Some(&Msaa::Off));
+        assert_eq!(
+            world.get::<ShadowFilteringMethod>(camera),
+            Some(&ShadowFilteringMethod::Temporal)
+        );
+        let ssao = world.get::<ScreenSpaceAmbientOcclusion>(camera).unwrap();
+        assert_eq!(
+            ssao.quality_level,
+            ScreenSpaceAmbientOcclusionQualityLevel::High
+        );
+        assert!(world.resource::<BloomOn>().0);
+        let sun = app
+            .world_mut()
+            .query::<&DirectionalLight>()
+            .single(app.world())
+            .unwrap();
+        assert!(sun.shadow_maps_enabled && sun.contact_shadows_enabled);
+        assert_eq!(
+            app.world().resource::<DirectionalLightShadowMap>().size,
+            2048
+        );
+    }
+
+    #[test]
+    fn a_change_of_graphics_is_made_to_the_camera_at_once() {
+        let mut app = app(environment::DEFAULT);
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        settle(&mut app);
+
+        // FXAA with no ambient occlusion, depth of field or bloom: nothing of the rest is left
+        // behind, not the jitter, the prepasses nor the high dynamic range target.
+        *app.world_mut().resource_mut::<Graphics>() = Graphics {
+            ambient_occlusion: AmbientOcclusion::Off,
+            anti_aliasing: AntiAliasing::Fxaa,
+            depth_of_field: false,
+            bloom: false,
+            ..Graphics::default()
+        };
+        settle(&mut app);
+        assert_eq!(effects_of(&app, camera), ["fxaa"]);
+        let world = app.world();
+        assert_eq!(world.get::<Msaa>(camera), Some(&Msaa::Off));
+        assert_eq!(
+            world.get::<ShadowFilteringMethod>(camera),
+            Some(&ShadowFilteringMethod::Gaussian),
+            "filtered over time only with TAA"
+        );
+        assert!(!world.resource::<BloomOn>().0, "the glow is tuned for none");
+
+        // SMAA, and low ambient occlusion, which brings its prepasses.
+        *app.world_mut().resource_mut::<Graphics>() = Graphics {
+            ambient_occlusion: AmbientOcclusion::Low,
+            anti_aliasing: AntiAliasing::Smaa,
+            ..Graphics::default()
+        };
+        settle(&mut app);
+        assert_eq!(
+            effects_of(&app, camera),
+            ["depth", "normals", "ssao", "dof", "bloom", "hdr", "smaa"]
+        );
+        assert_eq!(
+            app.world()
+                .get::<ScreenSpaceAmbientOcclusion>(camera)
+                .unwrap()
+                .quality_level,
+            ScreenSpaceAmbientOcclusionQualityLevel::Low
+        );
+        assert!(app.world().resource::<BloomOn>().0);
+
+        // MSAA: four samples, and none of what needs it off.
+        *app.world_mut().resource_mut::<Graphics>() = Graphics {
+            anti_aliasing: AntiAliasing::Msaa,
+            ..Graphics::default()
+        }
+        .sanitized();
+        settle(&mut app);
+        assert_eq!(effects_of(&app, camera), ["dof", "bloom", "hdr"]);
+        assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Sample4));
+
+        // And back to the defaults: as at the start.
+        *app.world_mut().resource_mut::<Graphics>() = Graphics::default();
+        settle(&mut app);
+        assert_eq!(
+            effects_of(&app, camera),
+            [
+                "taa", "jitter", "mip", "motion", "depth", "normals", "ssao", "dof", "bloom", "hdr"
+            ]
+        );
+        assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Off));
+    }
+
+    #[test]
+    fn depth_of_field_is_focused_where_the_camera_looks_when_it_comes_back() {
+        let mut app = app(environment::DEFAULT);
+        let orbit = OrbitCamera {
+            radius: 1.3,
+            ..default()
+        };
+        let camera = app.world_mut().spawn((Camera3d::default(), orbit)).id();
+        settle(&mut app);
+        app.world_mut().resource_mut::<Graphics>().depth_of_field = false;
+        settle(&mut app);
+        assert!(app.world().get::<DepthOfField>(camera).is_none());
+        app.world_mut().resource_mut::<Graphics>().depth_of_field = true;
+        settle(&mut app);
+        let dof = app.world().get::<DepthOfField>(camera).unwrap();
+        assert_eq!(dof.focal_distance, 1.3);
+    }
+
+    #[test]
+    fn a_camera_made_after_a_change_has_the_effects_chosen() {
+        let mut app = app(environment::DEFAULT);
+        settle(&mut app);
+        app.world_mut().resource_mut::<Graphics>().anti_aliasing = AntiAliasing::Fxaa;
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        settle(&mut app);
+        assert!(effects_of(&app, camera).contains(&"fxaa"));
+        assert!(!effects_of(&app, camera).contains(&"taa"));
+    }
+
+    #[test]
+    fn a_headset_s_eyes_and_the_pointer_s_camera_are_left_as_they_are() {
+        let mut app = app(environment::DEFAULT);
+        let eye = app.world_mut().spawn((Camera3d::default(), Headset)).id();
+        let hand = app.world_mut().spawn((Camera3d::default(), Apart)).id();
+        settle(&mut app);
+        *app.world_mut().resource_mut::<Graphics>() = Graphics {
+            ambient_occlusion: AmbientOcclusion::Off,
+            anti_aliasing: AntiAliasing::Fxaa,
+            ..Graphics::default()
+        };
+        settle(&mut app);
+        assert_eq!(effects_of(&app, eye), Vec::<&str>::new());
+        assert_eq!(app.world().get::<Msaa>(eye), Some(&Msaa::Sample4));
+        assert_eq!(effects_of(&app, hand), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_headset_run_keeps_the_glow_tuned_for_none() {
+        let mut app = app(environment::DEFAULT);
+        app.insert_resource(HeadsetRun)
+            .insert_resource(BloomOn(false));
+        settle(&mut app);
+        assert!(!app.world().resource::<BloomOn>().0);
+        app.world_mut().resource_mut::<Graphics>().depth_of_field = false;
+        settle(&mut app);
+        assert!(
+            !app.world().resource::<BloomOn>().0,
+            "not turned on by a change"
+        );
+    }
+
+    #[test]
+    fn the_sun_s_shadows_follow_the_choice() {
+        let mut app = app(environment::DEFAULT);
+        settle(&mut app);
+        let sun = |app: &mut App| {
+            let light = app
+                .world_mut()
+                .query::<&DirectionalLight>()
+                .single(app.world())
+                .unwrap();
+            (light.shadow_maps_enabled, light.contact_shadows_enabled)
+        };
+        let size = |app: &App| app.world().resource::<DirectionalLightShadowMap>().size;
+        assert_eq!(sun(&mut app), (true, true));
+
+        *app.world_mut().resource_mut::<Graphics>() = Graphics {
+            shadows: Shadows::High,
+            contact_shadows: false,
+            ..Graphics::default()
+        };
+        settle(&mut app);
+        assert_eq!((sun(&mut app), size(&app)), ((true, false), 4096));
+
+        app.world_mut().resource_mut::<Graphics>().shadows = Shadows::Low;
+        settle(&mut app);
+        assert_eq!(size(&app), 1024);
+
+        app.world_mut().resource_mut::<Graphics>().shadows = Shadows::Off;
+        settle(&mut app);
+        assert_eq!(sun(&mut app), (false, false));
+
+        // A place chosen later is built as the shadows are chosen.
+        app.world_mut().resource_mut::<Chosen>().0 = "garden".into();
+        settle(&mut app);
+        assert_eq!(sun(&mut app), (false, false));
     }
 
     #[test]
