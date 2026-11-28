@@ -62,6 +62,7 @@ use crate::props::{self, CARD, CARD_SIZE};
 use crate::sounds::Cue;
 use crate::table::Table;
 use crate::vr_panels::InHeadset;
+use crate::warm::{self, Warm};
 
 pub struct CardTablePlugin;
 
@@ -654,30 +655,17 @@ fn deal_route(delay: f32) -> Route {
     }
 }
 
-/// A card too small to be seen, kept in the scene from the first frame a game has cards, so
-/// that the pipelines a card is drawn with are compiled before one is laid. Bevy compiles a
-/// pipeline on a thread the first time something is drawn with it and draws nothing with it
-/// meanwhile, but the depth prepass, whose pipeline is quick, has already written the card:
-/// the table behind it fails the depth test and its place shows the sky's clear color, black,
-/// for the several frames a pipeline with the contact shadows takes. The pipeline is not made
-/// again for the next card of the same kind, so a table laid later draws at once.
-#[derive(Component)]
-struct Warm;
-
-/// The size of a [`Warm`] card: under a pixel from any distance the camera goes.
-const WARM_SCALE: f32 = 1.0e-4;
-
-/// Puts the [`Warm`] cards in the scene if a game has cards and none are yet: one of each
-/// pipeline a card is drawn with (a face with a picture or plain paper, the back and the edge,
+/// Puts warm cards (`warm.rs`) in the scene from the first frame a game has cards, if none are
+/// yet: one of each pipeline a card is drawn with (a face with a picture or plain paper, the back and the edge,
 /// and each see-through).
 fn warm_cards(
     mut commands: Commands,
     server: Res<AssetServer>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     appearances: Res<Appearances>,
-    warm: Query<(), With<Warm>>,
+    warm: Query<&Warm>,
 ) {
-    if !warm.is_empty() || !appearances.0.iter().any(|a| a.cards.is_some()) {
+    if warm::has(&warm, Warm::Cards) || !appearances.0.iter().any(|a| a.cards.is_some()) {
         return;
     }
     let mut looks = Looks::new(&server, &mut materials);
@@ -701,14 +689,7 @@ fn warm_cards(
         ]);
     }
     for set in sets {
-        let whole = commands
-            .spawn((
-                Name::new("Warm card"),
-                Warm,
-                Transform::from_scale(Vec3::splat(WARM_SCALE)),
-                Visibility::default(),
-            ))
-            .id();
+        let whole = warm::whole(&mut commands, Warm::Cards);
         parts(&mut commands, &server, &set, whole, Pickable::IGNORE);
     }
 }
