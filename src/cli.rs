@@ -50,6 +50,8 @@ Options:
   --test-hand N      a made-up card game of three seats in place of a server's, you
                      holding N cards (for pictures of the hand; give it a --server
                      nobody listens on)
+  --test-deal        with --test-hand, the game at its start instead: from frame 60,
+                     the deck shuffled and N cards dealt to each seat (N up to 17)
   --vr               draw the table in a headset too, through OpenXR (only in a build
                      with the vr feature, which does so by itself when SteamVR is
                      already running). Home sits you at the table again
@@ -116,6 +118,8 @@ pub struct Options {
     pub showcase: bool,
     /// `--test-hand`: a made-up card game, the player holding this many cards.
     pub test_hand: Option<usize>,
+    /// `--test-deal`: that game at its start, shuffled and dealt.
+    pub test_deal: bool,
     /// Pictures for the showcase's cards, from files.
     pub card_face: Option<PathBuf>,
     pub card_back: Option<PathBuf>,
@@ -219,6 +223,7 @@ impl Options {
                     }
                     opts.test_hand = Some(n);
                 }
+                "--test-deal" => opts.test_deal = true,
                 "--card-face" => opts.card_face = Some(PathBuf::from(value("a picture's file")?)),
                 "--card-back" => opts.card_back = Some(PathBuf::from(value("a picture's file")?)),
                 "--talk" => opts.talk = Some(value("a friend's handle")?),
@@ -274,6 +279,13 @@ impl Options {
         }
         if opts.vr && opts.desktop {
             return Err("only one of --vr and --desktop".into());
+        }
+        match (opts.test_deal, opts.test_hand) {
+            (true, None) => return Err("--test-deal is for --test-hand".into()),
+            (true, Some(n)) if 3 * n > 52 => {
+                return Err("--test-deal deals 1 to 17 cards to each of three seats".into());
+            }
+            _ => {}
         }
         if (opts.card_face.is_some() || opts.card_back.is_some()) && !opts.showcase {
             return Err("--card-face and --card-back are for --showcase".into());
@@ -512,6 +524,13 @@ mod tests {
         );
         assert!(Options::parse(["--test-hand", "0"]).is_err());
         assert!(Options::parse(["--test-hand", "many"]).is_err());
+        assert!(
+            Options::parse(["--test-hand", "13", "--test-deal"])
+                .unwrap()
+                .test_deal
+        );
+        assert!(Options::parse(["--test-deal"]).is_err(), "nothing to deal");
+        assert!(Options::parse(["--test-hand", "18", "--test-deal"]).is_err());
         assert!(
             Options::parse(["--card-back=b.jpg"]).is_err(),
             "a picture with nothing to put it on"

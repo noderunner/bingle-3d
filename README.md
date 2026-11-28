@@ -261,6 +261,15 @@ the usual deck, without a server: to look at the hand along the bottom of the wi
 cargo run -- --test-hand 13 --server http://127.0.0.1:9 --frames 120 --screenshot hand.png
 ```
 
+With `--test-deal` the same game is at its start instead: the table bare until frame 60, then the
+deck shuffled and N cards (up to 17) dealt to each seat. In a run `--frames` limits, time goes on
+by a thirtieth of a second a frame, so a frame shows the same moment on any machine: the shuffle
+from frame 60 to 90, the deal after it.
+
+```sh
+cargo run -- --test-hand 13 --test-deal --server http://127.0.0.1:9 --frames 75 --screenshot riffle.png
+```
+
 **In a headset**: the place and the table at their real size, controllers that point and click,
 the login and main screens on a screen across the table, the game's panel beside it, a menu,
 and a keyboard. Build with the `vr` feature. A build with it starts in the headset by itself when

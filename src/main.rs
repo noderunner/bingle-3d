@@ -20,6 +20,7 @@ mod clock;
 mod config;
 mod coordinates;
 mod cursor;
+mod deal;
 mod display;
 mod downloads;
 mod drag;
@@ -303,7 +304,11 @@ fn main() -> AppExit {
         });
     }
     if let Some(cards) = opts.test_hand {
-        app.add_plugins(test_hand::TestHandPlugin(cards));
+        app.add_plugins(test_hand::TestHandPlugin {
+            cards,
+            deal: opts.test_deal,
+            scripted: opts.last_frame().is_some(),
+        });
     }
     // What a frame costs, for finding what is slow: the frame's time, and each pass of its
     // drawing as the processor and the graphics card took it.

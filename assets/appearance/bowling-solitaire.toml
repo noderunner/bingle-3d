@@ -4,9 +4,14 @@
 # Its cards lie on a cloth: the ten pins as a rack, the back row (a to d) farthest from the
 # player and j nearest; the three ball piles to the right, in line with j; the cards out of play
 # beyond them. A click on a pin chooses it, or lets it go; a click on a ball pile that knocks
-# down exactly the pins chosen throws it. The score sheet is the view's `bowling`.
+# down exactly the pins chosen throws it. The score sheet is the view's `bowling`. The deck is
+# shuffled and dealt from where the cards out of play go, empty at the start and clear of the
+# rack.
 
 games = ["bowling-solitaire"]
+
+[dealing]
+deck = "gone"
 
 [cards]
 # A play is pins, in any order the player picks them, then a ball.

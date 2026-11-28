@@ -433,7 +433,17 @@ A game's own rules and its players' words keep their terms.
   (`hud::BottomRight`), from `HandStrip`, which `card_table` fills with the cards that have
   come to rest at the near edge of the table (`Layout::lay_strip`), unseen there; a card that
   may be played is a button. `src/test_hand.rs`: `--test-hand N`, a made-up game of three
-  seats with N cards in the player's hand and no server, to look at it.
+  seats with N cards in the player's hand and no server, to look at it; with `--test-deal`
+  the same game at its start, dealt from frame 60, time going on a thirtieth of a second a
+  frame in a scripted run. `src/deal.rs`: a deck shuffled and dealt, for any card game, with
+  no Bevy systems in it: the riffle (`Deck::riffle`, every card face down), the order of a
+  deal round the piles (`rank`, `order`) and its pace (`step`: two seconds at the most), and
+  `Dealing`, the one under way. `card_table` shows them at a start seen (`deal_start`: the
+  deck at the look's `[dealing] deck`, the stock, an empty pile or the middle, `deck_of`) and
+  where one move carries several cards from one pile to several (`dealt_from`); `run_deal`
+  moves the cards of the shuffle (after the hand's carrying) and sets each off; a press, or
+  the next position, ends it at once (`cut_deal`), and that press's click is nobody's
+  (`Dealing::holds_clicks`).
   `src/card_table.rs`: a card game's cards on a cloth in place of its board (the board stands
   aside: `sync_board`), for a patience or a game whose look has `[cards]` (`on_table`), from
   the position's card zones (`Position::card_zones`: a declared game's own, else the view's
