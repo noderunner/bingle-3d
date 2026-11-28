@@ -517,8 +517,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   carried, and the turn is as it was before the press. A press and release that never leaves
   the space is the click it always was, a lifted piece put down included, and a piece lifted
   by a click is dragged on from where it hovers. The hints say a piece may be clicked or
-  dragged. Dragging from the bowls, the supply and the stock, and a Tak stack, follows (#99),
-  then a patience's cards (#100).
+  dragged. What lies beside the board, and a Tak stack, are dragged too (#99, below),
+  as are a patience's cards (#100).
 - **A piece part-way through a chain** (Fist's jumps) stands where it landed: on the last of
   the landings every selection still possible agrees on and the player has clicked, read from
   each selection's `path` (`Turn::legs`, `Turn::stands_at`), so a piece dropped or clicked on
@@ -635,6 +635,26 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   the panel), it is carried there from its column. Every tile is cut from the same place in the wood: one grain for all,
   for now. Any game whose view tints positions or counts a shared stock gets the same from a
   look of its own.
+- **What comes from a bowl, a supply or the stock may be dragged from it** (2026-11-27, #99;
+  `drag.rs`), so whatever a click takes up, a press and a move carry, in every game. A press on
+  a bowl, a seat's own supply, the bowl of fences or a tile of the stock (each a `drag::Source`)
+  becomes a drag when the pointer leaves it with the button down (read from picking's hover
+  map, since nothing there is a space): it is taken up as a click takes it, unless it is in
+  hand already, and held under the pointer. What already waits lifted over where it came from
+  is pressed there too, on itself or on its source (a click on it puts it back, as one on its
+  source does); the stone the turn holds by itself (Go's,
+  Hex's, Othello's) is carried from its bowl with nothing chosen. Let go over the board, it is
+  the click there (a fence goes on the side aimed at; a tile on a hex it may go on); anywhere
+  else, or where that click is refused, the turn is as it was before the press, and what was
+  taken up goes back. A press and release on it is still the click it was. The
+  wheel turns a stone carried into another of its pool. Amazons' arrow is not dragged: a press
+  on the amazon just landed would clash with the click there that takes its move back (the
+  maintainer). **A Tak stack** is carried whole by a press and a move, as a click picks it up
+  whole (`Turn::stack_at`: over its space, then over the last space one was dropped on), each
+  stone held as high over the lowest as it stands; the wheel still leaves some behind while
+  the button is down. Let go over the next space, it is one drop, as a click is, and what is
+  left hovers there (`Carry::Over`) to be pressed and carried on. A sweep that drops a stone on
+  every space crossed is not built.
 - A piece whose moves do not have it clicked (Courtfall's unit, once activated: each of its
   selections says it moves from its hex, and is a click on where it goes, then what it does
   there) is picked up by a click on it (`Turn::unclicked_from`, `Turn::lifted`): it is lifted

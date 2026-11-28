@@ -89,6 +89,8 @@ pub struct Filled {
     pub color: String,
     pub stones: Handle<StandardMaterial>,
     pub choice: Option<crate::net::api::Gesture>,
+    /// Whether it is this client's seat's: the stone the turn holds by itself waits over it.
+    pub yours: bool,
 }
 
 /// Stands the bowls beside the board, as children of `root`: each seat's, in seat order. Says
@@ -143,6 +145,10 @@ pub fn spawn(
                     Pickable::default(),
                 )],
             ));
+            // A press on it may carry its stone, a choice or the turn's own (`drag.rs`).
+            if one.yours || one.choice.is_some() {
+                bowl.insert(crate::drag::Source);
+            }
             if let Some(choice) = one.choice {
                 bowl.insert(Choice(choice));
             }

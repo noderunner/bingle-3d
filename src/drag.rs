@@ -16,6 +16,15 @@
 //! escape menu while the button is down, and the turn is as it was before the press. A turn
 //! that ends, or a position that changes, ends a press without a click.
 //!
+//! What lies beside the board (a bowl, a seat's supply, the bowl of fences, the stock: a
+//! [`Source`]) is pressed the same way ([`Beside`]). The pointer leaving what was pressed with
+//! the button down takes up what a click there takes, unless it is in hand already (a stone
+//! lifted over its bowl, pressed there or on the stone; the stone the turn holds by itself,
+//! where nothing is chosen), and the board holds it under the pointer. Let go over the board,
+//! it is the click there (a fence on the side aimed at); anywhere else, or where the click is
+//! refused, the turn is as it was before the press. Let go without leaving, it is the click
+//! `play::on_click` makes.
+//!
 //! The pointer is Bevy's: the press is its `PointerPress` on the space, and the button let go is
 //! its `PointerInput`, so a headset's ray (`ray_pointer.rs`), whose trigger is the pointer's
 //! primary button, drags as the mouse does. Where the pointer is is the space it is over
@@ -29,12 +38,16 @@
 //! the click there; anywhere else the turn is as it was before the press ([`let_go_cards`]).
 
 use bevy::picking::events::PointerPress;
+use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::{PointerAction, PointerButton, PointerId, PointerInput};
 use bevy::prelude::*;
 
 use crate::escape_menu::{self, EscapeMenu};
+use crate::net::api::Gesture;
 use crate::net::{Net, WatchStatus};
-use crate::play::{self, Hovering, LineAim, Outcome, SideAim, Spot, Turn};
+use crate::play::{
+    self, Choice, Hovering, LineAim, Outcome, SideAim, Spot, TakeToPlace, TakeUp, Turn,
+};
 
 pub struct DragPlugin;
 
@@ -65,8 +78,16 @@ impl Drag {
     pub fn carried(&self) -> Option<&str> {
         self.0
             .as_ref()
-            .filter(|p| p.carrying)
+            .filter(|p| p.carrying && p.beside.is_none())
             .map(|p| p.spot.as_str())
+    }
+
+    /// Whether what waits in hand beside the board (over a bowl, a supply, the stock) is
+    /// carried under the pointer.
+    pub fn carried_beside(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|p| p.carrying && p.beside.is_some())
     }
 
     /// Whether the button is down after a press on the board, a drag or not yet.
@@ -128,6 +149,34 @@ pub struct Press {
     pub left: bool,
     /// Whether it carries the piece in hand at `spot` under the pointer.
     pub carrying: bool,
+    /// What lies beside the board, pressed instead of a space (`spot` is then empty).
+    pub beside: Option<Beside>,
+}
+
+/// What lies beside the board that a press may carry something from: a bowl, a seat's supply,
+/// the bowl of fences, a piece of the stock, and what waits in hand over them. The board marks
+/// them; a move card's choice is not one.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Source;
+
+/// A press on a [`Source`]: what was pressed, and what a click there takes up.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Beside {
+    pub entity: Entity,
+    pub takes: Takes,
+}
+
+/// What a click on a [`Source`] takes up, as `play::on_click` makes it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Takes {
+    /// A bowl's or a supply's choice (`play::Choice`).
+    Choice(Gesture),
+    /// Something a later click puts on a side (`play::TakeUp`).
+    TakeUp(Vec<Gesture>),
+    /// A piece a click on the board lays (`play::TakeToPlace`).
+    TakeToPlace(Vec<Gesture>),
+    /// Nothing: what waits in hand already, or the bowl of the stone the turn holds by itself.
+    InHand,
 }
 
 /// What letting the button go does.
@@ -168,6 +217,75 @@ pub fn let_go(
     }
 }
 
+/// What letting go of a press on what lies beside the board does, with the pointer `over` a
+/// space (or none). Let go without leaving it, it is `play::on_click`'s click, not this. Over
+/// a space a click puts what is carried on (`Turn::targets`), or anywhere on the board with a
+/// side `aimed` at for what is taken up, the click there; anywhere else, the turn as it was.
+pub fn let_go_beside(press: &Press, turn: Option<&Turn>, over: Option<&str>, aimed: bool) -> LetGo {
+    if !press.left || !press.carrying {
+        return LetGo::Nothing;
+    }
+    let puts = |t: &Turn, at: &str| t.targets().contains(at) || (aimed && t.taken().is_some());
+    match over {
+        Some(at) if turn.is_some_and(|t| puts(t, at)) => LetGo::Drop(at.to_string()),
+        _ => LetGo::Restore,
+    }
+}
+
+/// Whether what `takes` names is in hand already, so leaving it with the button down takes
+/// nothing more: the stone the turn holds by itself, the choice in hand, or what is taken up.
+fn in_hand(turn: &Turn, takes: &Takes) -> bool {
+    turn.auto_hand().is_some()
+        || match takes {
+            Takes::Choice(g) => turn.in_hand_choice() == Some(g),
+            Takes::TakeUp(c) | Takes::TakeToPlace(c) => turn
+                .taken()
+                .is_some_and(|t| t.iter().all(|g| c.contains(g))),
+            Takes::InHand => true,
+        }
+}
+
+/// Takes up what `takes` names, as a click on it does, unless it is in hand already. Whether
+/// anything waits in hand beside the board then, to carry.
+fn take_beside(net: &Net, watch: &mut ResMut<WatchStatus>, takes: &Takes) -> bool {
+    let Some(turn) = watch.turn.as_ref() else {
+        return false;
+    };
+    if !in_hand(turn, takes) {
+        let mut take = |f: &dyn Fn(&mut Turn) -> Outcome| {
+            if let Some(turn) = watch.bypass_change_detection().turn.as_mut()
+                && f(turn) != Outcome::Ignored
+            {
+                watch.set_changed();
+            }
+        };
+        match takes {
+            Takes::Choice(g) => {
+                play::gesture(net, watch, g);
+            }
+            Takes::TakeUp(c) => take(&|t| t.take_up(c)),
+            Takes::TakeToPlace(c) => take(&|t| t.take_to_place(c)),
+            Takes::InHand => {}
+        }
+    }
+    watch.turn.as_ref().is_some_and(|t| {
+        t.auto_hand().is_some() || t.in_hand_choice().is_some() || t.taken().is_some()
+    })
+}
+
+/// Whether `pointer` is still over `pressed` (or a part of it), by picking's hover map.
+fn still_over(
+    map: Option<&HoverMap>,
+    pointer: PointerId,
+    pressed: Entity,
+    parents: &Query<&ChildOf>,
+) -> bool {
+    map.and_then(|m| m.get(&pointer)).is_some_and(|hits| {
+        hits.keys()
+            .any(|e| *e == pressed || parents.iter_ancestors(*e).any(|a| a == pressed))
+    })
+}
+
 /// A right-click, Backspace or the escape menu, while the button is down after a press on the
 /// board: the press is let go of without a click, and the turn is as it was before it. Whether
 /// there was one (so it is not also a step back).
@@ -194,11 +312,20 @@ pub fn restore(watch: &mut ResMut<WatchStatus>, before: Option<Turn>) {
     }
 }
 
-/// A press of the primary button on a space of the board begins one. Presses bubble up from a
-/// piece's parts to the piece; the first space they reach is the one pressed.
+/// What a click on a [`Source`] makes, as `play::on_click` finds it.
+type SourceClick = (
+    Option<&'static Choice>,
+    Option<&'static TakeUp>,
+    Option<&'static TakeToPlace>,
+);
+
+/// A press of the primary button on a space of the board, or on what lies beside it (a
+/// [`Source`]), begins one. Presses bubble up from a piece's parts to the piece (a bowl's heap
+/// to the bowl); the first space or source they reach is the one pressed.
 fn on_press(
     press: On<PointerPress>,
     spots: Query<&Spot>,
+    sources: Query<SourceClick, With<Source>>,
     watch: Res<WatchStatus>,
     menu: Option<Res<EscapeMenu>>,
     mut drag: ResMut<Drag>,
@@ -209,15 +336,27 @@ fn on_press(
     {
         return;
     }
-    let Ok(spot) = spots.get(press.entity) else {
+    let (spot, beside) = if let Ok(spot) = spots.get(press.entity) {
+        (spot.0.clone(), None)
+    } else if let Ok((choice, take_up, to_place)) = sources.get(press.entity) {
+        let takes = match (choice, take_up, to_place) {
+            (Some(c), ..) => Takes::Choice(c.0.clone()),
+            (_, Some(t), _) => Takes::TakeUp(t.0.clone()),
+            (.., Some(t)) => Takes::TakeToPlace(t.0.clone()),
+            _ => Takes::InHand,
+        };
+        let entity = press.entity;
+        (String::new(), Some(Beside { entity, takes }))
+    } else {
         return;
     };
     drag.0 = Some(Press {
         pointer: press.pointer.id,
-        spot: spot.0.clone(),
+        spot,
         before: watch.turn.clone(),
         left: false,
         carrying: false,
+        beside,
     });
 }
 
@@ -232,6 +371,7 @@ fn follow(
     menu: Option<Res<EscapeMenu>>,
     (net, aim, line): (Res<Net>, Res<SideAim>, Res<LineAim>),
     mut watch: ResMut<WatchStatus>,
+    (hover, parents): (Option<Res<HoverMap>>, Query<&ChildOf>),
 ) {
     let Some(pointer) = drag.0.as_ref().map(|p| p.pointer) else {
         inputs.clear();
@@ -265,13 +405,26 @@ fn follow(
     // Out of the space pressed with the button down: a drag. What a press there may carry is
     // picked up, if it is not in hand already, and carried under the pointer.
     let press = drag.0.as_ref().expect("a press");
-    if !press.left && over != Some(press.spot.as_str()) {
+    // Off what lies beside the board with the button down: what a click there takes up is
+    // taken, if it is not in hand already, and carried.
+    if let Some(beside) = press.beside.as_ref().filter(|_| !press.left)
+        && !still_over(hover.as_deref(), press.pointer, beside.entity, &parents)
+    {
+        let takes = beside.takes.clone();
+        let carrying = take_beside(&net, &mut watch, &takes);
+        let press = drag.0.as_mut().expect("a press");
+        press.left = true;
+        press.carrying = carrying;
+    }
+    let press = drag.0.as_ref().expect("a press");
+    if press.beside.is_none() && !press.left && over != Some(press.spot.as_str()) {
         let spot = press.spot.clone();
         let grabs = watch.turn.as_ref().is_some_and(|t| t.grabs(&spot));
-        if grabs && watch.turn.as_ref().and_then(Turn::held_at) != Some(spot.as_str()) {
+        if grabs && watch.turn.as_ref().and_then(Turn::in_hand_at) != Some(spot.as_str()) {
             play::click_at(&net, &mut watch, (&aim, &line), &spot);
         }
-        let carrying = grabs && watch.turn.as_ref().and_then(Turn::held_at) == Some(spot.as_str());
+        let carrying =
+            grabs && watch.turn.as_ref().and_then(Turn::in_hand_at) == Some(spot.as_str());
         let press = drag.0.as_mut().expect("a press");
         press.left = true;
         press.carrying = carrying;
@@ -287,7 +440,12 @@ fn follow(
             .and_then(|t| t.state.state.cells.get(at))
             .is_some_and(|s| !s.is_empty())
     };
-    match let_go(&press, watch.turn.as_ref(), over, occupied) {
+    let what = if press.beside.is_some() {
+        let_go_beside(&press, watch.turn.as_ref(), over, aim.choice.is_some())
+    } else {
+        let_go(&press, watch.turn.as_ref(), over, occupied)
+    };
+    match what {
         LetGo::Click(at) => {
             play::click_at(&net, &mut watch, (&aim, &line), &at);
         }
@@ -359,6 +517,7 @@ mod tests {
             let mut app = App::new();
             app.add_plugins((MinimalPlugins, DragPlugin))
                 .insert_resource(net)
+                .init_resource::<HoverMap>()
                 .init_resource::<WatchStatus>();
             app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
             let spots = ["a1", "a2", "a3", "b1", "c3", "e5"]
@@ -405,6 +564,55 @@ mod tests {
             };
             self.app.world_mut().trigger(event);
             self.app.update();
+        }
+
+        /// Something beside the board a press may carry from, with what a click on it does.
+        fn source(&mut self, click: impl Bundle) -> Entity {
+            self.app.world_mut().spawn((Source, click)).id()
+        }
+
+        /// The pointer over `entity` (picking's hover map), or over nothing beside the board.
+        fn hover(&mut self, entity: Option<Entity>) {
+            let hit = HitData::new(Entity::PLACEHOLDER, 0.0, None, None);
+            let mut map = self.app.world_mut().resource_mut::<HoverMap>();
+            map.clear();
+            if let Some(e) = entity {
+                map.insert(PointerId::Mouse, [(e, hit)].into_iter().collect());
+            }
+        }
+
+        /// The primary button pressed over `entity`, beside the board, the pointer over it.
+        fn press_on(&mut self, entity: Entity) {
+            self.app.world_mut().resource_mut::<Hovering>().0 = None;
+            self.hover(Some(entity));
+            let event = PointerPress {
+                entity,
+                pointer: Pointer::new(PointerId::Mouse, nowhere()),
+                button: PointerButton::Primary,
+                hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                count: 1,
+            };
+            self.app.world_mut().trigger(event);
+            self.app.update();
+        }
+
+        /// Off what was pressed, the button down: over nothing, then over `spot`, if any.
+        fn leave(&mut self, spot: Option<&str>) {
+            self.hover(None);
+            self.app.update();
+            self.over(spot);
+        }
+
+        /// A stone of `kind` taken from its bowl by a click.
+        fn choose_piece(&mut self, kind: &str) {
+            let mut watch = self.app.world_mut().resource_mut::<WatchStatus>();
+            let outcome = watch.turn.as_mut().unwrap().gesture(&piece(kind));
+            assert_eq!(outcome, Outcome::Changed);
+            self.app.update();
+        }
+
+        fn carried_beside(&self) -> bool {
+            self.app.world().resource::<Drag>().carried_beside()
         }
 
         fn release(&mut self) {
@@ -755,5 +963,334 @@ mod tests {
         assert_eq!(t.held_at(), Some("a1"));
         assert!(t.carries_to("a2", false));
         assert!(!t.carries_to("b2", true));
+    }
+
+    fn place(gestures: &[Gesture], to: &str) -> LegalSelection {
+        LegalSelection {
+            notation: format!("{}{to}", gestures[0].value),
+            action: "place".into(),
+            to: Some(to.into()),
+            piece: gestures
+                .iter()
+                .find(|g| g.kind == "piece")
+                .map(|g| g.value.clone()),
+            gestures: gestures.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    fn piece(id: &str) -> Gesture {
+        Gesture {
+            kind: "piece".into(),
+            value: id.into(),
+        }
+    }
+
+    fn action(id: &str) -> Gesture {
+        Gesture {
+            kind: "action".into(),
+            value: id.into(),
+        }
+    }
+
+    /// A seat's supply (Tak's): a flat stone or a capstone, either placed on a1 or a2.
+    fn supply() -> Turn {
+        let mut t = Turn::new(1);
+        let mut all = Vec::new();
+        for kind in ["flat", "cap"] {
+            for at in ["a1", "a2"] {
+                all.push(place(&[piece(kind), Gesture::pos(at)], at));
+            }
+        }
+        t.answered(answer(all));
+        t
+    }
+
+    #[test]
+    fn a_bowls_choice_is_made_as_the_pointer_leaves_it_and_let_go_on_the_board_placed() {
+        let mut table = Table::new(supply());
+        let flats = table.source(Choice(piece("flat")));
+        table.press_on(flats);
+        assert!(
+            table.turn().gestures.is_empty(),
+            "a press alone does nothing"
+        );
+        // Let go on it: not a drag (the click is `play::on_click`'s).
+        table.release();
+        assert!(table.turn().gestures.is_empty());
+        assert!(!table.app.world().resource::<Drag>().pressed());
+
+        table.press_on(flats);
+        table.leave(None);
+        assert_eq!(
+            table.turn().in_hand(),
+            Some("flat"),
+            "taken up as a click does"
+        );
+        assert!(table.carried_beside());
+        assert_eq!(table.carried(), None, "nothing of the board's");
+        table.over(Some("a2"));
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["flata2"]);
+        assert_eq!(table.asked(), 1);
+        assert!(!table.carried_beside());
+    }
+
+    #[test]
+    fn what_is_carried_from_beside_the_board_and_let_go_off_it_is_put_back() {
+        // Let go off the board, over a space it may not go on, or the escape menu: as before.
+        for elsewhere in [None, Some("e5"), Some("menu")] {
+            let mut table = Table::new(supply());
+            let before = table.turn().clone();
+            let caps = table.source(Choice(piece("cap")));
+            table.press_on(caps);
+            table.leave(Some("a1"));
+            assert_eq!(table.turn().in_hand(), Some("cap"));
+            if elsewhere == Some("menu") {
+                table.app.insert_resource(EscapeMenu {
+                    open: true,
+                    ..Default::default()
+                });
+                table.app.update();
+            } else {
+                table.over(elsewhere);
+            }
+            table.release();
+            assert_eq!(*table.turn(), before, "let go over {elsewhere:?}");
+            assert_eq!(table.asked(), 0);
+            assert!(!table.carried_beside());
+        }
+    }
+
+    #[test]
+    fn a_stone_lifted_by_a_click_is_carried_from_where_it_hovers_or_its_bowl() {
+        let mut table = Table::new(supply());
+        table.choose_piece("flat");
+        let lifted = table.turn().clone();
+        let stone = table.source(());
+        let flats = table.source(Choice(piece("flat")));
+        for pressed in [stone, flats] {
+            table.press_on(pressed);
+            table.leave(None);
+            assert_eq!(table.turn().in_hand(), Some("flat"), "not put back");
+            assert!(table.carried_beside());
+            table.release();
+            assert_eq!(*table.turn(), lifted, "over its source again");
+        }
+        // Another kind's: it takes the place of the one in hand, as a click does.
+        let caps = table.source(Choice(piece("cap")));
+        table.press_on(caps);
+        table.leave(Some("a1"));
+        assert_eq!(table.turn().in_hand(), Some("cap"));
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["capa1"]);
+    }
+
+    #[test]
+    fn the_stone_held_by_itself_is_carried_with_nothing_chosen_and_placed_where_let_go() {
+        // Go's: every click places a stone, which is chosen for the player.
+        let mut t = Turn::new(1);
+        t.answered(answer(
+            ["a1", "a2"]
+                .map(|at| place(&[piece("stone"), Gesture::pos(at)], at))
+                .to_vec(),
+        ));
+        assert_eq!(t.auto_hand(), Some("stone"));
+        let mut table = Table::new(t);
+        let before = table.turn().clone();
+        let bowl = table.source(());
+        for pressed in [bowl, table.source(())] {
+            table.press_on(pressed);
+            table.leave(None);
+            assert_eq!(*table.turn(), before, "nothing chosen");
+            assert!(table.carried_beside());
+            table.release();
+            assert_eq!(*table.turn(), before);
+        }
+        table.press_on(bowl);
+        table.leave(Some("a2"));
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["stonea2"]);
+        assert_eq!(table.asked(), 1);
+    }
+
+    #[test]
+    fn a_press_on_what_gives_nothing_now_carries_nothing() {
+        // Not this seat's bowl, or not its turn to choose one: no drag.
+        let mut table = Table::new(chess());
+        let bowl = table.source(Choice(piece("flat")));
+        table.press_on(bowl);
+        table.leave(Some("a2"));
+        assert!(!table.carried_beside());
+        table.release();
+        assert!(table.turn().gestures.is_empty());
+        assert_eq!(table.asked(), 0);
+    }
+
+    /// Fendo's fence: once the pawn has stood on b1, built on its north or east side.
+    fn fence() -> Turn {
+        let side = |id: &str| LegalSelection {
+            notation: format!("b1{id}"),
+            action: "build".into(),
+            to: Some("b1".into()),
+            gestures: vec![action(id)],
+            ..Default::default()
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(vec![side("north"), side("east")]));
+        t
+    }
+
+    #[test]
+    fn a_fence_taken_from_its_bowl_is_built_on_the_side_aimed_at_where_it_is_let_go() {
+        let sides = vec![action("north"), action("east")];
+        let mut table = Table::new(fence());
+        let before = table.turn().clone();
+        let bowl = table.source(TakeUp(sides.clone()));
+        table.press_on(bowl);
+        table.leave(Some("b1"));
+        assert!(table.turn().taken().is_some(), "taken up");
+        assert!(table.carried_beside());
+        // No side aimed at: put back.
+        table.release();
+        assert_eq!(*table.turn(), before);
+
+        table.press_on(bowl);
+        table.leave(Some("b1"));
+        table.app.world_mut().resource_mut::<SideAim>().choice = Some(action("east"));
+        table.app.update();
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["b1east"]);
+
+        // Taken up by itself already (`Turn::auto_take`): pressed on, it is not put back.
+        let mut table = Table::new(fence());
+        table
+            .app
+            .world_mut()
+            .resource_mut::<WatchStatus>()
+            .turn
+            .as_mut()
+            .unwrap()
+            .take_up(&sides);
+        let bowl = table.source(TakeUp(sides.clone()));
+        let held = table.source(());
+        for pressed in [bowl, held] {
+            table.press_on(pressed);
+            table.leave(None);
+            assert!(table.turn().taken().is_some(), "still in hand");
+            assert!(table.carried_beside());
+            table.release();
+            assert!(table.turn().taken().is_some());
+        }
+    }
+
+    #[test]
+    fn a_tile_taken_from_the_stock_is_laid_where_it_is_let_go() {
+        // Courtfall's draft: a hex, then the tile laid there.
+        let lay = |at: &str, kind: &str| LegalSelection {
+            notation: format!("{kind}@{at}"),
+            action: "lay".into(),
+            to: Some(at.into()),
+            piece: Some(kind.into()),
+            gestures: vec![Gesture::pos(at), piece(kind)],
+            ..Default::default()
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(vec![
+            lay("a1", "lake"),
+            lay("a2", "lake"),
+            lay("a1", "hill"),
+        ]));
+        let mut table = Table::new(t);
+        let before = table.turn().clone();
+        let lakes = table.source(TakeToPlace(vec![piece("lake")]));
+        table.press_on(lakes);
+        table.leave(None);
+        assert!(table.turn().taken_after_click(), "taken up");
+        assert!(table.carried_beside());
+        table.over(Some("a3"));
+        table.release();
+        assert_eq!(*table.turn(), before, "where none may go: put back");
+
+        table.press_on(lakes);
+        table.leave(Some("a2"));
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["lake@a2"]);
+    }
+
+    /// A stack of two on a1 that may move up the column: one dropped on a2, both on a2, or
+    /// one on a2 and one on a3.
+    fn stack() -> Turn {
+        let count = |n: &str| Gesture {
+            kind: "count".into(),
+            value: n.into(),
+        };
+        let mv = |n: &str, drops: &[&str]| {
+            let mut gestures = vec![Gesture::pos("a1"), count(n)];
+            gestures.extend(drops.iter().map(|d| Gesture::pos(d)));
+            let mut path: Vec<String> = drops.iter().map(|d| d.to_string()).collect();
+            path.dedup();
+            LegalSelection {
+                notation: format!("{n}a1-{}", drops.join("")),
+                action: "move-stack".into(),
+                from: Some("a1".into()),
+                to: drops.last().map(|d| d.to_string()),
+                path,
+                gestures,
+                ..Default::default()
+            }
+        };
+        let mut t = Turn::new(1);
+        t.answered(answer(vec![
+            mv("1", &["a2"]),
+            mv("2", &["a2", "a2"]),
+            mv("2", &["a2", "a3"]),
+        ]));
+        t
+    }
+
+    #[test]
+    fn a_stack_is_carried_whole_dropped_once_and_what_is_left_carried_on() {
+        let mut table = Table::new(stack());
+        table.press("a1");
+        table.over(Some("b1"));
+        let t = table.turn();
+        assert_eq!(t.stack_at(), Some("a1"), "picked up whole");
+        assert_eq!(t.stack_moves()[0].count, 2);
+        assert_eq!(table.carried().as_deref(), Some("a1"));
+        // The wheel, the button still down: one fewer carried, then both again.
+        let wheel = |table: &mut Table, up: bool| {
+            let turn = table.app.world_mut().resource_mut::<WatchStatus>();
+            let mut turn = turn.map_unchanged(|w| w.turn.as_mut().unwrap());
+            assert_eq!(turn.wheel(up, &Default::default()), Outcome::Changed);
+            table.app.update();
+        };
+        wheel(&mut table, false);
+        assert_eq!(table.turn().stack_moves()[0].count, 1);
+        assert_eq!(table.carried().as_deref(), Some("a1"), "still carried");
+        wheel(&mut table, true);
+        table.over(Some("a2"));
+        table.release();
+        // One drop, as a click is: the rest hovers over a2.
+        let t = table.turn();
+        assert_eq!(t.stack_moves()[0].drops, ["a2"]);
+        assert_eq!(t.stack_at(), Some("a2"));
+        assert!(t.made.is_empty());
+        let one_dropped = t.clone();
+
+        // Pressed there and let go off the board: as it was.
+        table.press("a2");
+        table.over(Some("b1"));
+        assert_eq!(table.carried().as_deref(), Some("a2"));
+        table.over(None);
+        table.release();
+        assert_eq!(*table.turn(), one_dropped);
+
+        // Carried on to the next space.
+        table.press("a2");
+        table.over(Some("a3"));
+        table.release();
+        assert_eq!(table.turn().made_notations(), ["2a1-a2a3"]);
+        assert_eq!(table.asked(), 1);
     }
 }

@@ -41,7 +41,7 @@ use bevy::prelude::*;
 
 use crate::appearance::{self, Appearance, Appearances, PieceLook, PlayOn, Stands};
 use crate::assets;
-use crate::drag::{Drag, Dragging};
+use crate::drag::{Drag, Dragging, Source};
 use crate::hand::{BoardEdge, Carry, HandPlugin, Hands, Held, LIFT, PointerOnBoard, Rest, Route};
 use crate::highlight::{Lit, Outline, Tone};
 use crate::look::{self, MaterialSpec, seat_paint};
@@ -67,6 +67,7 @@ impl Plugin for BoardPlugin {
                     Hands
                         .after(show_turn)
                         .after(hold_dragged)
+                        .after(hold_beside)
                         .after(bowl_stones)
                         .after(show_fences)
                         .after(show_tints),
@@ -108,6 +109,7 @@ impl Plugin for BoardPlugin {
                         resource_changed::<WatchStatus>.or_eager(resource_changed::<Hovering>),
                     ),
                     fence_aim,
+                    hold_beside,
                     drop_pieces,
                     flip_pieces,
                     change_wood.run_if(resource_changed::<BoardWood>),
@@ -750,6 +752,8 @@ struct FenceKit {
     foot: f32,
     over: Vec3,
     sides: HashMap<String, Vec2>,
+    /// What a click on the bowl takes up, and on the fence in hand puts back.
+    take: Vec<Gesture>,
 }
 
 /// The space between the bowl of fences and the board, or what stands beside it.
@@ -2102,6 +2106,7 @@ fn build_board(
                                 value: id.clone(),
                             }
                         }),
+                        yours: table.game.seats.iter().any(|g| g.yours && g.seat == s.seat),
                     })
                     .collect()
             })
@@ -2360,7 +2365,8 @@ fn build_board(
             MeshMaterial3d(bowl_material),
             Transform::from_xyz(at.x, 0.0, at.y).with_scale(Vec3::splat(size)),
             Pickable::default(),
-            TakeUp(choices),
+            TakeUp(choices.clone()),
+            Source,
             ChildOf(root),
             children![(
                 Mesh3d(load(&said.heap)),
@@ -2387,6 +2393,7 @@ fn build_board(
             material: fence_material,
             foot: low,
             over: Vec3::new(at.x, rim, at.y),
+            take: choices,
             sides: said
                 .sides
                 .iter()
@@ -3325,14 +3332,25 @@ type DraggedPiece = (
     &'static PieceAt,
     &'static Spot,
     Option<&'static Carry>,
-    Has<Held>,
+    Option<&'static Held>,
     Option<&'static Children>,
+    Option<&'static Rest>,
 );
+
+/// How high a piece in hand stands, to hold a stack in hand under the pointer as it stands:
+/// over where it rests, or where it is held over.
+fn in_hand_height(carry: Option<&Carry>, rest: Option<&Rest>) -> f32 {
+    match carry {
+        Some(Carry::Over { at, .. }) => at.translation.y,
+        _ => rest.map_or(0.0, |r| r.0.translation.y),
+    }
+}
 
 /// While a drag carries the piece in hand (`Drag::carried`), it is held under the pointer in
 /// place of the pointer's hand (`hand::Held`), out of picking's way with its parts, so the space
-/// under it is what the pointer is over. Let go, it goes where the turn now has it: carried from
-/// under the pointer to where it was put (`hand::Carry::Put`), or back over its space.
+/// under it is what the pointer is over; a stack in hand is held whole, each piece as high over
+/// the lowest as it stands. Let go, it goes where the turn now has it: carried from under the
+/// pointer to where it was put (`hand::Carry::Put`), or back over its space.
 fn hold_dragged(
     mut commands: Commands,
     drag: Res<Drag>,
@@ -3344,20 +3362,31 @@ fn hold_dragged(
         return;
     };
     let carried = drag.carried();
-    for (entity, at, spot, carry, held, children) in &pieces {
-        let in_hand = matches!(carry, Some(Carry::Held { .. } | Carry::Over { .. }));
-        let wanted = in_hand && carried == Some(spot.0.as_str());
-        if wanted == held {
-            continue;
-        }
-        let pick = if wanted {
+    let wanted = |spot: &Spot, carry: Option<&Carry>| {
+        matches!(carry, Some(Carry::Held { .. } | Carry::Over { .. }))
+            && carried == Some(spot.0.as_str())
+    };
+    let lowest = pieces
+        .iter()
+        .filter(|(_, _, spot, carry, ..)| wanted(spot, *carry))
+        .map(|(.., carry, _, _, rest)| in_hand_height(carry, rest))
+        .reduce(f32::min)
+        .unwrap_or(0.0);
+    for (entity, at, spot, carry, held, children, rest) in &pieces {
+        let pick = if wanted(spot, carry) {
             let kind = kit.piece(&at.piece.piece);
-            commands.entity(entity).insert(Held {
+            let hold = Held {
                 board: kit.surface,
-                lift: (LIFT - kind.foot) * kit.scale,
+                lift: (LIFT - kind.foot) * kit.scale + in_hand_height(carry, rest) - lowest,
                 scale: kit.scale,
-            });
+            };
+            if held == Some(&hold) {
+                continue;
+            }
+            commands.entity(entity).insert(hold);
             Pickable::IGNORE
+        } else if held.is_none() {
+            continue;
         } else {
             commands.entity(entity).remove::<Held>();
             Pickable::default()
@@ -3366,6 +3395,67 @@ fn hold_dragged(
         for part in children.into_iter().flatten() {
             if parts.contains(*part) {
                 commands.entity(*part).try_insert(pick);
+            }
+        }
+    }
+}
+
+/// What waits in hand beside the board, as a drag from there holds it: a stone or a supply's
+/// piece over where it was taken from, a piece of the stock, a fence over its bowl.
+type BesidePiece = (
+    Entity,
+    Option<&'static FromBowl>,
+    Option<&'static FromStock>,
+    Option<&'static HeldFence>,
+    Option<&'static Carry>,
+    Has<Held>,
+);
+
+/// What may wait in hand beside the board.
+type InHandBeside = Or<(With<FromBowl>, With<FromStock>, With<HeldFence>)>;
+
+/// While a drag from beside the board carries what waits in hand there
+/// (`Drag::carried_beside`), it is held under the pointer, out of picking's way, as a piece
+/// dragged on the board is (`hold_dragged`). Let go, it is carried from there to where the
+/// click put it, or back over where it came from. After what makes it (`bowl_stones`,
+/// `show_tints`, `show_fences`), so one taken up as the drag began is held at once.
+fn hold_beside(
+    mut commands: Commands,
+    drag: Res<Drag>,
+    kits: Query<&Kit, With<BoardRoot>>,
+    pieces: Query<BesidePiece, InHandBeside>,
+) {
+    let Ok(kit) = kits.single() else {
+        return;
+    };
+    let carried = drag.carried_beside();
+    for (entity, bowl, stock, fence, carry, held) in &pieces {
+        // In hand, not yet put anywhere, and how far its foot is below its middle.
+        let foot = match (bowl, stock, fence) {
+            (Some(b), ..) if b.cell.is_none() => Some(kit.piece(&b.piece).foot),
+            (_, Some(s), _) if s.cell.is_none() => Some(kit.piece(&s.kind).foot),
+            (.., Some(HeldFence(None))) => kit.fences.as_ref().map(|f| f.foot),
+            _ => None,
+        };
+        let in_hand = foot.is_some() && matches!(carry, Some(Carry::Held { .. }));
+        let wanted = carried && in_hand;
+        if wanted == held {
+            continue;
+        }
+        let mut e = commands.entity(entity);
+        if wanted {
+            e.insert((
+                Held {
+                    board: kit.surface,
+                    lift: (LIFT - foot.unwrap_or(0.0)) * kit.scale,
+                    scale: kit.scale,
+                },
+                Pickable::IGNORE,
+            ));
+        } else {
+            e.remove::<Held>();
+            if in_hand {
+                e.insert(Pickable::default());
             }
         }
     }
@@ -3628,7 +3718,9 @@ fn bowl_stones(
                 if held.piece != id {
                     e.insert(looks(id));
                 }
-                e.insert((placed, Rest(to), Carry::Put(to)));
+                // No longer in hand: a click there is on its space.
+                e.remove::<(Source, Pickable, Choice)>()
+                    .insert((placed, Rest(to), Carry::Put(to)));
             }
             None => {
                 let at = over(&source);
@@ -3721,6 +3813,12 @@ fn bowl_stones(
         let (source, _) = kit.source_for(&Gesture::piece(piece), yours)?;
         Some((source, piece.to_string()))
     });
+    // A click on what was chosen puts it back, as one on its source does; on the stone the
+    // turn holds by itself, there is nothing to put back.
+    let click = turn
+        .in_hand_choice()
+        .filter(|_| auto.is_none())
+        .map(|g| Choice(g.clone()));
     if let Some((source, id)) =
         auto.or_else(|| turn.in_hand_choice().and_then(|g| kit.source_for(g, yours)))
     {
@@ -3733,13 +3831,19 @@ fn bowl_stones(
         match take(&|f| f.cell.is_none() && f.source == source) {
             // Another kind of the same pool: the piece in hand becomes it.
             Some((entity, was)) => {
+                let mut e = commands.entity(entity);
                 if was.piece != id {
-                    commands.entity(entity).insert((looks(id), held));
+                    e.insert((looks(id), held));
                 }
+                match click {
+                    Some(c) => e.insert(c),
+                    None => e.remove::<Choice>(),
+                };
             }
             None => {
                 let at = over(&source);
-                commands.spawn((
+                // Pressed where it waits, it is carried from there (`drag.rs`).
+                let mut e = commands.spawn((
                     Name::new(format!("{id} in hand")),
                     held,
                     looks(id),
@@ -3749,8 +3853,12 @@ fn bowl_stones(
                         lift: LIFT * kit.scale,
                         scale: kit.scale,
                     },
+                    (Source, Pickable::default()),
                     ChildOf(root),
                 ));
+                if let Some(c) = click {
+                    e.insert(c);
+                }
             }
         }
     }
@@ -3821,6 +3929,7 @@ fn show_supply(
                     piece.insert((
                         Pickable::default(),
                         Choice(pool.take.clone()),
+                        Source,
                         SimplifiedMesh(kind.hit.clone()),
                     ));
                 }
@@ -4022,6 +4131,7 @@ fn show_tints(
                 spawned.insert((
                     Pickable::default(),
                     TakeToPlace(takes[kind.as_str()].clone()),
+                    Source,
                 ));
             }
         }
@@ -4043,17 +4153,26 @@ fn show_tints(
                     commands.entity(entity).despawn();
                     continue;
                 };
-                commands.entity(entity).insert((
-                    FromStock {
-                        kind: kind.clone(),
-                        cell: Some(cell.clone()),
-                    },
-                    Rest(to),
-                    Carry::Put(to),
-                ));
+                commands
+                    .entity(entity)
+                    .remove::<(Source, Pickable, TakeToPlace)>()
+                    .insert((
+                        FromStock {
+                            kind: kind.clone(),
+                            cell: Some(cell.clone()),
+                        },
+                        Rest(to),
+                        Carry::Put(to),
+                    ));
                 kept = true;
             }
-            (None, None) if taken == Some(hand.kind.as_str()) && !kept => kept = true,
+            (None, None) if taken == Some(hand.kind.as_str()) && !kept => {
+                // A click on it puts it back, as one on its column does.
+                commands
+                    .entity(entity)
+                    .insert(TakeToPlace(takes[hand.kind.as_str()].clone()));
+                kept = true;
+            }
             _ => commands.entity(entity).despawn(),
         }
     }
@@ -4102,6 +4221,11 @@ fn show_tints(
                 lift: LIFT * kit.scale,
                 scale: kit.scale,
             },
+            (
+                Source,
+                Pickable::default(),
+                TakeToPlace(takes[kind].clone()),
+            ),
             ChildOf(root),
         ));
     }
@@ -4154,11 +4278,10 @@ fn show_fences(
             (Some((key, _)), Some(k)) if k == key => kept = true,
             // Put down: from over the bowl, carried to the side chosen.
             (Some((key, to)), None) if !kept => {
-                commands.entity(entity).insert((
-                    HeldFence(Some(key.clone())),
-                    Rest(*to),
-                    Carry::Put(*to),
-                ));
+                commands
+                    .entity(entity)
+                    .remove::<(Source, Pickable, TakeUp)>()
+                    .insert((HeldFence(Some(key.clone())), Rest(*to), Carry::Put(*to)));
                 kept = true;
             }
             (None, None) if taken.is_some() && !kept => kept = true,
@@ -4199,6 +4322,8 @@ fn show_fences(
                         lift: LIFT * kit.scale,
                         scale: kit.scale,
                     },
+                    // A click on it puts it back, as one on the bowl does.
+                    (Source, Pickable::default(), TakeUp(fence.take.clone())),
                 ));
             }
             _ => {}
@@ -4909,6 +5034,33 @@ mod tests {
             let mut app = app();
             app.insert_resource(Appearances::built_in());
             app
+        }
+
+        /// A click on `entity` (a press and a release on it), as `play::on_click` takes it.
+        fn click_on(app: &mut App, entity: Entity) {
+            use bevy::picking::backend::HitData;
+            use bevy::picking::events::{Pointer, PointerClick};
+            use bevy::picking::pointer::{Location, PointerButton, PointerId};
+            if !app.world().contains_resource::<crate::net::Net>() {
+                app.insert_resource(crate::net::Net::for_test().0)
+                    .add_observer(crate::play::on_click);
+            }
+            let at = Location {
+                target: bevy::camera::NormalizedRenderTarget::None {
+                    width: 1,
+                    height: 1,
+                },
+                position: Vec2::ZERO,
+            };
+            app.world_mut().trigger(PointerClick {
+                entity,
+                pointer: Pointer::new(PointerId::Mouse, at),
+                button: PointerButton::Primary,
+                hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                duration: Duration::ZERO,
+                count: 1,
+            });
+            app.update();
         }
 
         #[test]
@@ -5645,6 +5797,7 @@ wood = "contrast"
                 before: None,
                 left: true,
                 carrying: true,
+                beside: None,
             });
             let under = Vec3::new(0.01, SURFACE, 0.02);
             app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((under, under + Vec3::Y));
@@ -6356,6 +6509,35 @@ wood = "contrast"
                     .all(|(_, c)| matches!(c, Some(Carry::Held { .. }))),
                 "{both:?}"
             );
+            // Dragged, the stack is held whole under the pointer, as it stands.
+            use crate::drag::{Drag, Press};
+            app.world_mut().resource_mut::<Drag>().0 = Some(Press {
+                pointer: bevy::picking::pointer::PointerId::Mouse,
+                spot: "b2".into(),
+                before: None,
+                left: true,
+                carrying: true,
+                beside: None,
+            });
+            app.update();
+            let held = |app: &mut App| {
+                let mut q = app.world_mut().query::<(&PieceAt, &Held)>();
+                let mut out: Vec<(usize, f32)> = q
+                    .iter(app.world())
+                    .map(|(at, h)| (at.layer, h.lift))
+                    .collect();
+                out.sort_by_key(|(l, _)| *l);
+                out
+            };
+            let lifts = held(&mut app);
+            assert_eq!(lifts.len(), 2, "{lifts:?}");
+            assert!(
+                lifts[1].1 > lifts[0].1 + 0.003,
+                "one on the other: {lifts:?}"
+            );
+            app.world_mut().resource_mut::<Drag>().0 = None;
+            app.update();
+            assert!(held(&mut app).is_empty());
             // The wheel leaves the bottom one on the board.
             let pools = HashMap::new();
             let mut watch = app.world_mut().resource_mut::<WatchStatus>();
@@ -6897,8 +7079,13 @@ wood = "contrast"
             assert_eq!(fence.0, None);
             assert!(matches!(carry, Carry::Held { .. }) && !held);
             let rest = *rest;
-            let mut bowl = app.world_mut().query_filtered::<&Transform, With<TakeUp>>();
+            // The bowl, and the fence in hand, whose click puts it back as the bowl's does.
+            let mut bowl = app
+                .world_mut()
+                .query_filtered::<&Transform, (With<TakeUp>, Without<HeldFence>)>();
             let bowl = bowl.single(app.world()).unwrap().translation;
+            let mut q = app.world_mut().query::<(&HeldFence, &TakeUp)>();
+            assert_eq!(q.single(app.world()).unwrap().1.0.len(), sides.len());
             assert!(
                 rest.0.translation.xz().distance(bowl.xz()) < 1e-5,
                 "over the bowl: {} {bowl}",
@@ -7006,6 +7193,11 @@ wood = "contrast"
                     .expect("its bowl");
                 let rest = app.world().get::<Rest>(*stone).unwrap().0.translation;
                 assert!(rest.xz().distance(over.xz()) < 1e-5, "{id}: over its bowl");
+                // Clicked where it waits: nothing to put back, nothing done.
+                let before = app.world().resource::<WatchStatus>().turn.clone();
+                click_on(&mut app, *stone);
+                assert_eq!(app.world().resource::<WatchStatus>().turn, before, "{id}");
+                assert!(app.world().get_entity(*stone).is_ok(), "{id}: still there");
                 // Placed on b2: carried there from over the bowl, solid, no ghost over it.
                 let mut watch = app.world_mut().resource_mut::<WatchStatus>();
                 let outcome = watch.turn.as_mut().unwrap().gesture(&Gesture::pos("b2"));
@@ -7139,6 +7331,25 @@ wood = "contrast"
             });
             app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
             app.update();
+            // Clicked where it waits, it goes back, as a click on its bowl puts it back.
+            let mut q = app.world_mut().query::<(Entity, &FromBowl)>();
+            let (waiting, _) = q.single(app.world()).unwrap();
+            click_on(&mut app, waiting);
+            let turn = || app.world().resource::<WatchStatus>().turn.as_ref().unwrap();
+            assert_eq!(turn().in_hand(), None, "put back");
+            assert!(turn().gestures.is_empty());
+            let mut q = app.world_mut().query::<&FromBowl>();
+            assert_eq!(
+                q.iter(app.world()).count(),
+                0,
+                "nothing waits over the bowl"
+            );
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "piece".into(),
+                value: "red".into(),
+            });
+            app.update();
             let mut q = app
                 .world_mut()
                 .query::<(Entity, &FromBowl, &Carry, &Transform)>();
@@ -7149,6 +7360,43 @@ wood = "contrast"
                 t.translation.x.abs() > 0.03,
                 "beside the board, over its bowl"
             );
+            // This seat's bowls, and the stone where it waits, may be pressed to carry it.
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&crate::bowls::Bowl, With<crate::drag::Source>>();
+            assert_eq!(q.iter(app.world()).count(), 4, "each with a choice");
+            let pick = |app: &mut App| {
+                let e = app.world().entity(held);
+                (
+                    e.contains::<crate::drag::Source>(),
+                    e.contains::<Held>(),
+                    e.get::<Pickable>().copied(),
+                )
+            };
+            assert_eq!(pick(&mut app), (true, false, Some(Pickable::default())));
+
+            // Dragged from there: held under the pointer, out of picking's way.
+            use crate::drag::{Beside, Drag, Press, Takes};
+            app.world_mut().resource_mut::<Drag>().0 = Some(Press {
+                pointer: bevy::picking::pointer::PointerId::Mouse,
+                spot: String::new(),
+                before: None,
+                left: true,
+                carrying: true,
+                beside: Some(Beside {
+                    entity: held,
+                    takes: Takes::InHand,
+                }),
+            });
+            let under = Vec3::new(0.01, SURFACE, 0.02);
+            app.world_mut().resource_mut::<PointerOnBoard>().0 = Some((under, under + Vec3::Y));
+            for _ in 0..30 {
+                app.update();
+            }
+            assert_eq!(pick(&mut app), (true, true, Some(Pickable::IGNORE)));
+            let t = *app.world().entity(held).get::<Transform>().unwrap();
+            assert!(t.translation.xz().distance(under.xz()) < 1e-3, "{t:?}");
+            app.world_mut().resource_mut::<Drag>().0 = None;
 
             // Placed: the same stone, carried to the cell, solid; nothing see-through there.
             {
@@ -7170,7 +7418,16 @@ wood = "contrast"
             let (placed, from, carry) = q.single(app.world()).unwrap();
             assert_eq!(placed, held, "the one in hand goes on");
             assert_eq!(from.cell.as_deref(), Some("a1"));
-            let Carry::Put(to) = *carry else {
+            let carry = *carry;
+            // From under the pointer, where it was let go; a click on it now is on its cell.
+            assert_eq!(pick(&mut app), (false, false, None));
+            let trip = app
+                .world()
+                .entity(held)
+                .get::<crate::hand::Travel>()
+                .unwrap();
+            assert!(trip.from.translation.xz().distance(under.xz()) < 1e-3);
+            let Carry::Put(to) = carry else {
                 panic!("not put down")
             };
             let layout = Layout::new(&grid_table("blooms", &[]).info.board.positions);

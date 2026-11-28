@@ -332,27 +332,45 @@ impl Turn {
             .then_some(to)
     }
 
-    /// Whether a press on `at` may carry a piece from there under the pointer, a drag: the
-    /// piece in hand stands there (`held_at`), or a click there would pick one up so (another
-    /// piece in place of the one in hand, too). What a click does decides it, by the same code.
+    /// Where the stack picked up to move is, while some of it is still carried: over its own
+    /// space before any of it is dropped, then over the last space one was dropped on.
+    pub fn stack_at(&self) -> Option<&str> {
+        let lifted = StackMove::of(&self.gestures).filter(|_| self.stage == Stage::Choosing)?;
+        if lifted.drops.len() >= lifted.count {
+            return None;
+        }
+        Some(lifted.drops.last().copied().unwrap_or(lifted.from))
+    }
+
+    /// Where what is in hand on the board is, whatever it is: the piece in hand (`held_at`),
+    /// or the stack carried (`stack_at`). What a drag carries from a space.
+    pub fn in_hand_at(&self) -> Option<&str> {
+        self.held_at().or_else(|| self.stack_at())
+    }
+
+    /// Whether a press on `at` may carry a piece from there under the pointer, a drag: what is
+    /// in hand stands there (`in_hand_at`), or a click there would pick it up so (another piece
+    /// in place of the one in hand, too; a stack whole). What a click does decides it, by the
+    /// same code.
     pub fn grabs(&self, at: &str) -> bool {
         if self.stage != Stage::Choosing {
             return false;
         }
-        if self.held_at() == Some(at) {
+        if self.in_hand_at() == Some(at) {
             return true;
         }
         let mut clicked = self.clone();
-        clicked.gesture(&Gesture::pos(at)) == Outcome::Changed && clicked.held_at() == Some(at)
+        clicked.gesture(&Gesture::pos(at)) == Outcome::Changed && clicked.in_hand_at() == Some(at)
     }
 
-    /// Whether a click on `cell` moves the piece in hand (`held_at`) there, so a drag may let
+    /// Whether a click on `cell` moves what is in hand (`in_hand_at`) there, so a drag may let
     /// it go there: a selection the click could become puts the piece there (its `to`, or one
-    /// of its `path`'s landings), not only what it aims at (an arrow shot, a piece pinned).
-    /// `occupied`: something stands on `cell`, which the piece every click moves (Courtfall's
-    /// unit, `unclicked_from`) acts on (a strike, a shove) without going there.
+    /// of its `path`'s landings: a stack's next drop), not only what it aims at (an arrow shot,
+    /// a piece pinned). `occupied`: something stands on `cell`, which the piece every click
+    /// moves (Courtfall's unit, `unclicked_from`) acts on (a strike, a shove) without going
+    /// there.
     pub fn carries_to(&self, cell: &str, occupied: bool) -> bool {
-        if self.held_at().is_none()
+        if self.in_hand_at().is_none()
             || (occupied && self.unclicked_from().is_some())
             || !self.targets().contains(cell)
         {
@@ -1627,18 +1645,22 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 
 /// A click on what lies beside the board: a bowl's or a supply's choice, what a click takes
 /// up. A click on the board's own spaces is a press and a release there, which `drag.rs` reads
-/// (`click_at`), so that a drag and a click are told apart in one place.
-fn on_click(
+/// (`click_at`), so that a drag and a click are told apart in one place; so is a drag from what
+/// lies beside it, which is no click even let go where it was pressed.
+pub(crate) fn on_click(
     click: On<PointerClick>,
     spots: Query<(), With<Spot>>,
     (choices, takes, places): (Query<&Choice>, Query<&TakeUp>, Query<&TakeToPlace>),
-    net: Res<Net>,
+    (net, drag): (Res<Net>, Res<Drag>),
     mut watch: ResMut<WatchStatus>,
 ) {
     // Clicks bubble up to the board; only the cell or piece itself is a position, and its
     // click is the press's (`drag.rs`). A bowl's choice is the bowl's, whether the bowl or the
     // stones in it were clicked.
-    if click.button != PointerButton::Primary || spots.contains(click.entity) {
+    if click.button != PointerButton::Primary
+        || spots.contains(click.entity)
+        || drag.0.as_ref().is_some_and(|p| p.left)
+    {
         return;
     }
     if let Ok(choice) = choices.get(click.entity) {
@@ -1689,7 +1711,7 @@ pub fn feel(turn: Option<&Turn>, what: Clickable, aimed: bool) -> Feel {
             }
         }
         // What a click picks up, or what is in hand there, which a press may drag on.
-        Clickable::Spot(at) if turn.picks_up(at) || turn.held_at() == Some(at) => Feel::Grab,
+        Clickable::Spot(at) if turn.picks_up(at) || turn.in_hand_at() == Some(at) => Feel::Grab,
         Clickable::Spot(at) if turn.targets().contains(at) => Feel::Point,
         Clickable::Spot(_) => Feel::Open,
         Clickable::Choice(g) => takes(turn.clone().gesture(g)),
