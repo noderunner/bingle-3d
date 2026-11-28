@@ -33,7 +33,7 @@ const RISE_PER_SPAN: f32 = 0.3;
 /// How far over the board an arc starts and ends, so it is not lost in it.
 const END_LIFT: f32 = 0.0005;
 /// How wide each ribbon is, as a share of the pitch.
-const WIDTH: f32 = 0.14;
+const WIDTH: f32 = 0.2;
 /// How many pieces each ribbon is drawn in along its length.
 const SEGMENTS: usize = 24;
 

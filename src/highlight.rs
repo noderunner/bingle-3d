@@ -378,7 +378,7 @@ impl Glow {
             color: GLOW_COLOR,
             // The line's brightness, its width across the ribbon (a share of half of it), and
             // the halo's.
-            ring: Vec4::new(line, 0.0, 0.3, halo),
+            ring: Vec4::new(line, 0.0, 0.35, halo),
             // The halo's reach; how much brighter the light running along it is; how often it
             // runs (a second); how fast the whole breathes.
             ring_motion: Vec4::new(0.45, 0.5, 0.8, 1.0 / 3.0),
