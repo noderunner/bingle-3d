@@ -1290,6 +1290,9 @@ look of its own:
   stones in hand), drawn from their definitions.
 - Appearance (begun in stage 9): a camera per game; hand-made looks for a few more games that
   reward it; more of the private overlay's games (*Private games*).
+- Ray tracing in the lighting: a plan in phases, with what Bevy 0.20's Solari offers and costs
+  on a real card, is [ray-tracing.md](ray-tracing.md), for the maintainer to decide on (#80).
+  Nothing of it is built.
 - Maybe macOS, gamepad and Steam Deck controls; tutorials and puzzles. (Release builds:
   decision 11.)
 
