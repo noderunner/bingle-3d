@@ -1,6 +1,6 @@
 //! `--test-hand N`: a made-up card game of three seats on the table in place of a server's, the
-//! player holding N cards of the usual deck, the other two a few each, and one card led to the
-//! trick; those of the led suit may be played. It names no game and needs no server: it is for
+//! player holding N cards of the usual deck, the other two a few each, what two have taken in
+//! front of them, and one card led to the trick; those of the led suit may be played. It names no game and needs no server: it is for
 //! looking at the player's hand (`hand_strip.rs`) and the table round it, with `--frames` and
 //! `--screenshot`. A click on a card plays it as far as the client goes: the move is sent to
 //! whatever server there is, so give the run a `--server` nobody listens on.
@@ -37,7 +37,7 @@ impl Plugin for TestHandPlugin {
 /// The made-up game's id, which no server has.
 pub const GAME: &str = "test-hand";
 
-/// Its look: a hand each seat holds, and a trick in the middle.
+/// Its look: a hand each seat holds, what each has taken, and a trick in the middle.
 pub fn look() -> Appearance {
     Appearance::parse(&format!(
         r#"
@@ -47,6 +47,9 @@ pub fn look() -> Appearance {
         [cards.piles.hand]
         seat = [0.0, 0.4]
         spread = "held"
+        [cards.piles.taken]
+        seat = [0.2, 0.3]
+        spread = "row"
         [cards.piles.trick]
         spread = "played"
         "#
@@ -70,8 +73,9 @@ fn card_id(i: usize) -> String {
     format!("{suit}-{}", RANKS[i % 13])
 }
 
-/// The game opened, seen from its second seat, which holds `cards` cards (the deck's, from a
-/// few spades on: some of the led suit, some not); the first seat has led a card.
+/// The game opened, seen from its second seat, which holds `cards` cards, up to 26 (the
+/// deck's, from a few spades on: some of the led suit, some not); the first seat has led a
+/// card.
 pub fn opened(cards: usize) -> Opened {
     let types: Vec<serde_json::Value> = (0..52)
         .map(|i| {
@@ -103,11 +107,15 @@ pub fn opened(cards: usize) -> Opened {
         {"id": "hand", "owner": 1, "count": 4, "cards": others(4)},
         {"id": "hand", "owner": 2, "count": cards, "cards": hand},
         {"id": "hand", "owner": 3, "count": 5, "cards": others(5)},
+        {"id": "taken", "owner": 2, "count": 3, "cards": [
+            {"id": card_id(40), "up": true}, {"id": card_id(41), "up": true},
+            {"id": card_id(42), "up": true}]},
+        {"id": "taken", "owner": 1, "count": 1, "cards": [{"id": card_id(35), "up": true}]},
         {"id": "trick", "count": 1, "cards": [{"id": card_id(1), "up": true}],
          "captions": ["North"]}
     ]);
     let state = json!({
-        "state": {"cells": {}, "ext": {"view": {"table": zones}}},
+        "state": {"cells": {}, "ext": {"view": {"table": zones, "panel_actions": ["card-"]}}},
         "status": "active", "move_seq": 1, "impulse_seat": 2
     });
     let game = json!({"game_def_id": GAME, "status": "active", "seats": [

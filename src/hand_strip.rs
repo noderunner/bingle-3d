@@ -7,7 +7,7 @@
 //! neighbours, so it can be read.
 //!
 //! The strip lies between the game's panel and the rows of buttons at the bottom right
-//! (`hud::BottomRight`), above the line of words along the bottom; a long hand overlaps as far as
+//! (`hud::BottomRight`), above the line of words along the bottom (`hud::BottomLine`); a long hand overlaps as far as
 //! it must to fit there (`place`). A window too narrow for that has it above those rows. Only
 //! the cards take the pointer: beside a short hand, the table behind is clicked.
 
@@ -18,7 +18,7 @@ use bevy::ui_widgets::{Activate, Button, observe};
 use bevy::window::PrimaryWindow;
 
 use crate::game_panel;
-use crate::hud::{BOTTOM_LINE, BottomRight};
+use crate::hud::{BOTTOM_LINE_AT, BottomLine, BottomRight};
 use crate::net::api::Gesture;
 use crate::net::{Net, WatchStatus};
 use crate::props::CARD_SIZE;
@@ -73,10 +73,11 @@ pub const POINTED_RAISE: f32 = 30.0;
 const PAPER: Color = Color::srgb(0.95, 0.94, 0.90);
 const RIM: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
 
-/// Where the strip lies in a window `width` wide (logical pixels), given the rows at the bottom
-/// right (each its width and how far above the window's bottom its top is), for `cards` cards:
-/// from the left and the right of the window, above its bottom, and how far each card is from
-/// the one before it.
+/// Where the strip lies in a window `width` wide (logical pixels), given how far above the
+/// window's bottom the line of words there reaches (`line`) and the rows at the bottom right
+/// (each its width and how far above the window's bottom its top is), for `cards` cards: from
+/// the left and the right of the window, above its bottom, and how far each card is from the
+/// one before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placing {
     pub left: f32,
@@ -85,15 +86,15 @@ pub struct Placing {
     pub step: f32,
 }
 
-pub fn place(width: f32, rows: &[(f32, f32)], cards: usize) -> Placing {
+pub fn place(width: f32, line: f32, rows: &[(f32, f32)], cards: usize) -> Placing {
     let left = game_panel::MARGIN + game_panel::WIDTH + GAP;
     let widest = rows.iter().map(|r| r.0).fold(0.0, f32::max);
     let beside = EDGE + widest + GAP;
     let (right, bottom) = if width - left - beside >= 2.0 * CARD_WIDE {
-        (beside, BOTTOM_LINE)
+        (beside, line + GAP / 2.0)
     } else {
         // Too narrow beside them: above them.
-        let top = rows.iter().map(|r| r.1).fold(BOTTOM_LINE, f32::max);
+        let top = rows.iter().map(|r| r.1).fold(line, f32::max);
         (EDGE, top + GAP / 2.0)
     };
     let room = width - left - right;
@@ -222,6 +223,7 @@ type Rows = (With<BottomRight>, Without<Strip>, Without<Slot>);
 /// from the one before it as there is room for.
 fn lay_out(
     windows: Query<&Window, With<PrimaryWindow>>,
+    lines: Query<&ComputedNode, With<BottomLine>>,
     rows: Query<(&Node, &ComputedNode), Rows>,
     mut strips: Query<&mut Node, (With<Strip>, Without<Slot>)>,
     mut slots: Query<(&Slot, &mut Node), Without<Strip>>,
@@ -241,8 +243,12 @@ fn lay_out(
             (size.x, bottom + size.y)
         })
         .collect();
+    let line = lines
+        .iter()
+        .map(|c| BOTTOM_LINE_AT + c.size().y * c.inverse_scale_factor())
+        .fold(BOTTOM_LINE_AT, f32::max);
     let count = slots.iter().count();
-    let at = place(window.width(), &rows, count);
+    let at = place(window.width(), line, &rows, count);
     for mut node in &mut strips {
         let wanted = (px(at.left), px(at.right), px(at.bottom));
         if (node.left, node.right, node.bottom) != wanted {
@@ -315,13 +321,17 @@ mod tests {
     #[test]
     fn a_long_hand_overlaps_as_far_as_it_must_between_the_panel_and_the_buttons() {
         let rows = [(380.0, 60.0), (300.0, 92.0), (240.0, 126.0)];
-        let short = place(1280.0, &rows, 5);
+        let short = place(1280.0, 30.0, &rows, 5);
         let left = game_panel::MARGIN + game_panel::WIDTH;
         assert!(short.left > left, "clear of the game's panel");
         assert!(short.right > 380.0 + EDGE, "clear of the buttons");
-        assert_eq!(short.bottom, BOTTOM_LINE, "above the line of words");
+        assert!(short.bottom > 30.0, "above the line of words");
+        assert!(
+            place(1280.0, 50.0, &rows, 5).bottom > 50.0,
+            "however many lines it wraps to"
+        );
         assert!(short.step > CARD_WIDE, "a short hand side by side");
-        let long = place(1280.0, &rows, 13);
+        let long = place(1280.0, 30.0, &rows, 13);
         let room = 1280.0 - long.left - long.right;
         assert!(long.step < CARD_WIDE, "overlapping");
         assert!(
@@ -329,12 +339,12 @@ mod tests {
             "as wide as the room there is"
         );
         // Each card's corner still shows, however long the hand.
-        assert_eq!(place(1280.0, &rows, 80).step, LEAST_STEP);
+        assert_eq!(place(1280.0, 30.0, &rows, 80).step, LEAST_STEP);
         // Too narrow beside the buttons: above them, the whole width beyond the panel.
-        let narrow = place(800.0, &rows, 13);
+        let narrow = place(800.0, 30.0, &rows, 13);
         assert_eq!(narrow.right, EDGE);
         assert!(narrow.bottom > 126.0);
-        assert_eq!(place(1280.0, &rows, 1).step, 0.0);
+        assert_eq!(place(1280.0, 30.0, &rows, 1).step, 0.0);
     }
 
     #[test]

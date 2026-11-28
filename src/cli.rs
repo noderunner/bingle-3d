@@ -214,8 +214,8 @@ impl Options {
                     let n: usize = v
                         .parse()
                         .map_err(|_| format!("--test-hand: {v:?} is not a number of cards"))?;
-                    if n == 0 || n > 52 {
-                        return Err("--test-hand holds 1 to 52 cards".into());
+                    if n == 0 || n > 26 {
+                        return Err("--test-hand holds 1 to 26 cards".into());
                     }
                     opts.test_hand = Some(n);
                 }
