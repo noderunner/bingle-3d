@@ -253,6 +253,14 @@ cargo run -- --showcase --view 15,38,0.5
 cargo run -- --showcase --view 0,40,0.22,0,0.24 --frames 80 --screenshot sinking.png
 ```
 
+`--test-hand N` lays a made-up card game of three seats on the table, with you holding N cards of
+the usual deck, without a server: to look at the hand along the bottom of the window. Give the run a
+`--server` nobody listens on, since a card clicked is sent there.
+
+```sh
+cargo run -- --test-hand 13 --server http://127.0.0.1:9 --frames 120 --screenshot hand.png
+```
+
 **In a headset**: the place and the table at their real size, controllers that point and click,
 the login and main screens on a screen across the table, the game's panel beside it, a menu,
 and a keyboard. Build with the `vr` feature. A build with it starts in the headset by itself when

@@ -21,6 +21,19 @@ impl Plugin for HudPlugin {
 #[derive(Component)]
 struct FpsText;
 
+/// A row of buttons at the bottom right of the window, which the hand along the bottom keeps
+/// clear of (`hand_strip.rs`).
+#[derive(Component)]
+pub struct BottomRight;
+
+/// The line of words along the bottom of the window (how to move the camera), which the hand
+/// along the bottom keeps above: it may wrap in a narrow window.
+#[derive(Component)]
+pub struct BottomLine;
+
+/// How far above the window's bottom that line stands.
+pub const BOTTOM_LINE_AT: f32 = 10.0;
+
 const HINT: &str = "Play: click or drag, Enter · Back: right-click, Backspace · Menu: Esc · Orbit: right-drag, arrows · \
                     Pan: middle-drag, W A S D · Zoom: wheel · Coordinates: C · Legal moves: L · Reconnect: F5";
 
@@ -29,6 +42,7 @@ fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
     let color = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7));
     commands.spawn((
         crate::login::MainOnly,
+        BottomLine,
         Text::new(HINT),
         font.clone(),
         color,
@@ -37,7 +51,7 @@ fn spawn_hud(mut commands: Commands, fonts: Res<UiFonts>) {
         Node {
             position_type: PositionType::Absolute,
             left: px(16),
-            bottom: px(10),
+            bottom: px(BOTTOM_LINE_AT),
             ..default()
         },
     ));

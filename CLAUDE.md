@@ -428,6 +428,12 @@ A game's own rules and its players' words keep their terms.
   terms (`seat_turn`, `from_seat`: the viewer's seat on the player's side, play going left),
   a hand `Held` (the viewer's fanned up to them, another's standing in the air, its back to
   the table), a trick `Played` (each card towards who played it) and a `Row`.
+  `src/hand_strip.rs`: the player's own hand drawn flat along the bottom of the window
+  instead (not in a headset), between the game's panel and the rows at the bottom right
+  (`hud::BottomRight`), from `HandStrip`, which `card_table` fills with the cards that have
+  come to rest at the near edge of the table (`Layout::lay_strip`), unseen there; a card that
+  may be played is a button. `src/test_hand.rs`: `--test-hand N`, a made-up game of three
+  seats with N cards in the player's hand and no server, to look at it.
   `src/card_table.rs`: a card game's cards on a cloth in place of its board (the board stands
   aside: `sync_board`), for a patience or a game whose look has `[cards]` (`on_table`), from
   the position's card zones (`Position::card_zones`: a declared game's own, else the view's

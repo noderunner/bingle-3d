@@ -243,6 +243,7 @@ pub fn layout<'z>(zones: impl IntoIterator<Item = (&'z str, usize)>) -> Layout {
         size: Vec2::new(width, depth),
         room: REACH,
         round: false,
+        strip: None,
     }
 }
 

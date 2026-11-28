@@ -1281,6 +1281,21 @@ look of its own:
     words beside it: what the line decides, and what that box would make the rule, as the
     view says (`label`, `hint`), so no picture has to be guessed at.
   - A marker may have several parts in its seat's color (`seat_parts`: its plinth, its eyes).
+- **The player's hand along the bottom of the window (2026-11-28, #74)**: outside a headset
+  the player's own hand is drawn flat in the window, not fanned in the world
+  (`hand_strip.rs`), each card its face's picture; in a headset it stays in the world. Its
+  cards lie unseen at the near edge of the cloth (`Layout::lay_strip`): a card dealt is carried
+  there over the table and joins the strip as it lands, and a card played leaves the strip and
+  sets off from there. A card that may be played is a button (a click plays it, as on the fan);
+  while not all may, those that may stand a little up out of the strip, and the one under the
+  pointer stands up further, over its neighbours, to be read. The strip lies between the game's
+  panel and the rows of buttons at the bottom right (`hud::BottomRight`), above the line of
+  words; a long hand overlaps as far as it must to fit (`hand_strip::place`), and a window too
+  narrow for that has it above the rows. Only the cards take the pointer. The other seats'
+  hands still stand in the air. The issue's open choices taken so: the other hands as they
+  were, the overlap and the raised card under the pointer, and the camera where it was.
+  `--test-hand N` lays a made-up game of three seats, the player holding N cards, with no
+  server, to look at it.
 - Not built: a card dragged to the middle; the cards a seat may play lit (they stand out
   instead); a place printed for a pile on a round table; a taken trick carried to its
   winner's pile (it leaves the middle when the next is led, and the pile has grown already);

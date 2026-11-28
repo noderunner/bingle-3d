@@ -29,6 +29,7 @@ fn spawn_buttons(mut commands: Commands, fonts: Res<UiFonts>, all: Res<Environme
     commands
         .spawn((
             crate::login::MainOnly,
+            crate::hud::BottomRight,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(12),
