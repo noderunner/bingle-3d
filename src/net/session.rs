@@ -22,8 +22,8 @@ use rustls::ClientConfig;
 use super::api::{
     self, BotInfo, BotMatchRequest, BotMatchResponse, Compatibility, CreateGameRequest,
     CreateGameResponse, ErrorBody, Game, GameDef, GameInfo, GameSeat, GameState, GuestKey, Index,
-    JoinRequest, JoinResponse, MoveRequest, MoveResponse, OpenGame, OpenGames, PlayerRequest,
-    Selections,
+    JoinRequest, JoinResponse, MoveRequest, MoveResponse, OpenGame, OpenGames, OwnGame, OwnGames,
+    PlayerRequest, Selections,
 };
 use super::api::{AddBotRequest, AddBotResult, GameStatus, SeatRequest};
 use super::api::{CLIENT, ClientFile, ClientIndex};
@@ -49,10 +49,20 @@ pub struct Snapshot {
     pub api_version: String,
     pub defs: Vec<GameDef>,
     pub games: Vec<OpenGame>,
+    /// The unfinished games this client has a seat in.
+    pub own: Vec<OwnGame>,
     /// The account signed in, if one is.
     pub account: Option<Account>,
     /// The account that was signed in is no longer: the server ended its session.
     pub session_ended: bool,
+}
+
+/// What a reading of the list of games brings: the games that match, and the games this client
+/// sits in (whether or not they match).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Listed {
+    pub games: Vec<OpenGame>,
+    pub own: Vec<OwnGame>,
 }
 
 /// The account this client is signed in to.
@@ -356,12 +366,14 @@ impl Session {
         let (defs, hidden) = public(self.get_as_me(&url, "/api/game-defs")?, &self.private_looks);
         self.hidden = hidden;
         let games: OpenGames = self.get_as_me(&url, "/api/games")?;
+        let own = self.own_games(&url)?;
         Ok(Snapshot {
             server: url.to_string(),
             version: index.version,
             api_version,
             defs,
             games: self.shown(games.games),
+            own,
             account: self.account.clone(),
             session_ended: std::mem::take(&mut self.session_ended),
         })
@@ -899,10 +911,24 @@ impl Session {
     }
 
     /// The unfinished games that match `query`, newest change first.
-    pub fn games(&mut self, query: &GameQuery) -> Result<Vec<OpenGame>, Problem> {
+    pub fn games(&mut self, query: &GameQuery) -> Result<Listed, Problem> {
         let url = self.url.clone().map_err(Problem::BadAddress)?;
         let list: OpenGames = self.get_as_me(&url, &games_path(query))?;
-        Ok(self.shown(list.games))
+        let own = self.own_games(&url)?;
+        Ok(Listed {
+            games: self.shown(list.games),
+            own,
+        })
+    }
+
+    /// The games this client has a seat in that are not finished, but for a private game's.
+    fn own_games(&mut self, url: &ServerUrl) -> Result<Vec<OwnGame>, Problem> {
+        let list: OwnGames = self.get_as_me(url, "/api/me/games")?;
+        Ok(list
+            .games
+            .into_iter()
+            .filter(|g| g.status != "finished" && !self.hidden.contains(&g.game_def_id))
+            .collect())
     }
 
     /// The games of these that this build shows: none of a private game.
@@ -1707,10 +1733,12 @@ pub(crate) mod tests {
         assert_eq!(public(read, &none).1, HashSet::from(["b".to_string()]));
     }
 
-    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.20.0","docs":"/api/docs"}"#;
+    const INDEX: &str = r#"{"version":"0.115.0","api_version":"1.26.0","docs":"/api/docs"}"#;
     const DEFS: &str =
         r#"[{"id":"hex-7","name":"Hex (7×7)","seats_required":2,"family":"hex-11"}]"#;
     const GAMES: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":2,"open_seats":0,"players":[{"Seat":1,"Color":"red","Label":"","Name":"Ana","Bot":""}],"impulse_seat":1,"move_seq":0,"updated_at":"x"}]}"#;
+
+    const OWN: &str = r#"{"games":[{"room_code":"N5WUVW","game_def_id":"hex-7","name":"Hex (7×7)","status":"active","seats":["Ana"],"updated_at":"x"},{"room_code":"DONE11","game_def_id":"hex-7","name":"Hex (7×7)","status":"finished","seats":["Ana"],"updated_at":"x"}]}"#;
 
     /// A Bingle that knows the keys in `valid` and hands out `bgg_new` when asked.
     fn bingle(index: &'static str, valid: &'static [&'static str]) -> Box<Handler> {
@@ -1725,7 +1753,8 @@ pub(crate) mod tests {
                 ("POST", "/api/guest") => (201, r#"{"key":"bgg_new"}"#.into()),
                 (_, "/api/game-defs") if key_ok => (200, DEFS.into()),
                 (_, "/api/games") if key_ok => (200, GAMES.into()),
-                (_, "/api/game-defs" | "/api/games") => (
+                (_, "/api/me/games") if key_ok => (200, OWN.into()),
+                (_, "/api/game-defs" | "/api/games" | "/api/me/games") => (
                     401,
                     r#"{"error":"auth: that guest key is not one this server knows"}"#.into(),
                 ),
@@ -1745,7 +1774,7 @@ pub(crate) mod tests {
         assert!(matches!(s.probe(), Err(Problem::Unreachable(_))));
         s.use_server(&good);
         let probe = s.probe().expect("there");
-        assert_eq!(probe.api_version, "1.20.0");
+        assert_eq!(probe.api_version, "1.26.0");
         assert_eq!(probe.account, None);
         assert!(!probe.guest_key);
         let paths: Vec<String> = seen
@@ -1790,10 +1819,12 @@ pub(crate) mod tests {
         let (addr, seen) = serve(bingle(INDEX, &["bgg_new"]));
         let mut s = session(&addr);
         let snap = s.connect().expect("connects");
-        assert_eq!(snap.api_version, "1.20.0");
+        assert_eq!(snap.api_version, "1.26.0");
         assert_eq!(snap.version, "0.115.0");
         assert_eq!(snap.defs[0].name, "Hex (7×7)");
         assert_eq!(snap.games[0].players[0].name, "Ana");
+        let own: Vec<&str> = snap.own.iter().map(|g| g.room_code.as_str()).collect();
+        assert_eq!(own, ["N5WUVW"], "a finished game is not listed");
 
         s.connect().expect("again");
         let seen = seen.lock().unwrap();
@@ -2118,6 +2149,7 @@ pub(crate) mod tests {
                     (200, DEFS.into())
                 }
                 (_, "/api/games") if session_ok || auth == "Bearer bgg_new" => (200, GAMES.into()),
+                (_, "/api/me/games") if session_ok || auth == "Bearer bgg_new" => (200, OWN.into()),
                 _ => (401, r#"{"error":"auth: who is this?"}"#.into()),
             }
         })

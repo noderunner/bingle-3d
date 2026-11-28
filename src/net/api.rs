@@ -19,10 +19,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// several side by side (`Board::boards`: Alice chess), 1.17 the files a game offers each
 /// client (`clients`, [`ClientIndex`]: a look this client fetches, `downloads`), 1.18 the
 /// sign-in code of a server's setup file ([`CodeLoginRequest`], `setup.rs`), and 1.20 the pieces
-/// a legal selection turns over and the color each becomes (`converts_to`).
+/// a legal selection turns over and the color each becomes (`converts_to`), and 1.26 the games
+/// the viewer has a seat in (`GET /api/me/games`, [`OwnGames`]).
 pub const API_VERSION: Version = Version {
     major: 1,
-    minor: 20,
+    minor: 26,
     patch: 0,
 };
 
@@ -519,6 +520,27 @@ pub struct OpenGame {
     /// A seat is kept for this viewer, a friend of the game's creator.
     #[serde(default)]
     pub reserved_for_you: bool,
+}
+
+/// `GET /api/me/games` (API 1.26): the games this viewer, a guest or an account, has a seat in.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OwnGames {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub games: Vec<OwnGame>,
+}
+
+/// A game this viewer has a seat in. It is the viewer's for being listed: it carries no seat
+/// index, and nothing of whose turn it is.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OwnGame {
+    pub room_code: String,
+    pub game_def_id: String,
+    pub name: String,
+    /// "waiting", "active" or "finished".
+    pub status: String,
+    /// The names this viewer plays under, one for each seat held.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub seats: Vec<String>,
 }
 
 /// A taken seat, as `GET /api/games` lists it (these field names are capitalised on the wire).
@@ -1631,8 +1653,13 @@ mod tests {
     #[test]
     fn a_server_must_share_the_major_and_have_at_least_the_minor() {
         use Compatibility::*;
-        assert_eq!(compatibility(Some("1.20.0")), Compatible);
-        assert_eq!(compatibility(Some("1.21.2")), Compatible);
+        assert_eq!(compatibility(Some("1.26.0")), Compatible);
+        assert_eq!(compatibility(Some("1.27.2")), Compatible);
+        assert_eq!(
+            compatibility(Some("1.25.0")),
+            ServerTooOld(Some("1.25.0".into())),
+            "1.25 has no list of the games a viewer has a seat in"
+        );
         assert_eq!(
             compatibility(Some("1.19.0")),
             ServerTooOld(Some("1.19.0".into())),
@@ -1787,7 +1814,7 @@ mod tests {
         assert!(Event::parse("not json").is_err());
     }
 
-    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.20.0.schema.json");
+    const SCHEMA: &str = include_str!("../../schema/bingle-api-1.26.0.schema.json");
 
     fn schema() -> Value {
         serde_json::from_str(SCHEMA).expect("the schema is JSON")
@@ -1989,6 +2016,7 @@ mod tests {
         reads::<GuestKey>("POST /api/guest");
         reads::<Vec<GameDef>>("GET /api/game-defs");
         reads::<OpenGames>("GET /api/games");
+        reads::<OwnGames>("GET /api/me/games");
         reads::<GameInfo>("GET /api/game-defs/{id}");
         reads::<ClientIndex>("GET /api/game-defs/{id}/clients/{client}");
         reads::<Vec<BotInfo>>("GET /api/bots");

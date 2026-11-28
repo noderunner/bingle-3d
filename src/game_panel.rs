@@ -834,6 +834,7 @@ mod tests {
             api_version: "1.8.0".into(),
             defs: vec![],
             games: vec![],
+            own: vec![],
             account: None,
             session_ended: false,
         });

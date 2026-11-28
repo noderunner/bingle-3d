@@ -186,7 +186,7 @@ wood with a dark border, and red checkers for arrows. Blooms' stones are polishe
 jasper and tiger's eye for Warm, lapis lazuli and slate for Cool), each color in a small wooden
 bowl beside the board: click a bowl to take a stone, then click where it goes. What each player
 captures is carried to a small wooden tray in front of them, with a square for every capture the win
-needs. The client needs a Bingle whose API is 1.20 or newer. Games a server builds from its private
+needs. The client needs a Bingle whose API is 1.26 or newer. Games a server builds from its private
 overlay (commercial games, marked `private`) are shown only when the client has their look: one the
 server offers, or one in the private folder.
 

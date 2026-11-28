@@ -811,6 +811,7 @@ mod tests {
                 api_version: "1.7.0".into(),
                 defs: vec![],
                 games: vec![],
+                own: vec![],
                 account: Some(crate::net::session::Account {
                     handle: "ana".into(),
                     display_name: String::new(),

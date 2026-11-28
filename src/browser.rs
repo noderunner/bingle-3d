@@ -18,12 +18,12 @@ use crate::appearance::Appearances;
 use crate::families::{Badge, Family, families};
 use crate::fonts::UiFonts;
 use crate::friends::{FriendAction, Friends};
-use crate::net::api::{GameDef, Gesture, OpenGame};
+use crate::net::api::{GameDef, Gesture, OpenGame, OwnGame};
 use crate::net::session::Problem;
 use crate::net::tls::Fingerprint;
 use crate::net::{
-    Connection, GAMES_EVERY, GameList, GameQuery, LobbyCall, Net, Request, Resign, ServerStatus,
-    Target, TimeControl, WatchStatus, find_games, lobby, reconnect, resign, stop_watching, watch,
+    Connection, GameList, GameQuery, LobbyCall, Net, Request, Resign, ServerStatus, Target,
+    TimeControl, WatchStatus, find_games, lobby, reconnect, resign, stop_watching, watch,
 };
 use crate::new_game::{self, Fill, Form, NewGame};
 use crate::play;
@@ -247,6 +247,8 @@ pub(crate) enum Action {
     },
     /// List only the games with a free seat (or every one again).
     FreeSeats(bool),
+    /// List only the games this client has a seat in (or every one again).
+    MyGames(bool),
     /// On the main screen: show the *Games* tab's new games or its active ones.
     ShowGames(GamesView),
     /// On the main screen: open the setup of the game of this family.
@@ -823,13 +825,13 @@ fn games_being_played(
     list: &GameList,
     appearances: &Appearances,
 ) {
-    area.spawn(line(f.regular(13.0), colors::MUTED, &describe_query(list)));
     area.spawn(buttons()).with_children(|row| {
         let (label, open_seats) = if list.query.open_seats {
             ("Show full games too", false)
         } else {
             ("Only with a free seat", true)
         };
+        row.spawn(chip(f, "My Games", Action::MyGames(!list.mine), list.mine));
         row.spawn(button(f, label, Action::FreeSeats(open_seats)));
         if list.query.family.is_some() {
             row.spawn(button(
@@ -845,93 +847,136 @@ fn games_being_played(
     if let Some(problem) = &list.problem {
         area.spawn(line(f.regular(13.0), colors::WARN, &problem.message()));
     }
-    if list.games.is_empty() {
+    let rows = rows(list);
+    if rows.is_empty() {
         area.spawn(line(f.regular(14.0), colors::MUTED, "None right now."));
     }
-    for game in &list.games {
-        let (title, detail) = describe_game(game);
-        // The list gives each seat taken its one color (`color`), not every color it plays.
-        let dots = |seat: u32| -> Vec<Color> {
-            game.players
-                .iter()
-                .find(|p| p.seat == seat)
-                .map(|p| appearances.seat_paint(&game.game_def_id, &p.color, seat))
-                .into_iter()
-                .collect()
-        };
-        area.spawn(card()).with_children(|card| {
-            card.spawn(line(f.semibold(15.0), colors::TEXT, &title));
-            card.spawn(said(f.regular(13.0), colors::MUTED, &detail, &dots, 10.0));
-            if game.status == "active" {
-                card.spawn(buttons()).with_children(|row| {
-                    row.spawn(button(f, "Watch", Action::Watch(game.room_code.clone())));
-                });
-            } else if game.status == "waiting" && game.open_seats > 0 {
-                card.spawn(buttons()).with_children(|row| {
-                    row.spawn(button(f, "Join", Action::Join(game.room_code.clone())));
+    for row in rows {
+        match row {
+            Row::Listed { game, mine } => {
+                let (title, detail) = describe_game(game);
+                // The list gives each seat taken its one color (`color`), not every color it plays.
+                let dots = |seat: u32| -> Vec<Color> {
+                    game.players
+                        .iter()
+                        .find(|p| p.seat == seat)
+                        .map(|p| appearances.seat_paint(&game.game_def_id, &p.color, seat))
+                        .into_iter()
+                        .collect()
+                };
+                area.spawn(card()).with_children(|card| {
+                    card.spawn(line(f.semibold(15.0), colors::TEXT, &title));
+                    card.spawn(said(f.regular(13.0), colors::MUTED, &detail, &dots, 10.0));
+                    if let Some((label, action)) = game_button(game, mine) {
+                        card.spawn(buttons()).with_children(|row| {
+                            row.spawn(button(f, label, action));
+                        });
+                    }
                 });
             }
-        });
+            Row::OwnOnly(own) => {
+                area.spawn(card()).with_children(|card| {
+                    card.spawn(line(f.semibold(15.0), colors::TEXT, &own_title(own)));
+                    card.spawn(buttons()).with_children(|row| {
+                        row.spawn(button(f, "Resume", Action::Watch(own.room_code.clone())));
+                    });
+                });
+            }
+        }
     }
 }
 
-/// Which games the list shows, in words.
-pub fn describe_query(list: &GameList) -> String {
-    let which = match &list.query.family {
-        Some(_) => format!("{} (any size or layout)", list.family_name),
-        None => "Every game".to_string(),
-    };
-    let seats = if list.query.open_seats {
-        "with a free seat"
-    } else {
-        "being played or waiting for players"
-    };
-    format!(
-        "{which}, {seats}; read again every {} s.",
-        GAMES_EVERY.as_secs()
-    )
+/// One game of the *Active* list.
+#[derive(Debug, PartialEq)]
+enum Row<'a> {
+    /// A game the server lists, and whether this client has a seat in it.
+    Listed { game: &'a OpenGame, mine: bool },
+    /// A game this client has a seat in that the list leaves out: all that is known of it is
+    /// what `/me/games` says.
+    OwnOnly(&'a OwnGame),
 }
 
-/// A game's title line and what is happening in it, in words, each player with their seat's
-/// dot before their name.
+/// The games to list: those the server lists, and with *My Games* only the ones this client has a
+/// seat in, with its games the list leaves out after them. Those carry neither a game's family
+/// nor its free seats, so they are listed only when neither of those filters is on.
+fn rows(list: &GameList) -> Vec<Row<'_>> {
+    let mine = |code: &str| list.own.iter().any(|g| g.room_code == code);
+    let mut rows: Vec<Row> = list
+        .games
+        .iter()
+        .map(|game| Row::Listed {
+            game,
+            mine: mine(&game.room_code),
+        })
+        .filter(|row| !list.mine || matches!(row, Row::Listed { mine: true, .. }))
+        .collect();
+    if list.mine && list.query == GameQuery::default() {
+        rows.extend(
+            list.own
+                .iter()
+                .filter(|own| !list.games.iter().any(|g| g.room_code == own.room_code))
+                .map(Row::OwnOnly),
+        );
+    }
+    rows
+}
+
+/// A game's button: *Resume* on a game this client has a seat in, started or not; otherwise
+/// *Watch* a game being played, or *Join* one waiting with a seat free.
+fn game_button(game: &OpenGame, mine: bool) -> Option<(&'static str, Action)> {
+    let code = game.room_code.clone();
+    if mine {
+        Some(("Resume", Action::Watch(code)))
+    } else if game.status == "active" {
+        Some(("Watch", Action::Watch(code)))
+    } else if game.status == "waiting" && game.open_seats > 0 {
+        Some(("Join", Action::Join(code)))
+    } else {
+        None
+    }
+}
+
+fn own_title(game: &OwnGame) -> String {
+    format!("{}  ·  {}", game.name, game.room_code)
+}
+
+/// A game's title line, and under it the number of its seats and, in a game being played, the
+/// seat to move by its color (with the seat's dot), or the seats still free in one waiting.
 pub fn describe_game(game: &OpenGame) -> (String, Vec<Said>) {
     let title = format!("{}  ·  {}", game.name, game.room_code);
-    let mut detail = Vec::new();
-    if game.players.is_empty() {
-        detail.push(Said::words("nobody yet"));
-    }
-    for (i, p) in game.players.iter().enumerate() {
-        if i > 0 {
-            detail.push(Said::words(" vs "));
+    let seats = format!(
+        "{} {}",
+        game.seats,
+        if game.seats == 1 { "seat" } else { "seats" }
+    );
+    let mut detail = vec![Said::words(seats)];
+    match game.status.as_str() {
+        "waiting" if game.open_seats > 0 => {
+            detail.push(Said::words(format!(" · {} free", game.open_seats)));
         }
-        detail.push(Said::Seat(p.seat));
-        detail.push(Said::words(p.name.clone()));
-    }
-    detail.push(Said::words("  —  "));
-    let state = match game.status.as_str() {
-        "waiting" if game.reserved_for_you => "a seat is kept for you".to_string(),
-        "waiting" if game.open_seats > 0 => format!(
-            "waiting for players: {} of {} {} free",
-            game.open_seats,
-            game.seats,
-            if game.seats == 1 { "seat" } else { "seats" }
-        ),
-        "waiting" if game.lobby => "waiting for its host to start it".to_string(),
-        "waiting" => "about to start".to_string(),
-        "active" => match game
-            .impulse_seat
-            .and_then(|s| game.players.iter().find(|p| p.seat == s))
-        {
-            Some(p) => {
+        "waiting" => {}
+        "active" => {
+            if let Some(p) = game
+                .impulse_seat
+                .and_then(|s| game.players.iter().find(|p| p.seat == s))
+            {
+                detail.push(Said::words(" · "));
                 detail.push(Said::Seat(p.seat));
-                format!("{} to move", p.name)
+                detail.push(Said::words(capitalized(&p.color)));
             }
-            None => "playing".to_string(),
-        },
-        other => other.to_string(),
-    };
-    detail.push(Said::words(state));
+        }
+        other => detail.push(Said::words(format!(" · {other}"))),
+    }
     (title, detail)
+}
+
+/// A color's name with its first letter capital: `black` as `Black`.
+fn capitalized(color: &str) -> String {
+    let mut chars = color.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// A game's title line: its family's title, and how many play the member chosen.
@@ -1209,6 +1254,7 @@ fn on_activate(
         Action::ChooseMember { family, def_id } => {
             chosen.0.insert(family.clone(), def_id.clone());
         }
+        Action::MyGames(on) => list.mine = *on,
         Action::FreeSeats(open_seats) => {
             let query = GameQuery {
                 open_seats: *open_seats,
@@ -1468,11 +1514,20 @@ mod tests {
             ),
             "{asked:?}"
         );
+        // *My Games* narrows what is already read, and keeps the other two filters.
+        press(&mut app, Action::MyGames(true));
+        assert!(requests.try_iter().next().is_none());
         let list = app.world().resource::<GameList>();
+        assert!(list.mine);
         assert_eq!(
-            describe_query(list),
-            "Hex (7×7) (any size or layout), with a free seat; read again every 5 s."
+            list.query,
+            GameQuery {
+                family: Some("hex-11".into()),
+                open_seats: true
+            }
         );
+        press(&mut app, Action::MyGames(false));
+        assert!(!app.world().resource::<GameList>().mine);
     }
 
     #[test]
@@ -1608,62 +1663,108 @@ mod tests {
     }
 
     #[test]
-    fn a_game_in_play_says_who_is_to_move() {
+    fn a_game_in_play_says_its_seats_and_whose_turn() {
         let mut g = game("active", 2, &[("Ana", ""), ("Bot (Random)", "random")]);
+        g.players[1].color = "black".into();
         g.impulse_seat = Some(2);
         let (title, detail) = describe_game(&g);
         assert_eq!(title, "Hex (7×7)  ·  N5WUVW");
-        assert_eq!(
-            words(&detail),
-            "Ana vs Bot (Random)  —  Bot (Random) to move"
-        );
-        // Every name of a seat's player has the seat's dot before it.
-        let seats: Vec<u32> = detail
-            .iter()
-            .filter_map(|s| match s {
-                Said::Seat(seat) => Some(*seat),
-                Said::Words(_) => None,
-            })
-            .collect();
-        assert_eq!(seats, [1, 2, 2]);
+        assert_eq!(words(&detail), "2 seats · Black");
+        // The seat to move has its dot before its color.
+        assert_eq!(detail[2], Said::Seat(2));
+        g.impulse_seat = None;
+        assert_eq!(words(&describe_game(&g).1), "2 seats");
+        g.seats = 1;
+        assert_eq!(words(&describe_game(&g).1), "1 seat");
     }
 
     #[test]
     fn a_waiting_game_says_how_many_seats_are_free() {
         let (_, detail) = describe_game(&game("waiting", 2, &[("Ana", "")]));
-        assert_eq!(
-            words(&detail),
-            "Ana  —  waiting for players: 1 of 2 seats free"
-        );
+        assert_eq!(words(&detail), "2 seats · 1 free");
         let (_, detail) = describe_game(&game("waiting", 4, &[]));
-        assert_eq!(
-            words(&detail),
-            "nobody yet  —  waiting for players: 4 of 4 seats free"
-        );
+        assert_eq!(words(&detail), "4 seats · 4 free");
         let mut full = game("waiting", 2, &[("Ana", ""), ("Bo", "")]);
         full.lobby = true;
-        assert_eq!(
-            words(&describe_game(&full).1),
-            "Ana vs Bo  —  waiting for its host to start it"
-        );
-    }
-
-    #[test]
-    fn a_seat_kept_for_this_viewer_is_said() {
-        let mut kept = game("waiting", 2, &[("Ana", "")]);
-        kept.reserved_for_you = true;
-        assert_eq!(
-            words(&describe_game(&kept).1),
-            "Ana  —  a seat is kept for you"
-        );
+        assert_eq!(words(&describe_game(&full).1), "2 seats");
     }
 
     #[test]
     fn a_status_this_client_does_not_know_is_shown_as_it_is() {
         assert_eq!(
             words(&describe_game(&game("paused", 2, &[])).1),
-            "nobody yet  —  paused"
+            "2 seats · paused"
         );
+    }
+
+    fn own(code: &str) -> OwnGame {
+        OwnGame {
+            room_code: code.into(),
+            game_def_id: "hex-7".into(),
+            name: "Hex (7×7)".into(),
+            status: "active".into(),
+            seats: vec!["Ana".into()],
+        }
+    }
+
+    fn listed(code: &str, status: &str, open: u32) -> OpenGame {
+        let mut g = game(status, 2, &[("Ana", "")]);
+        g.room_code = code.into();
+        g.open_seats = open;
+        g
+    }
+
+    fn codes<'a>(rows: &'a [Row<'a>]) -> Vec<&'a str> {
+        rows.iter()
+            .map(|r| match r {
+                Row::Listed { game, .. } => game.room_code.as_str(),
+                Row::OwnOnly(o) => o.room_code.as_str(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_game_with_a_seat_of_this_clients_says_resume_started_or_not() {
+        let active = listed("AAAAAA", "active", 0);
+        let waiting = listed("BBBBBB", "waiting", 1);
+        let full = listed("CCCCCC", "waiting", 0);
+        let button = |g: &OpenGame, mine| game_button(g, mine).map(|(label, _)| label);
+        assert_eq!(button(&active, false), Some("Watch"));
+        assert_eq!(button(&waiting, false), Some("Join"));
+        assert_eq!(button(&full, false), None);
+        for g in [&active, &waiting, &full] {
+            assert_eq!(button(g, true), Some("Resume"));
+        }
+        assert_eq!(
+            game_button(&waiting, true).unwrap().1,
+            Action::Watch("BBBBBB".into()),
+            "it opens the room, where the table finds the seat"
+        );
+    }
+
+    #[test]
+    fn my_games_narrows_the_list_and_adds_the_games_it_leaves_out() {
+        let mut list = GameList::default();
+        list.games = vec![
+            listed("AAAAAA", "active", 0),
+            listed("BBBBBB", "active", 0),
+            listed("CCCCCC", "waiting", 1),
+        ];
+        list.own = vec![own("BBBBBB"), own("CCCCCC"), own("LEFTOU")];
+        let all = rows(&list);
+        assert_eq!(codes(&all), ["AAAAAA", "BBBBBB", "CCCCCC"]);
+        assert!(matches!(all[0], Row::Listed { mine: false, .. }));
+        assert!(matches!(all[1], Row::Listed { mine: true, .. }));
+        list.mine = true;
+        assert_eq!(codes(&rows(&list)), ["BBBBBB", "CCCCCC", "LEFTOU"]);
+        // The games the list leaves out have no family and no free seats to filter by.
+        list.query.open_seats = true;
+        assert_eq!(codes(&rows(&list)), ["BBBBBB", "CCCCCC"]);
+        list.query = GameQuery {
+            family: Some("hex-11".into()),
+            open_seats: false,
+        };
+        assert_eq!(codes(&rows(&list)), ["BBBBBB", "CCCCCC"]);
     }
 
     #[test]
