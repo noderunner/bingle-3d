@@ -124,6 +124,8 @@ pub struct LinkOpen {
     /// The client has used its server before (`Store::has_used`).
     pub used: bool,
     pub stage: Stage,
+    /// What the player is to be told of the trade, until they close it.
+    pub said: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +147,12 @@ impl LinkOpen {
         } else {
             Stage::AskServer
         };
-        LinkOpen { link, used, stage }
+        LinkOpen {
+            link,
+            used,
+            stage,
+            said: None,
+        }
     }
 
     /// The address the login screen checks for the link.
@@ -167,6 +174,8 @@ pub enum Answer {
     Stay,
     /// The first run's question: open game links with this program, or not.
     OpenLinks(bool),
+    /// Close what was said of the trade.
+    Dismiss,
 }
 
 /// Goes in at the server the login screen has checked, as its buttons do.
@@ -266,6 +275,7 @@ fn on_answer(
             open.stage = Stage::Done;
             go(&net, &mut login, &mut status);
         }
+        Answer::Dismiss => open.said = None,
         Answer::Stay if matches!(open.stage, Stage::AskIdentity { .. }) => {
             open.link.code = None;
             open.stage = Stage::Done;
@@ -322,6 +332,13 @@ type Asked = (String, String, Vec<(String, Answer)>);
 /// What the panel asks now, if anything: a title, words, and the buttons.
 fn asked(open: Option<&LinkOpen>, setting: &LinkSetting, screen: Screen) -> Option<Asked> {
     if let Some(open) = open {
+        if let Some((title, body)) = &open.said {
+            return Some((
+                title.clone(),
+                body.clone(),
+                vec![("OK".into(), Answer::Dismiss)],
+            ));
+        }
         match &open.stage {
             Stage::AskServer => {
                 let (title, body) = link::server_question(&open.link);
@@ -438,6 +455,16 @@ mod tests {
         let (title, _, answers) = asked(Some(&open), &setting(true), Screen::Main).unwrap();
         assert!(title.contains("ana"), "the link's question comes first");
         assert_eq!(answers[1], ("Stay as ana".into(), Answer::Stay));
+    }
+
+    #[test]
+    fn what_the_trade_came_to_is_said_until_closed() {
+        let mut open = LinkOpen::new(link(true), true);
+        open.stage = Stage::Done;
+        open.said = Some(("The link did not change who you are".into(), "x".into()));
+        let (title, _, answers) = asked(Some(&open), &setting(false), Screen::Main).unwrap();
+        assert_eq!(title, "The link did not change who you are");
+        assert_eq!(answers, [("OK".to_string(), Answer::Dismiss)]);
     }
 
     #[test]

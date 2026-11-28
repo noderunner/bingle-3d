@@ -1374,8 +1374,8 @@ the maintainer was away, and every choice here is one the maintainer may reverse
   `POST /auth/client {code}` **with no bearer** (`Session::trade_link_code`): nothing is merged.
   An account's session is kept over the guest key, which stays for signing out; a guest's key
   takes the place of the one kept, and a session kept there is signed out first. Spent, too old
-  or too many (`401`, `429`): the client joins as who it already is, and says so; the code is
-  never tried again, and never logged or kept.
+  or too many (`401`, `429`): the client joins as who it already is, and says so over the game
+  (`LinkOpen::said`, closed with *OK*); the code is never tried again, and never logged or kept.
 - **Not built:** a link handed to a copy already running. The client has no channel between two
   copies, so a second copy opens at the game; one instance only is for an issue of its own. A
   setup file taken in the same run sets the link aside (both say who to be), and the player is

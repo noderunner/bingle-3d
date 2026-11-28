@@ -1237,6 +1237,13 @@ pub enum Connection {
 /// How long to wait before trying an unreachable server again.
 pub const RETRY_AFTER: Duration = Duration::from_secs(5);
 
+/// The screen up, the login screen, and a link the run was started from.
+type Screens<'w> = (
+    Option<Res<'w, Screen>>,
+    Option<ResMut<'w, LoginScreen>>,
+    Option<ResMut<'w, crate::link_open::LinkOpen>>,
+);
+
 // A system: each resource it fills is a parameter.
 #[allow(clippy::too_many_arguments)]
 pub fn poll_network(
@@ -1249,7 +1256,7 @@ pub fn poll_network(
     mut friends: ResMut<Friends>,
     mut call: ResMut<DirectCalling>,
     mut voice: ResMut<VoiceChat>,
-    (screen, mut login): (Option<Res<Screen>>, Option<ResMut<LoginScreen>>),
+    (screen, mut login, mut link): Screens,
     (mut downloads, appearances): (
         Option<ResMut<Downloads>>,
         Option<Res<crate::appearance::Appearances>>,
@@ -1462,9 +1469,13 @@ pub fn poll_network(
                 }
             }
             Ok(Reply::LinkTraded(result)) => {
-                if let Some(notice) = crate::link::traded_notice(&result) {
-                    warn!("{notice}");
-                    status.notices.push(notice);
+                if let Some((title, body)) = crate::link::traded_notice(&result) {
+                    warn!("{title}. {body}");
+                    // Said over whatever shows by then, the game itself most often.
+                    match link.as_mut() {
+                        Some(open) => open.said = Some((title, body)),
+                        None => status.notices.push(format!("{title}. {body}")),
+                    }
                 }
             }
             Ok(Reply::SignedOut(result)) => {

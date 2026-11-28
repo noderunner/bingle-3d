@@ -460,25 +460,26 @@ pub fn stay_label(now: &Identity) -> String {
     }
 }
 
-/// What the player is told once a link's code was traded: nothing when it made them who the
-/// link said; that they joined as who they already were when it was refused (spent, too old,
-/// too many) or could not be traded.
+/// What the player is told once a link's code was traded, as a title and its words: nothing
+/// when it made them who the link said; that they joined as who they already were when it was
+/// refused (spent, too old, too many) or could not be traded.
 pub fn traded_notice(
     result: &Result<crate::net::session::Traded, crate::net::session::Problem>,
-) -> Option<String> {
+) -> Option<(String, String)> {
     use crate::net::session::Problem;
     let why = match result {
         Ok(_) => return None,
         Err(Problem::Refused { status: 401, .. }) => {
-            "its code was used already or is too old".to_string()
+            "Its code was used already or is too old".to_string()
         }
         Err(Problem::Refused { status: 429, .. }) => {
-            "too many links were opened from this address".to_string()
+            "Too many links were opened from this address".to_string()
         }
-        Err(problem) => format!("its code could not be traded ({})", problem.message()),
+        Err(problem) => format!("Its code could not be traded ({})", problem.message()),
     };
-    Some(format!(
-        "The link did not change who you are: {why}. You joined as who you already were."
+    Some((
+        "The link did not change who you are".into(),
+        format!("{why}: you joined as who you already were."),
     ))
 }
 
@@ -851,15 +852,16 @@ mod tests {
         use crate::net::session::{Problem, Traded};
         assert_eq!(traded_notice(&Ok(Traded::Guest)), None);
         let refused = |status| {
-            traded_notice(&Err(Problem::Refused {
+            let (title, body) = traded_notice(&Err(Problem::Refused {
                 status,
                 message: "x".into(),
             }))
-            .unwrap()
+            .unwrap();
+            format!("{title}. {body}")
         };
         assert!(refused(401).contains("used already or is too old"));
         assert!(refused(401).contains("joined as who you already were"));
-        assert!(refused(429).contains("too many"));
+        assert!(refused(429).contains("Too many"));
     }
 
     #[test]
