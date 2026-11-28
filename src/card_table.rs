@@ -42,11 +42,12 @@ use bevy::picking::events::{PointerClick, PointerOut, PointerOver, PointerPress}
 use bevy::picking::pointer::{PointerAction, PointerButton, PointerInput};
 use bevy::prelude::*;
 
-use crate::appearance::{Appearance, Appearances, CardsLook};
+use crate::appearance::{Appearance, Appearances, CardsLook, DealingLook};
 use crate::assets;
 use crate::board::BoardBuilt;
 use crate::card_layout::{self, Layout, Placed};
 use crate::cursor::{Feel, Sense, TableFeel, Under};
+use crate::deal::{self, Dealing, Dealt, Deck};
 use crate::drag::{self, CardPress, Drag, LetGo};
 use crate::escape_menu::{self, EscapeMenu};
 use crate::hand::{BoardEdge, Carry, Hands, Held, Rest, Route, Surface};
@@ -74,6 +75,7 @@ impl Plugin for CardTablePlugin {
             .init_resource::<Pointed>()
             .init_resource::<HandStrip>()
             .init_resource::<InHeadset>()
+            .init_resource::<Dealing>()
             .add_message::<PointerInput>()
             .add_observer(on_press)
             .add_message::<BoardBuilt>()
@@ -87,6 +89,7 @@ impl Plugin for CardTablePlugin {
             .add_systems(
                 Update,
                 (
+                    cut_deal,
                     let_go,
                     follow_cards,
                     hold_cards.run_if(resource_changed::<Drag>),
@@ -106,7 +109,9 @@ impl Plugin for CardTablePlugin {
                 )
                     .chain()
                     .before(Hands),
-            );
+            )
+            // After the hand's carrying, which a card being shuffled is not the hand's.
+            .add_systems(Update, run_deal.after(Hands));
     }
 }
 
@@ -127,6 +132,8 @@ const GRIP: f32 = CARD_SIZE.y / 2.0 - 0.008;
 /// How long after one another the cards going somewhere at once set off, at the most in all.
 const STAGGER: f32 = 0.045;
 const STAGGER_MAX: f32 = 1.6;
+/// How long after the last card of a deal lands it is over.
+const END_AFTER: f32 = 0.05;
 /// How much higher a card goes on its way than the hand carries a piece, so it clears the
 /// piles it passes over (and turns over in the air).
 const OVER: f32 = 0.02;
@@ -298,6 +305,10 @@ struct CardRoot {
     /// Whether the player's own hand is drawn along the bottom of the window (not in a
     /// headset).
     strip: bool,
+    /// The position last laid (its `move_seq`), and whether the game was waiting to start
+    /// then: a start seen is dealt.
+    seq: u64,
+    waiting: bool,
 }
 
 /// A card: what the position calls it (its id, or its zone and place for one face down), where
@@ -563,7 +574,84 @@ type Existing<'a> = (
     Option<&'a Carry>,
     Option<&'a InHand>,
     &'a Parts,
+    Has<Dealt>,
 );
+
+/// A card set off for where the position puts it: from which pile, to which, and its place
+/// there.
+struct Going {
+    card: Entity,
+    from: String,
+    to: String,
+    index: usize,
+}
+
+/// Of the cards set off, those one pile deals: [`deal::DEAL_LEAST`] or more from one pile to
+/// two others or more. The pile they are dealt from.
+fn dealt_from(going: &[Going]) -> Option<String> {
+    let mut by: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for g in going.iter().filter(|g| g.from != g.to) {
+        by.entry(g.from.as_str()).or_default().insert(g.to.as_str());
+    }
+    by.into_iter()
+        .filter(|(_, to)| to.len() >= 2)
+        .map(|(from, _)| from)
+        .find(|from| {
+            going
+                .iter()
+                .filter(|g| g.from == *from && g.to != *from)
+                .count()
+                >= deal::DEAL_LEAST
+        })
+        .map(str::to_string)
+}
+
+/// The deck's place: the pile its look names, else the stock, else the first pile the
+/// position leaves empty that lies squared or played to (a free cell, the trick), else the
+/// table's middle. The zone, when it is a pile.
+fn deck_of(
+    layout: &Layout,
+    piles: &BTreeMap<String, Vec<CardOnTable>>,
+    named: Option<&str>,
+) -> (Deck, Option<String>) {
+    let empty = |zone: &str| piles.get(zone).is_none_or(|c| c.is_empty());
+    let found = named
+        .filter(|z| layout.piles.contains_key(*z))
+        .or_else(|| layout.piles.contains_key("stock").then_some("stock"))
+        .or_else(|| {
+            layout
+                .piles
+                .iter()
+                .find(|(zone, p)| {
+                    empty(zone)
+                        && matches!(
+                            p.spread,
+                            card_layout::Spread::Squared | card_layout::Spread::Played
+                        )
+                })
+                .map(|(zone, _)| zone.as_str())
+        });
+    match found.and_then(|z| Some((z, layout.piles.get(z)?))) {
+        Some((zone, pile)) => (
+            Deck {
+                at: pile.at,
+                turn: pile.turn,
+            },
+            Some(zone.to_string()),
+        ),
+        None => (Deck::default(), None),
+    }
+}
+
+/// How a card of a deal goes: after its turn, over the piles, silently.
+fn deal_route(delay: f32) -> Route {
+    Route {
+        delay,
+        over: OVER,
+        lands: None,
+        ..Route::default()
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn sync_cards(
@@ -576,6 +664,7 @@ fn sync_cards(
     (put_on, together, appearances): (Res<PutOn>, Res<Together>, Res<Appearances>),
     (mut built, mut cues): (MessageWriter<BoardBuilt>, MessageWriter<Cue>),
     in_headset: Res<InHeadset>,
+    (time, mut dealing): (Res<Time>, ResMut<Dealing>),
 ) {
     let look = |t: &Table| appearances.for_game(&t.info.id);
     let Some(table) = watch.table.as_ref().filter(|t| on_table(&t.info, look(t))) else {
@@ -587,9 +676,12 @@ fn sync_cards(
     let by_look = look(table).and_then(|l| l.cards.as_ref());
     let seen_from = by_look.filter(|l| l.seated()).map_or(0, |_| viewer(table));
     let strip = !in_headset.0;
-    let current = roots
-        .iter_mut()
-        .find(|(_, r)| r.room_code == table.room_code && r.viewer == seen_from && r.strip == strip);
+    let dealing_look = look(table).map(|l| l.dealing.clone()).unwrap_or_default();
+    // A game that was waiting to start is laid again once it has: its start is dealt.
+    let started = |r: &CardRoot| r.waiting && table.state.status == "active";
+    let current = roots.iter_mut().find(|(_, r)| {
+        r.room_code == table.room_code && r.viewer == seen_from && r.strip == strip && !started(r)
+    });
     let Some((root, mut shown)) = current else {
         for (old, _) in &roots {
             commands.entity(old).despawn();
@@ -604,7 +696,9 @@ fn sync_cards(
             &mut materials,
             &mut built,
         );
-        return place_fresh(&mut commands, table, fresh, &server, &mut materials);
+        let now = time.elapsed_secs();
+        let deals = (&dealing_look, &mut *dealing, now);
+        return place_fresh(&mut commands, table, fresh, &server, &mut materials, deals);
     };
     let root_data = &mut *shown;
     let layout = root_data.layout.clone();
@@ -625,7 +719,7 @@ fn sync_cards(
         .map(|(zone, _)| zone.as_str())
         .collect();
 
-    let existing: HashMap<&str, Existing> = cards.iter().map(|c| (c.1.key.as_str(), c)).collect();
+    let existing: HashMap<&str, _> = cards.iter().map(|c| (c.1.key.as_str(), c)).collect();
     let mut wanted: HashSet<String> = HashSet::new();
     let mut order: Vec<(&str, &[CardOnTable])> = piles
         .iter()
@@ -642,7 +736,7 @@ fn sync_cards(
     // What is no longer there: where it was is where what replaces it comes from (a card turned
     // up in its place, a card drawn from the stock).
     let mut gone_at: HashMap<(String, usize), Transform> = HashMap::new();
-    let mut gone: Vec<(usize, Transform)> = Vec::new();
+    let mut gone: Vec<(usize, Transform, String)> = Vec::new();
     for (entity, at, t, ..) in existing.values() {
         if wanted.contains(&at.key) {
             continue;
@@ -653,22 +747,14 @@ fn sync_cards(
             .saturating_add(at.from_top)
             .saturating_sub(1);
         gone_at.insert((at.zone.clone(), index), **t);
-        gone.push((usize::MAX - index, **t));
+        gone.push((usize::MAX - index, **t, at.zone.clone()));
         commands.entity(*entity).despawn();
     }
-    gone.sort_by_key(|(order, _)| *order);
-    let mut gone = gone.into_iter().map(|(_, t)| t);
+    gone.sort_by_key(|(order, ..)| *order);
+    let mut gone = gone.into_iter().map(|(_, t, zone)| (t, zone));
 
-    let mut setting_off = 0usize;
-    let mut route = || {
-        let delay = (setting_off as f32 * STAGGER).min(STAGGER_MAX);
-        setting_off += 1;
-        Route {
-            delay,
-            over: OVER,
-            ..Route::default()
-        }
-    };
+    // The cards set off, in the order they set off unless one pile deals them.
+    let mut going: Vec<Going> = Vec::new();
     let mut lifting = false;
     for (zone, pile) in &order {
         let up = ups(pile);
@@ -707,7 +793,9 @@ fn sync_cards(
                 .filter(|(r, _)| r.contains(&i))
                 .and_then(|(r, landing)| landing.get(i - r.start).copied());
             match existing.get(k.as_str()) {
-                Some((entity, was, t, old_rest, carry, hand, parts)) => {
+                // Still on its way in a deal of this position: it goes on.
+                Some((.., true)) if dealing.running => {}
+                Some((entity, was, t, old_rest, carry, hand, parts, _)) => {
                     let mut e = commands.entity(*entity);
                     if *was != &at {
                         e.insert((at, PileOf(zone.to_string())));
@@ -751,8 +839,8 @@ fn sync_cards(
                         commands.entity(*entity).remove::<Carry>();
                         continue;
                     }
-                    let going = matches!(carry, Some(Carry::Put(to)) if *to == goal);
-                    if going {
+                    let on_way = matches!(carry, Some(Carry::Put(to)) if *to == goal);
+                    if on_way {
                         continue;
                     }
                     let near = t.translation.distance(goal.translation) < 1e-4
@@ -763,12 +851,19 @@ fn sync_cards(
                         }
                         continue;
                     }
-                    commands.entity(*entity).insert((Carry::Put(goal), route()));
+                    commands.entity(*entity).insert(Carry::Put(goal));
+                    going.push(Going {
+                        card: *entity,
+                        from: was.zone.clone(),
+                        to: zone.to_string(),
+                        index: i,
+                    });
                 }
                 None => {
                     // From where a card went, turned as it was there; else where it lies.
                     let from = gone_at
                         .remove(&(zone.to_string(), i))
+                        .map(|t| (t, zone.to_string()))
                         .or_else(|| gone.next());
                     let whole = spawn_card(
                         &mut commands,
@@ -778,13 +873,19 @@ fn sync_cards(
                         &mut root_data.looks,
                         info_cards,
                         card,
-                        from.unwrap_or(rest),
+                        from.as_ref().map_or(rest, |(t, _)| *t),
                     );
                     commands
                         .entity(whole)
                         .insert((at, PileOf(zone.to_string()), Rest(rest)));
-                    if from.is_some() {
-                        commands.entity(whole).insert((Carry::Put(rest), route()));
+                    if let Some((_, was)) = from {
+                        commands.entity(whole).insert(Carry::Put(rest));
+                        going.push(Going {
+                            card: whole,
+                            from: was,
+                            to: zone.to_string(),
+                            index: i,
+                        });
                     }
                 }
             }
@@ -793,20 +894,82 @@ fn sync_cards(
     if lifting {
         cues.write(Cue::Lift);
     }
+
+    // One move on, several cards from one pile to several others: dealt, round the piles.
+    let next = table.state.move_seq == root_data.seq + 1;
+    let deals = next && dealing_look.deal;
+    let from = deals.then(|| dealt_from(&going)).flatten();
+    let seats: Vec<u32> = table.info.seats.iter().map(|s| s.seat).collect();
+    let dealt: Vec<&Going> = going
+        .iter()
+        .filter(|g| {
+            from.as_ref()
+                .is_some_and(|f| *f == g.from && g.to != g.from)
+        })
+        .collect();
+    let first: HashMap<&str, usize> = dealt.iter().fold(HashMap::new(), |mut m, g| {
+        let low = m.entry(g.to.as_str()).or_insert(g.index);
+        *low = (*low).min(g.index);
+        m
+    });
+    let nth = deal::order(
+        &dealt
+            .iter()
+            .map(|g| (deal::rank(&g.to, &seats), g.index - first[g.to.as_str()]))
+            .collect::<Vec<_>>(),
+    );
+    let step = deal::step(dealt.len(), deal_route(0.0).takes());
+    for (g, k) in dealt.iter().zip(&nth) {
+        commands.entity(g.card).insert((
+            deal_route(*k as f32 * step),
+            Dealt {
+                slot: 0,
+                nth: Some(*k),
+            },
+        ));
+    }
+    if !dealt.is_empty() {
+        *dealing = Dealing {
+            room: table.room_code.clone(),
+            seq: table.state.move_seq,
+            began: time.elapsed_secs(),
+            step,
+            ends: (dealt.len() - 1) as f32 * step + deal_route(0.0).takes() + END_AFTER,
+            running: true,
+            cards: dealt.len(),
+            ..default()
+        };
+    }
+    let others = going
+        .iter()
+        .filter(|g| !dealt.iter().any(|d| d.card == g.card));
+    for (setting_off, g) in others.enumerate() {
+        let delay = (setting_off as f32 * STAGGER).min(STAGGER_MAX);
+        commands.entity(g.card).insert(Route {
+            delay,
+            over: OVER,
+            ..Route::default()
+        });
+    }
+    root_data.seq = table.state.move_seq;
 }
 
 /// Lays the table for a game just opened: the cloth, each pile's place and glow, and the cards
-/// as they lie, none of them dealt.
+/// as they lie; or, for a game seen at its start (`deals`), the cards in the deck, to be
+/// shuffled and dealt where they lie (`run_deal`).
 fn place_fresh(
     commands: &mut Commands,
     table: &Table,
     (root, mut data): (Entity, CardRoot),
     server: &AssetServer,
     materials: &mut Assets<StandardMaterial>,
+    (look, dealing, now): (&DealingLook, &mut Dealing, f32),
 ) {
     let layout = data.layout.clone();
     let captions = table.state.state.card_captions();
-    for (zone, pile) in &piles(&table.state.state, &layout, data.by_look.as_ref()) {
+    let piles = piles(&table.state.state, &layout, data.by_look.as_ref());
+    let mut laid: Vec<(Entity, &str, usize, Transform)> = Vec::new();
+    for (zone, pile) in &piles {
         let rests = layout.lie_towards(
             zone,
             &ups(pile),
@@ -835,9 +998,166 @@ fn place_fresh(
                 PileOf(zone.clone()),
                 Rest(rests[i]),
             ));
+            laid.push((whole, zone, i, rests[i]));
         }
     }
+    let start = table.state.status == "active" && table.state.move_seq == 0;
+    if start && look.deal && !laid.is_empty() && !dealing.shown_start(&table.room_code) {
+        deal_start(commands, table, &layout, &piles, &laid, look, dealing, now);
+    }
     commands.entity(root).insert(data);
+}
+
+/// The cards just laid (each its entity, pile, place in it and rest) gathered into the deck,
+/// to be shuffled and dealt round the piles; those of the deck's own pile stay in it, at its
+/// bottom.
+#[allow(clippy::too_many_arguments)]
+fn deal_start(
+    commands: &mut Commands,
+    table: &Table,
+    layout: &Layout,
+    piles: &BTreeMap<String, Vec<CardOnTable>>,
+    laid: &[(Entity, &str, usize, Transform)],
+    look: &DealingLook,
+    dealing: &mut Dealing,
+    now: f32,
+) {
+    let (deck, deck_zone) = deck_of(layout, piles, look.deck.as_deref());
+    let stays = |zone: &str| deck_zone.as_deref() == Some(zone);
+    let seats: Vec<u32> = table.info.seats.iter().map(|s| s.seat).collect();
+    let dealt: Vec<_> = laid.iter().filter(|(_, z, ..)| !stays(z)).collect();
+    let nth = deal::order(
+        &dealt
+            .iter()
+            .map(|(_, zone, i, _)| (deal::rank(zone, &seats), *i))
+            .collect::<Vec<_>>(),
+    );
+    let n = laid.len();
+    let shuffle = if look.shuffle { deal::SHUFFLE } else { 0.0 };
+    let start = |slot: usize| {
+        if look.shuffle {
+            deck.riffle(slot, n, 0.0, BASE)
+        } else {
+            deck.slot(slot, BASE)
+        }
+    };
+    // The deck's own cards at its bottom, as they lie; then the rest, the first dealt on top.
+    let mut bottom = 0;
+    for (entity, zone, _, _) in laid {
+        if stays(zone) {
+            let slot = bottom;
+            bottom += 1;
+            commands
+                .entity(*entity)
+                .insert((Dealt { slot, nth: None }, start(slot)));
+        }
+    }
+    for ((entity, ..), k) in dealt.iter().zip(&nth) {
+        let slot = n - 1 - k;
+        commands.entity(*entity).insert((
+            Dealt {
+                slot,
+                nth: Some(*k),
+            },
+            start(slot),
+        ));
+    }
+    let step = deal::step(dealt.len(), deal_route(0.0).takes());
+    *dealing = Dealing {
+        room: table.room_code.clone(),
+        seq: table.state.move_seq,
+        deck,
+        began: now,
+        shuffle,
+        step,
+        ends: shuffle
+            + dealt.len().saturating_sub(1) as f32 * step
+            + deal_route(0.0).takes()
+            + END_AFTER,
+        running: true,
+        swallow: false,
+        cards: n,
+    };
+}
+
+/// Moves the cards of a shuffle under way, and sets each off on its turn when it is over; once
+/// every card has arrived, the deal is over.
+fn run_deal(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut dealing: ResMut<Dealing>,
+    mut cards: Query<(Entity, &Dealt, &Rest, &mut Transform, Has<Carry>)>,
+) {
+    if !dealing.running {
+        return;
+    }
+    let secs = time.elapsed_secs() - dealing.began;
+    if secs >= dealing.ends {
+        dealing.running = false;
+        for (entity, ..) in &cards {
+            commands.entity(entity).remove::<Dealt>();
+        }
+        return;
+    }
+    for (entity, dealt, rest, mut t, carried) in &mut cards {
+        if secs < dealing.shuffle {
+            *t = dealing.deck.riffle(dealt.slot, dealing.cards, secs, BASE);
+            continue;
+        }
+        if carried {
+            continue;
+        }
+        match dealt.nth {
+            Some(k) => {
+                *t = dealing.deck.slot(dealt.slot, BASE);
+                let due = dealing.shuffle + k as f32 * dealing.step - secs;
+                commands
+                    .entity(entity)
+                    .insert((Carry::Put(rest.0), deal_route(due.max(0.0))));
+            }
+            // Staying in the deck: it settles where it lies there.
+            None => {
+                commands.entity(entity).remove::<Dealt>();
+            }
+        }
+    }
+}
+
+/// A shuffle or a deal under way ends at once, every card where it rests, at a press of the
+/// primary button (which does nothing else: its click is swallowed) or when the position is
+/// another.
+fn cut_deal(
+    mut commands: Commands,
+    mut dealing: ResMut<Dealing>,
+    watch: Res<WatchStatus>,
+    mut inputs: MessageReader<PointerInput>,
+    mut cards: Query<(Entity, &Rest, &mut Transform), With<Dealt>>,
+) {
+    let mut cut = false;
+    for input in inputs.read() {
+        match input.action {
+            PointerAction::Press(PointerButton::Primary) if dealing.running => {
+                cut = true;
+                dealing.swallow = true;
+            }
+            PointerAction::Release(PointerButton::Primary) if dealing.swallow => {
+                dealing.swallow = false;
+            }
+            _ => {}
+        }
+    }
+    let other = watch
+        .table
+        .as_ref()
+        .is_none_or(|t| t.room_code != dealing.room || t.state.move_seq != dealing.seq);
+    if !dealing.running || !(cut || other) {
+        return;
+    }
+    dealing.running = false;
+    for (entity, rest, mut t) in &mut cards {
+        *t = rest.0;
+        commands.entity(entity).remove::<(Dealt, Carry)>();
+    }
 }
 
 /// The cloth, the piles' places and glows, and what the cards in hand follow, for the camera to
@@ -1005,6 +1325,8 @@ fn build(
             by_look,
             viewer: seen_from,
             strip,
+            seq: table.state.move_seq,
+            waiting: table.state.status == "waiting",
         },
     )
 }
@@ -1243,8 +1565,10 @@ fn on_click(
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
     mut together: ResMut<Together>,
+    dealing: Res<Dealing>,
 ) {
-    if click.button != PointerButton::Primary {
+    // A click that ends a deal is the deal's.
+    if click.button != PointerButton::Primary || dealing.holds_clicks() {
         return;
     }
     let (zone, known) = if let Ok(card) = cards.get(click.entity) {
@@ -1363,8 +1687,10 @@ fn on_press(
     watch: Res<WatchStatus>,
     menu: Option<Res<EscapeMenu>>,
     mut drag: ResMut<Drag>,
+    dealing: Res<Dealing>,
 ) {
     if press.button != PointerButton::Primary
+        || dealing.holds_clicks()
         || drag.pressed()
         || !escape_menu::closed(menu.as_deref())
         || !patience_shown(&watch, &roots)
@@ -2704,5 +3030,301 @@ mod tests {
             app.world().get::<Visibility>(dealt),
             Some(&Visibility::Hidden)
         );
+    }
+
+    /// A table that carries its cards and keeps time by a thirtieth of a second a frame.
+    fn dealing_app() -> App {
+        let mut app = app();
+        app.add_plugins(crate::hand::HandPlugin).insert_resource(
+            bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_nanos(
+                1_000_000_000 / 30,
+            )),
+        );
+        app
+    }
+
+    fn frames(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+        }
+    }
+
+    /// Every card: what it is, where it is, where it rests, and whether it is still dealt.
+    fn all_cards(app: &mut App) -> Vec<(CardAt, Transform, Transform, Option<Dealt>)> {
+        let world = app.world_mut();
+        world
+            .query::<(&CardAt, &Transform, &Rest, Option<&Dealt>)>()
+            .iter(world)
+            .map(|(at, t, rest, dealt)| (at.clone(), *t, rest.0, dealt.copied()))
+            .collect()
+    }
+
+    /// No card's face is up that the client may not know.
+    fn nothing_shown_unknown(app: &mut App) {
+        for (at, t, ..) in all_cards(app) {
+            let up = (t.rotation * Vec3::Y).y > 0.2;
+            assert!(!up || at.known, "{} shows its face", at.key);
+        }
+    }
+
+    fn the_made_up_start(app: &mut App, cards: usize, in_headset: bool) {
+        app.insert_resource(Appearances(vec![crate::test_hand::look()]))
+            .insert_resource(InHeadset(in_headset));
+        let table = Table::new(crate::test_hand::started(cards));
+        watch(app, table, None);
+        app.update();
+        app.update();
+    }
+
+    #[test]
+    fn a_game_seen_at_its_start_is_shuffled_face_down_then_dealt_round_the_seats() {
+        let mut app = dealing_app();
+        the_made_up_start(&mut app, 5, false);
+        let dealing = app.world().resource::<Dealing>().clone();
+        assert!(dealing.running);
+        assert_eq!((dealing.cards, dealing.shuffle), (15, deal::SHUFFLE));
+        // Every card in the deck, in the middle where the trick will be, face down.
+        let cards = all_cards(&mut app);
+        assert_eq!(cards.len(), 15);
+        for (at, t, _, dealt) in &cards {
+            assert!(dealt.is_some(), "{}", at.key);
+            assert!(
+                t.translation.xz().length() < CARD_SIZE.y,
+                "{}: {t:?}",
+                at.key
+            );
+            assert!((t.rotation * Vec3::Y).y < -0.9, "face down");
+        }
+        // Dealt round the seats one at a time from the game's first, and none stays.
+        let nth = |zone: &str, from_top: usize| {
+            cards
+                .iter()
+                .find(|(at, ..)| at.zone == zone && at.from_top == from_top)
+                .and_then(|(.., d)| d.and_then(|d| d.nth))
+        };
+        assert_eq!(nth("hand:1", 5), Some(0));
+        assert_eq!(nth("hand:2", 5), Some(1));
+        assert_eq!(nth("hand:3", 5), Some(2));
+        assert_eq!(nth("hand:1", 4), Some(3));
+        assert_eq!(nth("hand:3", 1), Some(14));
+
+        // Shuffled for a second: still in the deck, nothing set off.
+        for _ in 0..28 {
+            app.update();
+            nothing_shown_unknown(&mut app);
+        }
+        assert!(all_cards(&mut app).iter().all(|(.., d)| d.is_some()));
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Carry>().iter(world).count(), 0);
+        // Then dealt, and over within two seconds more, every card where it rests.
+        for _ in 0..62 {
+            app.update();
+            nothing_shown_unknown(&mut app);
+        }
+        assert!(!app.world().resource::<Dealing>().running);
+        for (at, t, rest, dealt) in all_cards(&mut app) {
+            assert_eq!(dealt, None);
+            assert!(
+                t.translation.distance(rest.translation) < 1e-5,
+                "{}",
+                at.key
+            );
+        }
+        // The player's own joined the strip as they landed.
+        assert_eq!(app.world().resource::<HandStrip>().0.len(), 5);
+
+        // Laid again (into a headset and out), the start is not dealt twice.
+        app.insert_resource(InHeadset(true));
+        frames(&mut app, 2);
+        assert!(!app.world().resource::<Dealing>().running);
+        assert!(all_cards(&mut app).iter().all(|(.., d)| d.is_none()));
+    }
+
+    #[test]
+    fn in_a_headset_the_players_hand_is_dealt_into_its_fan_in_the_world() {
+        let mut app = dealing_app();
+        the_made_up_start(&mut app, 4, true);
+        assert!(app.world().resource::<Dealing>().running);
+        frames(&mut app, 100);
+        assert!(app.world().resource::<HandStrip>().0.is_empty());
+        for (at, t, rest, _) in all_cards(&mut app) {
+            assert!(
+                t.translation.distance(rest.translation) < 1e-5,
+                "{}",
+                at.key
+            );
+        }
+        // The player's fan is in front of them, face up to them, and seen.
+        let own = card(
+            &mut app,
+            &crate::test_hand::started(4).state.state.card_zones()["hand:2"][0].id,
+        );
+        let t = app.world().get::<Transform>(own).unwrap();
+        assert!(
+            t.translation.z > 0.1 && (t.rotation * Vec3::Y).z > 0.2,
+            "{t:?}"
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(own),
+            Some(&Visibility::Inherited)
+        );
+    }
+
+    #[test]
+    fn a_press_ends_the_deal_at_once_and_does_nothing_else() {
+        let mut app = dealing_app();
+        let mut turn = Turn::new(1);
+        turn.clicks_only = true;
+        turn.options = vec![LegalSelection {
+            notation: "t1-f".into(),
+            action: "patience".into(),
+            gestures: vec![act("from-t1-1"), act("to-f")],
+            ..Default::default()
+        }];
+        turn.stage = Stage::Choosing;
+        watch(&mut app, dealt(0), Some(turn));
+        frames(&mut app, 10);
+        assert!(app.world().resource::<Dealing>().running, "shuffling");
+        // The stock is the deck: its cards stay, and the columns are dealt from it, the first
+        // of each, then the second's second.
+        let cards = all_cards(&mut app);
+        let nth = |key: &str| {
+            cards
+                .iter()
+                .find(|(at, ..)| at.key == key)
+                .and_then(|(.., d)| d.unwrap().nth)
+        };
+        assert_eq!(nth("stock#0"), None);
+        assert_eq!(nth("hearts-A"), Some(0));
+        assert_eq!(nth("t2#0"), Some(1));
+        assert_eq!(nth("spades-K"), Some(2));
+
+        // Pressed on the ace while it shuffles: no drag begins, and every card is where it rests.
+        let ace = card(&mut app, "hearts-A");
+        app.world_mut().trigger(PointerPress {
+            entity: ace,
+            pointer: Pointer::new(PointerId::Mouse, nowhere()),
+            button: PointerButton::Primary,
+            hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+            count: 1,
+        });
+        app.world_mut().write_message(PointerInput::new(
+            PointerId::Mouse,
+            nowhere(),
+            PointerAction::Press(PointerButton::Primary),
+        ));
+        app.update();
+        assert!(!app.world().resource::<Drag>().pressed(), "no drag");
+        let dealing = app.world().resource::<Dealing>().clone();
+        assert!(!dealing.running && dealing.holds_clicks());
+        for (at, t, rest, dealt) in all_cards(&mut app) {
+            assert_eq!(dealt, None);
+            assert_eq!(t, rest, "{}", at.key);
+        }
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Carry>().iter(world).count(), 0);
+        // Let go: the click was the deal's, and the next is the game's.
+        app.world_mut().write_message(PointerInput::new(
+            PointerId::Mouse,
+            nowhere(),
+            PointerAction::Release(PointerButton::Primary),
+        ));
+        app.update();
+        assert!(!app.world().resource::<Dealing>().holds_clicks());
+        let turn = app.world().resource::<WatchStatus>().turn.clone().unwrap();
+        assert!(turn.gestures.is_empty(), "nothing lifted");
+    }
+
+    #[test]
+    fn the_next_position_ends_a_deal_and_a_game_opened_part_way_is_not_dealt() {
+        let mut app = dealing_app();
+        watch(&mut app, dealt(0), None);
+        frames(&mut app, 40);
+        assert!(app.world().resource::<Dealing>().running, "dealing");
+        watch(&mut app, dealt(1), None);
+        app.update();
+        assert!(!app.world().resource::<Dealing>().running);
+        for (at, t, rest, dealt) in all_cards(&mut app) {
+            assert_eq!(dealt, None);
+            assert_eq!(t, rest, "{}", at.key);
+        }
+
+        let mut app = dealing_app();
+        watch(&mut app, dealt(3), None);
+        frames(&mut app, 2);
+        assert!(!app.world().resource::<Dealing>().running);
+        assert!(all_cards(&mut app).iter().all(|(.., d)| d.is_none()));
+    }
+
+    #[test]
+    fn a_row_dealt_from_the_stock_by_a_move_goes_round_the_columns_silently() {
+        let mut app = dealing_app();
+        let before = json!({
+            "stock": {"cards": [{}, {}, {}, {}]},
+            "t1": {"cards": [{"id": "hearts-A", "up": true}]},
+            "t2": {"cards": [{}, {"id": "spades-K", "up": true}]}
+        });
+        watch(&mut app, table(4, before), None);
+        frames(&mut app, 2);
+        let after = json!({
+            "stock": {"cards": [{}]},
+            "t1": {"cards": [{"id": "hearts-A", "up": true}, {"id": "spades-2", "up": true}, {}]},
+            "t2": {"cards": [{}, {"id": "spades-K", "up": true}, {}]}
+        });
+        watch(&mut app, table(5, after), None);
+        app.update();
+        let dealing = app.world().resource::<Dealing>().clone();
+        assert!(dealing.running && dealing.shuffle == 0.0);
+        assert_eq!(dealing.cards, 3);
+        let world = app.world_mut();
+        let mut dealt: Vec<(String, usize, Route)> = world
+            .query::<(&CardAt, &Dealt, &Route)>()
+            .iter(world)
+            .map(|(at, d, r)| (at.zone.clone(), d.nth.unwrap(), *r))
+            .collect();
+        dealt.sort_by_key(|(_, k, _)| *k);
+        let zones: Vec<&str> = dealt.iter().map(|(z, ..)| z.as_str()).collect();
+        assert_eq!(
+            zones,
+            ["t1", "t2", "t1"],
+            "round the columns, one at a time"
+        );
+        assert!(dealt.iter().all(|(.., r)| r.lands.is_none()), "silent");
+        assert!(dealt[1].2.delay > dealt[0].2.delay);
+        frames(&mut app, 40);
+        assert!(!app.world().resource::<Dealing>().running);
+
+        // One card drawn is no deal.
+        let drawn = json!({
+            "stock": {},
+            "waste": {"cards": [{"id": "hearts-A", "up": true}]},
+            "t1": {"cards": [{"id": "spades-2", "up": true}]}
+        });
+        watch(&mut app, table(6, drawn), None);
+        app.update();
+        assert!(!app.world().resource::<Dealing>().running);
+    }
+
+    #[test]
+    fn the_deck_is_the_looks_pile_else_the_stock_else_an_empty_pile_else_the_middle() {
+        let layout = patience::layout([("stock", 3), ("waste", 0), ("t1", 1), ("c1", 0)]);
+        let piles: BTreeMap<String, Vec<CardOnTable>> =
+            [("t1".to_string(), vec![CardOnTable::default()])].into();
+        let at = |z: &str| layout.piles[z].at;
+        assert_eq!(deck_of(&layout, &piles, None).1.as_deref(), Some("stock"));
+        assert_eq!(deck_of(&layout, &piles, None).0.at, at("stock"));
+        assert_eq!(
+            deck_of(&layout, &piles, Some("c1")).1.as_deref(),
+            Some("c1")
+        );
+        let no_stock = patience::layout([("t1", 1), ("c1", 0), ("c2", 0)]);
+        assert_eq!(deck_of(&no_stock, &piles, None).1.as_deref(), Some("c1"));
+        let full = Layout::placed([(
+            "t1".to_string(),
+            Vec2::new(0.2, 0.0),
+            card_layout::Spread::Down,
+        )]);
+        let (deck, zone) = deck_of(&full, &piles, Some("nowhere"));
+        assert_eq!((deck, zone), (Deck::default(), None));
     }
 }

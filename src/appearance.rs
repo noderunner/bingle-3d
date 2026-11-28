@@ -134,6 +134,9 @@ pub struct Appearance {
     pub stock: Option<StockLook>,
     /// A card game's table, laid out as this file says (`card_table.rs`).
     pub cards: Option<CardsLook>,
+    /// How its deck is shuffled and dealt (`deal.rs`), for any card game, a patience too.
+    #[serde(default)]
+    pub dealing: DealingLook,
     /// The view's move cards, drawn as tiles beside the board (`move_tiles.rs`).
     pub move_tiles: Option<MoveTilesLook>,
     /// The view's board of choices, as a board on the table (`choice_grid.rs`).
@@ -276,6 +279,27 @@ impl CardsLook {
     /// The pile a zone of the position is drawn as: a seat's own (`hand:2`) by the zone's id.
     pub fn pile(&self, zone: &str) -> Option<&PileLook> {
         self.piles.get(zone.split(':').next().unwrap_or(zone))
+    }
+}
+
+/// Which pile a card game's deck is, and whether its shuffle and its deals are shown: every
+/// card game has both unless its look turns one off.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DealingLook {
+    /// The zone whose pile is the deck, when the stock or an empty pile is not the one.
+    pub deck: Option<String>,
+    pub shuffle: bool,
+    pub deal: bool,
+}
+
+impl Default for DealingLook {
+    fn default() -> Self {
+        DealingLook {
+            deck: None,
+            shuffle: true,
+            deal: true,
+        }
     }
 }
 
@@ -1147,6 +1171,21 @@ mod tests {
             count += 1;
         }
         assert_eq!(Appearances::built_in().0.len(), count);
+    }
+
+    #[test]
+    fn every_card_game_is_shuffled_and_dealt_unless_its_look_turns_one_off() {
+        let plain = Appearance::parse("games = [\"t\"]").unwrap().dealing;
+        assert_eq!((plain.deck, plain.shuffle, plain.deal), (None, true, true));
+        let own =
+            Appearance::parse("games = [\"t\"]\n[dealing]\ndeck = \"gone\"\nshuffle = false\n")
+                .unwrap()
+                .dealing;
+        assert_eq!(
+            (own.deck.as_deref(), own.shuffle, own.deal),
+            (Some("gone"), false, true)
+        );
+        assert!(Appearance::parse("[dealing]\ncut = true\n").is_err());
     }
 
     #[test]

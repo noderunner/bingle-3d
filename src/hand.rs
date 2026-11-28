@@ -55,14 +55,14 @@ pub const RISE: f32 = 0.1;
 
 /// How a piece put down gets there, when that is not the way a move's piece does: after a
 /// wait, raised `over` metres higher than it would be (first straight up), taking `across`
-/// seconds over, and sounding as `lands` when it is set down. A captured stone goes so to its
-/// captor's tray.
+/// seconds over, and sounding as `lands` when it is set down (a card dealt makes none). A
+/// captured stone goes so to its captor's tray.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Route {
     pub delay: f32,
     pub over: f32,
     pub across: f32,
-    pub lands: Cue,
+    pub lands: Option<Cue>,
 }
 
 impl Default for Route {
@@ -71,7 +71,7 @@ impl Default for Route {
             delay: 0.0,
             over: 0.0,
             across: ACROSS,
-            lands: Cue::Put,
+            lands: Some(Cue::Put),
         }
     }
 }
@@ -345,8 +345,11 @@ fn carry(time: Res<Time>, mut pieces: Query<Carried, Without<Held>>, mut cues: M
                 let landing = trip.secs < takes;
                 trip.secs += time.delta_secs();
                 // It touches the board: the sound of it set down.
-                if landing && trip.secs >= takes {
-                    cues.write(trip.route.lands);
+                if landing
+                    && trip.secs >= takes
+                    && let Some(cue) = trip.route.lands
+                {
+                    cues.write(cue);
                 }
                 if let Some(at) = travel_by(trip.from, *to, trip.secs, &trip.route) {
                     *t = at;
@@ -537,7 +540,7 @@ mod tests {
             delay: 0.2,
             over: 0.02,
             across: 0.3,
-            lands: Cue::Capture,
+            lands: Some(Cue::Capture),
         };
         let at = |secs: f32| travel_by(from, to, secs, &route).expect("on its way");
         assert_eq!(at(-0.1), from, "waiting where it is");
@@ -573,7 +576,7 @@ mod tests {
                     delay: 0.1,
                     over: 0.01,
                     across: 0.2,
-                    lands: Cue::Capture,
+                    lands: Some(Cue::Capture),
                 },
                 Carry::Put(to),
             ))

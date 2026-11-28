@@ -297,13 +297,18 @@ fn raise(
     }
 }
 
-/// A click on a card that may be played makes its choice.
+/// A click on a card that may be played makes its choice; not one that ends a deal
+/// (`deal.rs`), which is the deal's.
 fn play_card(
     activate: On<Activate>,
     slots: Query<&Slot>,
     net: Res<Net>,
     mut watch: ResMut<WatchStatus>,
+    dealing: Option<Res<crate::deal::Dealing>>,
 ) {
+    if dealing.is_some_and(|d| d.holds_clicks()) {
+        return;
+    }
     if let Some(choice) = slots
         .get(activate.entity)
         .ok()

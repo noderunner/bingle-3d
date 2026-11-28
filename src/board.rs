@@ -1698,7 +1698,7 @@ fn fill_trays(
                                 delay: CAPTURE_WAIT + CAPTURE_EACH * taken.len() as f32,
                                 over: CAPTURE_OVER * kit.scale,
                                 across: CAPTURE_ACROSS,
-                                lands: lands_in_tray(kit),
+                                lands: Some(lands_in_tray(kit)),
                             },
                             Carry::Put(to),
                         ));
@@ -6464,7 +6464,7 @@ wood = "contrast"
                 })
                 .collect();
             routes.sort_by_key(|(i, _)| *i);
-            assert_eq!(routes[0].1.lands, Cue::Capture);
+            assert_eq!(routes[0].1.lands, Some(Cue::Capture));
             assert!(routes[1].1.delay > routes[0].1.delay, "one after another");
             // Nothing else changed: two stones left on the board.
             let mut on_board = app.world_mut().query::<&PieceAt>();
@@ -8355,7 +8355,7 @@ piece = "ring"
             );
             // It lands on its dot cheered, as a win is.
             let mut q = app.world_mut().query_filtered::<&Route, With<InTray>>();
-            assert_eq!(q.single(app.world()).unwrap().lands, Cue::Win);
+            assert_eq!(q.single(app.world()).unwrap().lands, Some(Cue::Win));
         }
 
         #[test]

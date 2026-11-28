@@ -1302,6 +1302,38 @@ look of its own:
   the round table in a headset is not tried.
 - **Next**: the maintainer's eye on it, and a game played through with other people.
 
+### A deck shuffled and dealt (2026-11-28, #78)
+
+- Any card game, a patience too, with nothing new in its look (`deal.rs`, `card_table.rs`).
+  The server shuffles and deals and says neither, so both are shown only where the client
+  need not guess: **at the start**, when it sees a game at its first position (`move_seq` 0,
+  active: opened then, or watched as it starts), the deck shuffled and then dealt, once per
+  game (not again when the table is laid afresh, entering a headset); and **a deal** whenever
+  one move carries three cards or more from one pile to two others or more (a patience's row
+  from the stock). A game opened part-way, or a position after a gap, shows neither. A shuffle
+  in the middle of a game is never guessed from two positions: if a game needs one shown,
+  Bingle must say so (no public game does).
+- **Nothing shown that may not be known**: every card shuffles and travels face down and turns
+  up only on its way to where the position shows it to this client; a card the client does
+  not know has its back on both sides. The order is the server's.
+- The shuffle is one riffle (`Deck::riffle`), about a second: the deck cut into halves side by
+  side, their inner edges lifted, the cards falling in turn into one deck, squared. A deal goes
+  from the deck round the piles one card at a time (round the seats in the game's order from
+  its first; a patience's columns from the left, as a column of seven is dealt by hand), the
+  cards of the deck's own pile staying; two seconds at the most, however many cards. The deck
+  is the look's `[dealing] deck`, else the `stock`, else the first pile the position leaves
+  empty that lies squared or played to (a free cell, the trick), else the table's middle. A
+  card for the player's hand is carried to the near edge and joins the strip as it lands; in
+  a headset it lands in the fan. A look may turn the shuffle off (`[dealing] shuffle = false`)
+  or both (`deal = false`). Bowling Solitaire's deck is its out-of-play pile.
+- A press of the primary button anywhere, or the next position, ends either at once, every
+  card where it rests, and that press does nothing else (`Dealing::holds_clicks`).
+- The issue's open choices taken so: round the seats one card at a time from the deck's own
+  place, one riffle, and no sound (a card dealt lands silently: `Route::lands` may be none); a
+  shuffle's and a card's sounds come later, with the pipeline's.
+- `--test-hand N --test-deal`: the made-up table at its start, dealt from frame 60 of a run a
+  script limits, time going on a thirtieth of a second a frame.
+
 ### After that
 
 - The rest of a game: clocks, undo and take-back requests, draw offers, chat, move list and replay;
