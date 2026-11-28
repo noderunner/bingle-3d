@@ -213,6 +213,13 @@ A game's own rules and its players' words keep their terms.
   screen's probe, its questions, and the first run's offer to open links (`LinkSetting`, a row of
   *Settings*). The code is traded by `Session::trade_link_code`, with no bearer; a guest key it replaces is
   set aside in `keys.toml` (`set_aside`), never dropped or sent, and the login screen takes it back.
+  `src/link_channel.rs`: a link clicked while a copy runs, handed to it by the copy it started
+  (`hands_over`, `hand_over`: bounded, and on any failure that copy starts on its own) over a
+  channel only the same user can reach (a Unix socket in a 0700 directory of the client's own
+  in `$XDG_RUNTIME_DIR`; a named pipe granting only the user on Windows), never a TCP port.
+  Only a link's text crosses it; the running copy (`listens`: a player's start, never a
+  script's) reads once, bounded, and puts it through `Link::parse` and `link_open`'s questions
+  (`take_handed`: a game being played is asked about before it is left).
 - `src/browser.rs`: the main screen: the server's status, the web page's tabs (only *Games* built),
   and in *Games* the cards of the games to start (*New*, with a game's setup when one is picked)
   or the games being played (*Active*). Its `Action` is what every panel's buttons do. The

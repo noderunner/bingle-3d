@@ -411,7 +411,9 @@ name = "Ana"    # the name you sit at a table under ("Player" if not set)
   While it is on, the copy you started last is the one links open. A link opens the client at
   its game, through the login screen's check of its server; a server you have not used is
   shown and asked about first, and a link that would make you somebody else there asks before
-  it does. Not on the Steam Frame. A second copy opens if one is running already.
+  it does. Not on the Steam Frame. A link clicked while the client runs goes to the copy
+  running, which asks before leaving a game being played; a copy started without a link, or by
+  a script, starts as it always has.
 - **A game's look from the server**: a server may offer the look of a game this client does not
   ship (an install pack's `clients/bingle-3d/`, Bingle's ADR 0147). The client fetches it when the
   game is opened (its card's picture when the list shows it), checks it, and keeps it in the

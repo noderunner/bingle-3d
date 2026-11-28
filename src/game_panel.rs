@@ -60,6 +60,11 @@ impl WatchOnStart {
     pub fn clear(&mut self) {
         self.0 = None;
     }
+
+    /// Opens this game once connected: a link handed over while the client runs.
+    pub fn set(&mut self, target: Target) {
+        self.0 = Some(target);
+    }
 }
 
 /// A game waiting for the look the server offers: how far it has been fetched, and the way to
