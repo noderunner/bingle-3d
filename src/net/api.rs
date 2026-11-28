@@ -576,6 +576,10 @@ pub struct GameInfo {
     /// The clients the server has files for, for this game (API 1.17), as [`GameDef::clients`].
     #[serde(default, deserialize_with = "null_as_default")]
     pub clients: Vec<String>,
+    /// The game's own words for how it ended (Bingle ADR 0150), by reason or `reason:detail`; they
+    /// follow "won" or "a draw". Read through [`crate::table::ending_words`].
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub endings: BTreeMap<String, String>,
 }
 
 impl GameInfo {
@@ -1125,6 +1129,9 @@ pub struct GameState {
     /// Why it ended, as a word ("connection", "resign").
     #[serde(default)]
     pub end_reason: String,
+    /// The detail of the reason, when the game gives one.
+    #[serde(default)]
+    pub end_detail: String,
     /// The clock after the change, in a game played with one (events carry it; the state
     /// endpoint does not).
     #[serde(default)]

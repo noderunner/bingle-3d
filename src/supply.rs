@@ -192,6 +192,7 @@ mod tests {
             cards: None,
             engine: String::new(),
             clients: Vec::new(),
+            endings: Default::default(),
         }
     }
 

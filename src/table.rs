@@ -5,6 +5,7 @@
 //! is older than what it has is ignored, and one that skips ahead (a move missed) makes it load
 //! the game again rather than trust a picture with a hole in it.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::clock::Timing;
@@ -279,9 +280,12 @@ impl Table {
         };
         match s.status.as_str() {
             "finished" => {
-                let how = match s.end_reason.as_str() {
-                    "" => String::new(),
-                    r => format!(" ({})", r.replace(['_', '-'], " ")),
+                let how = match ending_words(&self.info.endings, &s.end_reason, &s.end_detail) {
+                    Some(words) => format!(" {words}"),
+                    None => match s.end_reason.as_str() {
+                        "" => String::new(),
+                        r => format!(" ({})", r.replace(['_', '-'], " ")),
+                    },
                 };
                 if let Some(w) = s.winner_seat {
                     named(w, &format!(" won{how}."))
@@ -325,6 +329,40 @@ fn arrived(before: &GameState, after: &GameState) -> Option<String> {
         .filter(|(id, stack)| !stack.is_empty() && before.state.cells.get(*id) != Some(stack));
     let first = changed.next()?.0.clone();
     changed.next().is_none().then_some(first)
+}
+
+/// The longest a game's words for an ending may be, in characters. They come from the server.
+const ENDING_MAX_CHARS: usize = 80;
+
+/// The game's own words for how it ended, which follow "won" or "a draw": those of
+/// `reason:detail` first, then those of `reason` alone (Bingle's ADR 0150, `gameEnding` of the
+/// web page). Held to the client's limits for text from a server: one line of at most
+/// [`ENDING_MAX_CHARS`] characters, without control characters; an entry that is empty once
+/// cleaned is no entry. None when the game has no words, and the raw reason is shown.
+pub fn ending_words(
+    endings: &BTreeMap<String, String>,
+    reason: &str,
+    detail: &str,
+) -> Option<String> {
+    if reason.is_empty() {
+        return None;
+    }
+    let clean = |w: &String| {
+        let line: String = w
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(ENDING_MAX_CHARS)
+            .collect();
+        let line = line.trim();
+        (!line.is_empty()).then(|| line.to_string())
+    };
+    (!detail.is_empty())
+        .then(|| endings.get(&format!("{reason}:{detail}")).and_then(clean))
+        .flatten()
+        .or_else(|| endings.get(reason).and_then(clean))
 }
 
 fn capitalised(s: &str) -> String {
@@ -398,6 +436,7 @@ mod tests {
                 cards: None,
                 engine: String::new(),
                 clients: Vec::new(),
+                endings: Default::default(),
             },
             game: Game {
                 game_def_id: "g".into(),
@@ -428,6 +467,55 @@ mod tests {
             seq,
             state: state(seq, cells),
         }
+    }
+
+    #[test]
+    fn a_games_own_endings_word_the_end_of_a_game() {
+        let mut t = table(1);
+        t.info.endings = [
+            ("sets", "with a set of marbles"),
+            ("sets:red", "with four red marbles"),
+            ("long", &"x".repeat(500)),
+            ("blank", "  \n "),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .into();
+        let end = |t: &mut Table, reason: &str, detail: &str, f: fn(&mut GameState)| {
+            t.state.status = "finished".into();
+            t.state.end_reason = reason.into();
+            t.state.end_detail = detail.into();
+            f(&mut t.state);
+            words(&t.told())
+        };
+        let win: fn(&mut GameState) = |s| s.winner_seat = Some(1);
+        // The detail's own words come first, and say the detail too.
+        assert_eq!(
+            end(&mut t, "sets", "red", win),
+            "Ana won with four red marbles."
+        );
+        // A detail with no words of its own falls back to the reason's.
+        assert_eq!(
+            end(&mut t, "sets", "blue", win),
+            "Ana won with a set of marbles."
+        );
+        assert_eq!(
+            end(&mut t, "sets", "", win),
+            "Ana won with a set of marbles."
+        );
+        let draw: fn(&mut GameState) = |s| {
+            s.winner_seat = None;
+            s.drawn_seats = vec![1, 2];
+        };
+        assert_eq!(
+            end(&mut t, "sets", "", draw),
+            "A draw between Ana and Blue with a set of marbles."
+        );
+        // No entry: the raw reason, as before. So is one that is empty once cleaned.
+        assert_eq!(end(&mut t, "no_entry", "", win), "Ana won (no entry).");
+        assert_eq!(end(&mut t, "blank", "", win), "Ana won (blank).");
+        // Words from a server are cut to the client's limit.
+        let long = end(&mut t, "long", "", win);
+        assert_eq!(long, format!("Ana won {}.", "x".repeat(ENDING_MAX_CHARS)));
     }
 
     #[test]

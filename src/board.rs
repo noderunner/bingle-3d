@@ -4954,6 +4954,7 @@ mod tests {
                     cards: None,
                     engine: String::new(),
                     clients: Vec::new(),
+                    endings: Default::default(),
                 },
                 game: Game {
                     game_def_id: "g".into(),
@@ -8278,6 +8279,7 @@ piece = "ring"
             cards: None,
             engine: String::new(),
             clients: Vec::new(),
+            endings: Default::default(),
         }
     }
 
