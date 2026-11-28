@@ -444,7 +444,10 @@ A game's own rules and its players' words keep their terms.
   moves the cards of the shuffle (after the hand's carrying) and sets each off; a press, or
   the next position, ends it at once (`cut_deal`), and that press's click is nobody's
   (`Dealing::holds_clicks`).
-  `src/card_table.rs`: a card game's cards on a cloth in place of its board (the board stands
+  `src/card_table.rs`: a card game's cards on a cloth in place of its board (`warm_cards` keeps a
+  card too small to see in the scene so the pipelines a card draws with are compiled before a table
+  is laid: Bevy compiles on first use, and until it is done the depth prepass's cards leave the clear
+  color showing, black; the board stands
   aside: `sync_board`), for a patience or a game whose look has `[cards]` (`on_table`), from
   the position's card zones (`Position::card_zones`: a declared game's own, else the view's
   `table`) and the faces of the usual deck (`props::standard_face`). A game laid by its look

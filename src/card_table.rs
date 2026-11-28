@@ -86,6 +86,7 @@ impl Plugin for CardTablePlugin {
             .init_resource::<Under>()
             .init_resource::<TableFeel>()
             .add_systems(Update, sense.in_set(Sense))
+            .add_systems(Update, warm_cards.run_if(resource_changed::<Appearances>))
             .add_systems(
                 Update,
                 (
@@ -650,6 +651,65 @@ fn deal_route(delay: f32) -> Route {
         over: OVER,
         lands: None,
         ..Route::default()
+    }
+}
+
+/// A card too small to be seen, kept in the scene from the first frame a game has cards, so
+/// that the pipelines a card is drawn with are compiled before one is laid. Bevy compiles a
+/// pipeline on a thread the first time something is drawn with it and draws nothing with it
+/// meanwhile, but the depth prepass, whose pipeline is quick, has already written the card:
+/// the table behind it fails the depth test and its place shows the sky's clear color, black,
+/// for the several frames a pipeline with the contact shadows takes. The pipeline is not made
+/// again for the next card of the same kind, so a table laid later draws at once.
+#[derive(Component)]
+struct Warm;
+
+/// The size of a [`Warm`] card: under a pixel from any distance the camera goes.
+const WARM_SCALE: f32 = 1.0e-4;
+
+/// Puts the [`Warm`] cards in the scene if a game has cards and none are yet: one of each
+/// pipeline a card is drawn with (a face with a picture or plain paper, the back and the edge,
+/// and each see-through).
+fn warm_cards(
+    mut commands: Commands,
+    server: Res<AssetServer>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    appearances: Res<Appearances>,
+    warm: Query<(), With<Warm>>,
+) {
+    if !warm.is_empty() || !appearances.0.iter().any(|a| a.cards.is_some()) {
+        return;
+    }
+    let mut looks = Looks::new(&server, &mut materials);
+    let picture = props::standard_face("♠", "A")
+        .map(|file| materials.add(look::card_side(&file).build(&server)));
+    let [ghost_face, ghost_back, ghost_edge] = looks.ghost(None, "", &server, &mut materials);
+    let (back, edge, paper) = (looks.back.clone(), looks.edge.clone(), looks.paper.clone());
+    let mut sets = vec![
+        [("face", paper), ("back", back), ("edge", edge)],
+        [
+            ("face", ghost_face),
+            ("back", ghost_back),
+            ("edge", ghost_edge),
+        ],
+    ];
+    if let Some(picture) = picture {
+        sets.push([
+            ("face", picture),
+            ("back", looks.back.clone()),
+            ("edge", looks.edge.clone()),
+        ]);
+    }
+    for set in sets {
+        let whole = commands
+            .spawn((
+                Name::new("Warm card"),
+                Warm,
+                Transform::from_scale(Vec3::splat(WARM_SCALE)),
+                Visibility::default(),
+            ))
+            .id();
+        parts(&mut commands, &server, &set, whole, Pickable::IGNORE);
     }
 }
 
@@ -2154,6 +2214,40 @@ mod tests {
             kind: "action".into(),
             value: value.into(),
         }
+    }
+
+    #[test]
+    fn a_game_with_cards_has_cards_in_the_scene_before_any_table_is_laid() {
+        let mut app = app();
+        app.update();
+        let mut warm = app.world_mut().query_filtered::<(), With<Warm>>();
+        assert_eq!(warm.iter(app.world()).count(), 0, "no game has cards yet");
+
+        app.world_mut()
+            .resource_mut::<Appearances>()
+            .0
+            .push(crate::test_hand::look());
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let mut warm = world.query_filtered::<&Transform, With<Warm>>();
+        let sets = warm.iter(world).count();
+        assert!(sets >= 2, "plain and see-through, at least: {sets}");
+        assert!(
+            warm.iter(world).all(|t| t.scale.max_element() < 1.0e-3),
+            "too small to be seen"
+        );
+
+        // Not again for each change of the looks.
+        world
+            .resource_mut::<Appearances>()
+            .0
+            .push(crate::test_hand::look());
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let mut warm = world.query_filtered::<(), With<Warm>>();
+        assert_eq!(warm.iter(world).count(), sets);
     }
 
     #[test]
