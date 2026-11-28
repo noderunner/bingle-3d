@@ -222,6 +222,11 @@ contact shadows, and the frame limit. `config.toml` keeps them (`ambient_occlusi
 `anti_aliasing`, `depth_of_field`, `bloom`, `shadows`, `contact_shadows`, `max_fps`); a run with
 `--frames` or `--screenshot` uses the defaults whatever it says.
 
+A timed game of two seats with a game clock has a chess clock beside the board, at the first
+seat's right hand: a wooden case with an analog face at each seat's end, counting down to twelve,
+and an amber lamp lit under the face whose time runs. *Settings, Chess clock* leaves it out
+(`chess_clock = false` in `config.toml`). The panel's times stay.
+
 The window draws at most 60 frames a second, which a board game does not need more than, so the
 GPU and its fans can rest. `max_fps` in `config.toml` changes it (0 draws at the monitor's pace),
 and `--max-fps N` for one run. On a 144 Hz monitor, 72 keeps in step with it.

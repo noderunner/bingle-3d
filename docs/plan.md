@@ -209,6 +209,13 @@ README, this plan, `.gitignore`.
   `impulse_deadline` less `server_time`, so this machine's clock does not matter, and is counted
   down between reports; a game clock's other seats show what they have left. Under 10 s it turns
   amber.
+- A chess clock on the table (2026-11-27, issue #73: `chess_clock.rs`, the pipeline's
+  `chess_clock.py`): in a game of two seats with a game clock, beside the board at the first
+  seat's right hand, clear of what lies there, each seat's face at its end. A face shows twelve
+  o'clock less the time left (hour, minute and second hands; the flag falls at nothing left), the
+  lamp under the face whose time runs is lit, and that end's button stands up. It only shows,
+  and stands unless *Settings* leaves it out (`chess_clock`). Its case is the board's wood. Not
+  yet for more seats, a time a move, or a card game on its cloth; no tick.
 - The lobby: while a game this client has a seat in has not started, the panel offers each open
   seat (*Sit here*, or one of `GET /api/bots` in it), the host *Remove* on every other taken seat,
   and *Leave*, which goes back to the list. A game made with *Start: when I say* on the form
@@ -845,7 +852,7 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
 - *Settings* is built (2026-11-23): fullscreen or a window, and the resolution (`display.rs`),
   kept in `config.toml` (`fullscreen`, `resolution`). Fullscreen is the default (decision 14).
   Esc on *Settings* goes back to the menu. Its *Graphics* page (decision 16) has a row for each
-  effect and the frame limit.
+  effect and the frame limit. A row for the chess clock (`chess_clock`) followed (#73).
 - Found while building it: the interface is blended in linear light (the cameras are HDR), so a
   faint white over the dark panels shows much lighter, and a nearly opaque panel much more
   see-through, than the same colors on the web page. The new parts use opaque colors.

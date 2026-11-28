@@ -122,7 +122,8 @@ impl Plugin for NetPlugin {
         for problem in &problems {
             warn!("{problem}");
         }
-        app.insert_resource(crate::graphics::Kept(graphics));
+        app.insert_resource(crate::graphics::Kept(graphics))
+            .insert_resource(crate::chess_clock::Kept(store.config.chess_clock));
         // The games the private folder has a look for are shown, though the server marks them
         // private (`appearance.rs` reads the folder before this).
         let private_looks = app
@@ -263,6 +264,8 @@ pub enum Request {
     },
     /// Remember the most frames a second to draw, 0 for the monitor's pace.
     RememberMaxFps(u32),
+    /// Whether a timed game of two seats has a chess clock on the table, kept in the config.
+    RememberChessClock(bool),
     /// Read the account's friends list.
     Friends,
     /// Change the friends list, or answer an invitation.
@@ -917,6 +920,10 @@ fn handle(
         }
         Request::RememberMaxFps(fps) => {
             session.remember_max_fps(fps);
+            None
+        }
+        Request::RememberChessClock(on) => {
+            session.remember_chess_clock(on);
             None
         }
         Request::Trust(fp) => Some(connected(session.trust(fp))),
