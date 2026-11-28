@@ -35,7 +35,8 @@ use crate::play::{Outcome, Turn};
 use crate::table::{Step, Table};
 use api::{
     AccountEvent, BotInfo, DirectCall, DirectMessage, DirectSignal, Event, FriendSettings,
-    FriendsList, GameInfo, GameState, IceServer, OpenGame, Selections, VoiceEvent, VoicePeer,
+    FriendsList, GameInfo, GameState, IceServer, OpenGame, OwnGame, Selections, VoiceEvent,
+    VoicePeer,
 };
 use std::collections::BTreeMap;
 
@@ -48,7 +49,7 @@ use crate::login::{LoginScreen, Screen};
 use crate::new_game::NewGame;
 use crate::sign_in::Signing;
 use crate::voice_chat::VoiceChat;
-use session::{Code, Opened, Problem, Session, SignIn, Snapshot};
+use session::{Code, Listed, Opened, Problem, Session, SignIn, Snapshot};
 use socket::Socket;
 use tls::Fingerprint;
 
@@ -437,7 +438,7 @@ enum Reply {
     },
     Games {
         asked: u64,
-        result: Result<Vec<OpenGame>, Problem>,
+        result: Result<Listed, Problem>,
     },
     Setup {
         game_def_id: String,
@@ -1345,9 +1346,10 @@ pub fn poll_network(
                     continue;
                 }
                 match result {
-                    Ok(games) => {
-                        if list.games != games || list.problem.is_some() {
+                    Ok(Listed { games, own }) => {
+                        if list.games != games || list.own != own || list.problem.is_some() {
                             list.games = games;
+                            list.own = own;
                             list.problem = None;
                         }
                     }
@@ -1481,8 +1483,12 @@ pub fn poll_network(
                 // The connection lists every game; a narrower list is asked for again.
                 if list.query == GameQuery::default() {
                     list.asked += 1;
-                    if list.games != snapshot.games || list.problem.is_some() {
+                    if list.games != snapshot.games
+                        || list.own != snapshot.own
+                        || list.problem.is_some()
+                    {
                         list.games = snapshot.games.clone();
+                        list.own = snapshot.own.clone();
                         list.problem = None;
                     }
                 } else {
@@ -1553,6 +1559,11 @@ pub struct GameList {
     /// The name of the game `query.family` stands for, to show.
     pub family_name: String,
     pub games: Vec<OpenGame>,
+    /// The unfinished games this client has a seat in, whether or not `games` has them.
+    pub own: Vec<OwnGame>,
+    /// Only those: the games of `own`, by the *My Games* filter. It is the client's own narrowing
+    /// and is not asked of the server.
+    pub mine: bool,
     /// Why the last reading failed; the games shown are from the one before.
     pub problem: Option<Problem>,
     /// Numbers each question, so that the answer to an older one is dropped.
@@ -1566,6 +1577,8 @@ impl Default for GameList {
             query: GameQuery::default(),
             family_name: String::new(),
             games: vec![],
+            own: vec![],
+            mine: false,
             problem: None,
             asked: 0,
             refresh: Timer::new(GAMES_EVERY, TimerMode::Repeating),
@@ -1962,7 +1975,10 @@ pub(crate) mod tests {
             replies
                 .send(Reply::Games {
                     asked,
-                    result: Ok(vec![open(code)]),
+                    result: Ok(Listed {
+                        games: vec![open(code)],
+                        own: vec![],
+                    }),
                 })
                 .unwrap();
         }
@@ -1975,6 +1991,7 @@ pub(crate) mod tests {
                 api_version: "1.17.0".into(),
                 defs: vec![],
                 games: vec![open("EVERY1")],
+                own: vec![],
                 account: None,
                 session_ended: false,
             }))

@@ -69,11 +69,11 @@
           "type": "string"
         },
         "color": {
-          "description": "Color is the seat's colour.",
+          "description": "Color is the seat's color.",
           "type": "string"
         },
         "name": {
-          "description": "Name is the bot's name at the table, after the seat's faction or colour and its kind (Black Goat (MCTS)).",
+          "description": "Name is the bot's name at the table, after the seat's faction or color and its kind (Black Goat (MCTS)).",
           "type": "string"
         },
         "seat": {
@@ -91,6 +91,97 @@
         "color",
         "bot",
         "status"
+      ],
+      "type": "object"
+    },
+    "Announcement": {
+      "description": "Announcement is one announcement as the API sends it.",
+      "properties": {
+        "body": {
+          "description": "Body is Markdown, in the one language its administrator wrote it in; it is not translated.",
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "pictures": {
+          "description": "Pictures are the names of its pictures, which its body shows by name: each is at /api/announcements/{id}/pictures/{name}.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "published_at": {
+          "description": "PublishedAt is when it was published (RFC 3339).",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "withdrawn": {
+          "description": "Withdrawn: it is offered and listed no more. Only the admin page's list has withdrawn ones.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body",
+        "published_at"
+      ],
+      "type": "object"
+    },
+    "AnnouncementsResponse": {
+      "description": "AnnouncementsResponse is GET /api/announcements' answer.",
+      "properties": {
+        "announcements": {
+          "description": "Announcements are every one published and not withdrawn, oldest first.",
+          "items": {
+            "$ref": "#/$defs/Announcement"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "announcements"
+      ],
+      "type": "object"
+    },
+    "AnnouncementsSeenRequest": {
+      "description": "AnnouncementsSeenRequest is POST /auth/announcements-seen's body.",
+      "properties": {
+        "ids": {
+          "description": "IDs are the announcements the card showed when it was closed.",
+          "items": {
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AnnouncementsSeenResponse": {
+      "description": "AnnouncementsSeenResponse is POST /auth/announcements-seen's answer.",
+      "properties": {
+        "announcements": {
+          "description": "Announcements are the ids still waiting after these were marked: what /auth/me would now say.",
+          "items": {
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "announcements"
       ],
       "type": "object"
     },
@@ -127,6 +218,41 @@
         "name",
         "description",
         "against"
+      ],
+      "type": "object"
+    },
+    "BlockedPlayer": {
+      "description": "BlockedPlayer is one line of an account's blocks, as its profile shows them.",
+      "properties": {
+        "handle": {
+          "type": "string"
+        },
+        "name": {
+          "description": "\"@ana\"",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "handle"
+      ],
+      "type": "object"
+    },
+    "BlocksResponse": {
+      "description": "blocksResponse is GET /friends/blocks' answer: those the account has blocked, by handle. Only the account itself can read it.",
+      "properties": {
+        "blocked": {
+          "items": {
+            "$ref": "#/$defs/BlockedPlayer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "blocked"
       ],
       "type": "object"
     },
@@ -283,9 +409,10 @@
       "type": "object"
     },
     "CardBackDef": {
-      "description": "CardBackDef is the back of a card.",
+      "description": "CardBackDef is the back of a card. What a client paints it in is the client's (ADR 0154: the web page's web.yaml).",
       "properties": {
         "color": {
+          "description": "Color is filled by nothing (TestNoDefinitionCarriesItsLook holds every definition to that): what a client paints the back in is the client's (ADR 0154: the web page's web.yaml says paint). It leaves with the API's next major version (ADR 0134).",
           "type": "string"
         },
         "text": {
@@ -839,7 +966,7 @@
       "type": "object"
     },
     "DirectCall": {
-      "description": "DirectCall is the wire form of a \"dm-call\" event: somebody is calling, or a call has ended.",
+      "description": "DirectCall is the wire form of a \"dm-call\" event: somebody is calling, or a call has ended. A ring still waiting for an answer when /ws-dm opens follows its ready event, and may come twice.",
       "properties": {
         "declined": {
           "description": "Declined says the one being rung would not answer.",
@@ -1214,7 +1341,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/OverlayDef"
           },
-          "description": "Tints colours board cells by key (terrain).",
+          "description": "Tints colors board cells by key (terrain).",
           "type": "object"
         }
       },
@@ -1312,14 +1439,14 @@
       "type": "object"
     },
     "FriendRequest": {
-      "description": "friendRequest is the body of the routes about one person or one invitation: POST /friends/request, /answer, /remove, /invite, /invite-answer and /dismiss.",
+      "description": "friendRequest is the body of the routes about one person or one invitation: POST /friends/request, /answer, /remove, /invite, /invite-answer, /dismiss, /block and /unblock.",
       "properties": {
         "accept": {
           "description": "Accept is the answer (answer, invite-answer).",
           "type": "boolean"
         },
         "handle": {
-          "description": "Handle is the person's (request, answer, remove, invite).",
+          "description": "Handle is the person's (request, answer, remove, invite, block, unblock).",
           "type": "string"
         },
         "room": {
@@ -1551,6 +1678,13 @@
         "engine": {
           "description": "Engine is \"ruleset\" for games whose rules are written in Go: their moves are a sequence of small decisions, and positions carry a derived view (tints, badges, counters) under state.ext.view.",
           "type": "string"
+        },
+        "extra_colors": {
+          "description": "ExtraColors are the colors a piece may have that no seat plays (Fist's neutral pawn), in the definition's order: a client that paints a color by seat paints these after the seats' (ADR 0154).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "family": {
           "type": "string"
@@ -2528,7 +2662,7 @@
           "type": "array"
         },
         "converts": {
-          "description": "Converts are the positions whose pieces the selection turns over: they keep their place and change colour (Othello's flips). Absent as captures are.",
+          "description": "Converts are the positions whose pieces the selection turns over: they keep their place and change color (Othello's flips). Absent as captures are.",
           "items": {
             "type": "string"
           },
@@ -2538,13 +2672,14 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "ConvertsTo is the colour word each of converts turns to, by position.",
+          "description": "ConvertsTo is the color word each of converts turns to, by position.",
           "type": "object"
         },
         "count": {
           "type": "integer"
         },
         "drops": {
+          "description": "Drops is the count dropped on each position of Path for a stack. A ruleset may use it for something else (one game sends what happens to each piece jumped): a client reads it only beside Count.",
           "items": {
             "type": "integer"
           },
@@ -2563,6 +2698,7 @@
           "type": "string"
         },
         "path": {
+          "description": "Path is the positions the selection goes through, in order. With From and no Count they are the landings of a piece that hops from one to the next, the last of them To, and a client may draw each leg as a hop; with Count they are where a stack drops, the last of them To. A ruleset may also send positions that nothing moves through, with neither From nor To. Absent for a step, slide, leap or placement.",
           "items": {
             "type": "string"
           },
@@ -2627,6 +2763,7 @@
           "type": "integer"
         },
         "drops": {
+          "description": "Drops is the count dropped on each position of Path for a stack. A ruleset may use it for something else (one game sends what happens to each piece jumped): a client reads it only beside Count.",
           "items": {
             "type": "integer"
           },
@@ -2642,6 +2779,7 @@
           "type": "string"
         },
         "path": {
+          "description": "Path is the positions the selection goes through, in order. With From and no Count they are the landings of a piece that hops from one to the next, the last of them To, and a client may draw each leg as a hop; with Count they are where a stack drops, the last of them To. A ruleset may also send positions that nothing moves through, with neither From nor To. Absent for a step, slide, leap or placement.",
           "items": {
             "type": "string"
           },
@@ -2711,6 +2849,13 @@
         "admin": {
           "description": "Admin: the account is in the admin group (and may use its powers from here). Mode is \"hybrid\" or \"closed\"; SignupMode \"open\", \"invite\" or \"closed\"; Caps what this browser may do.",
           "type": "boolean"
+        },
+        "announcements": {
+          "description": "Announcements are the ids of the announcements waiting for this guest or account, oldest first (ADR 0155): published after it was made, not withdrawn, and not yet closed by it; POST /auth/announcements-seen marks them. Absent when none is waiting, and always for a newcomer.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
         },
         "caps": {
           "items": {
@@ -2840,6 +2985,7 @@
           "type": "string"
         },
         "drops": {
+          "description": "Drops is the count dropped on each position of Path for a stack. A ruleset may use it for something else (one game sends what happens to each piece jumped): a client reads it only beside Count.",
           "items": {
             "type": "integer"
           },
@@ -2855,6 +3001,7 @@
           "type": "string"
         },
         "path": {
+          "description": "Path is the positions the selection goes through, in order. With From and no Count they are the landings of a piece that hops from one to the next, the last of them To, and a client may draw each leg as a hop; with Count they are where a stack drops, the last of them To. A ruleset may also send positions that nothing moves through, with neither From nor To. Absent for a step, slide, leap or placement.",
           "items": {
             "type": "string"
           },
@@ -3357,10 +3504,10 @@
       "type": "object"
     },
     "OverlayDef": {
-      "description": "OverlayDef is one entry of a DisplayDef legend.",
+      "description": "OverlayDef is one entry of a DisplayDef legend. What a client paints it in is the client's (ADR 0154: the web page's web.yaml).",
       "properties": {
         "color": {
-          "description": "Color is a CSS color (a hex string).",
+          "description": "Color is filled by nothing (TestNoDefinitionCarriesItsLook holds every definition to that): what a client paints a tint or badge in is the client's (ADR 0154: the web page's web.yaml says paint). It leaves with the API's next major version (ADR 0134).",
           "type": "string"
         },
         "glyph": {
@@ -3396,6 +3543,69 @@
       },
       "required": [
         "deals"
+      ],
+      "type": "object"
+    },
+    "OwnGame": {
+      "description": "OwnGame is one of the request's principal's games, for \"My games\".",
+      "properties": {
+        "game_def_id": {
+          "description": "GameDefID is the id of the game being played.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name is the game's name, or its id for a game the catalog does not know.",
+          "type": "string"
+        },
+        "room_code": {
+          "description": "RoomCode is the game's room code.",
+          "type": "string"
+        },
+        "seats": {
+          "description": "Seats are the names the principal plays under, one per seat it holds, in seat order. They are names, not seat indices.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status is the game's status: waiting, active or finished.",
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "UpdatedAt is when the game last changed, as an RFC 3339 time.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "room_code",
+        "game_def_id",
+        "name",
+        "status",
+        "seats",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "OwnGamesResponse": {
+      "description": "ownGamesResponse is GET /me/games' 200 response body.",
+      "properties": {
+        "games": {
+          "description": "Games are the games the asker, a guest or an account, has a seat in, the latest first, at most 60: finished games and waiting ones as well, whether or not GET /games lists them; tutorial rooms are left out. Empty for a request with no key or session.",
+          "items": {
+            "$ref": "#/$defs/OwnGame"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "games"
       ],
       "type": "object"
     },
@@ -3772,7 +3982,7 @@
       "description": "SeatDefDTO describes a seat.",
       "properties": {
         "blend": {
-          "description": "Blend is the two colours a seat is drawn in, when it has two.",
+          "description": "Blend is the two colors a seat is drawn in, when it has two.",
           "items": {
             "type": "string"
           },
@@ -3782,7 +3992,7 @@
           "type": "string"
         },
         "colors": {
-          "description": "Colors is every colour the seat plays, when it plays several (ADR 0117): a piece in any of them is the seat's.",
+          "description": "Colors is every color the seat plays, when it plays several (ADR 0117): a piece in any of them is the seat's.",
           "items": {
             "type": "string"
           },
@@ -4261,10 +4471,10 @@
       "type": "object"
     },
     "SuitDef": {
-      "description": "SuitDef is one suit: how it is named and drawn.",
+      "description": "SuitDef is one suit: how it is named and its pip. What a client paints it in is the client's (ADR 0154: the web page's web.yaml), and whether it is red or black, where the rules ask, is its place in suit_order (ADR 0122).",
       "properties": {
         "color": {
-          "description": "Color is a CSS colour for the suit's pips and card faces.",
+          "description": "Color is filled by nothing (TestNoDefinitionCarriesItsLook holds every definition to that): what a client paints a suit in is the client's (ADR 0154: the web page's web.yaml says paint). It leaves with the API's next major version (ADR 0134).",
           "type": "string"
         },
         "label": {
@@ -4633,9 +4843,9 @@
   },
   "$id": "https://github.com/noderunner/bingle/docs/api.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The requests, responses and WebSocket events of bingle's API, version 1.20.0. Generated from the Go types of the server: do not edit. Objects let unknown fields through: a client ignores those it does not know.",
+  "description": "The requests, responses and WebSocket events of bingle's API, version 1.26.0. Generated from the Go types of the server: do not edit. Objects let unknown fields through: a client ignores those it does not know.",
   "title": "Bingle API messages",
-  "x-api-version": "1.20.0",
+  "x-api-version": "1.26.0",
   "x-dm-events": {
     "badge": {
       "$ref": "#/$defs/BadgeEventData"
@@ -4665,6 +4875,11 @@
         "$ref": "#/$defs/IndexResponse"
       }
     },
+    "GET /api/announcements": {
+      "response": {
+        "$ref": "#/$defs/AnnouncementsResponse"
+      }
+    },
     "GET /api/bots": {
       "response": {
         "items": {
@@ -4684,6 +4899,11 @@
     "GET /api/friends": {
       "response": {
         "$ref": "#/$defs/FriendsList"
+      }
+    },
+    "GET /api/friends/blocks": {
+      "response": {
+        "$ref": "#/$defs/BlocksResponse"
       }
     },
     "GET /api/friends/settings": {
@@ -4763,6 +4983,11 @@
         "$ref": "#/$defs/OwnDealsResponse"
       }
     },
+    "GET /api/me/games": {
+      "response": {
+        "$ref": "#/$defs/OwnGamesResponse"
+      }
+    },
     "GET /api/rtc/config": {
       "response": {
         "$ref": "#/$defs/RTCConfigResponse"
@@ -4829,6 +5054,14 @@
         "$ref": "#/$defs/OKResponse"
       }
     },
+    "POST /api/friends/block": {
+      "request": {
+        "$ref": "#/$defs/FriendRequest"
+      },
+      "response": {
+        "$ref": "#/$defs/OKResponse"
+      }
+    },
     "POST /api/friends/dismiss": {
       "request": {
         "$ref": "#/$defs/FriendRequest"
@@ -4862,6 +5095,14 @@
       }
     },
     "POST /api/friends/request": {
+      "request": {
+        "$ref": "#/$defs/FriendRequest"
+      },
+      "response": {
+        "$ref": "#/$defs/OKResponse"
+      }
+    },
+    "POST /api/friends/unblock": {
       "request": {
         "$ref": "#/$defs/FriendRequest"
       },
@@ -4968,6 +5209,14 @@
       },
       "response": {
         "$ref": "#/$defs/HereResponse"
+      }
+    },
+    "POST /auth/announcements-seen": {
+      "request": {
+        "$ref": "#/$defs/AnnouncementsSeenRequest"
+      },
+      "response": {
+        "$ref": "#/$defs/AnnouncementsSeenResponse"
       }
     },
     "POST /auth/language": {
