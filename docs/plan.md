@@ -641,7 +641,8 @@ The first hand-made look, Hex's, and the pipeline that makes it, so that more ca
   becomes a drag when the pointer leaves it with the button down (read from picking's hover
   map, since nothing there is a space): it is taken up as a click takes it, unless it is in
   hand already, and held under the pointer. What already waits lifted over where it came from
-  is pressed there too, on itself or on its source; the stone the turn holds by itself (Go's,
+  is pressed there too, on itself or on its source (a click on it puts it back, as one on its
+  source does); the stone the turn holds by itself (Go's,
   Hex's, Othello's) is carried from its bowl with nothing chosen. Let go over the board, it is
   the click there (a fence goes on the side aimed at; a tile on a hex it may go on); anywhere
   else, or where that click is refused, the turn is as it was before the press, and what was

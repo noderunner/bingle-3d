@@ -752,6 +752,8 @@ struct FenceKit {
     foot: f32,
     over: Vec3,
     sides: HashMap<String, Vec2>,
+    /// What a click on the bowl takes up, and on the fence in hand puts back.
+    take: Vec<Gesture>,
 }
 
 /// The space between the bowl of fences and the board, or what stands beside it.
@@ -2363,7 +2365,7 @@ fn build_board(
             MeshMaterial3d(bowl_material),
             Transform::from_xyz(at.x, 0.0, at.y).with_scale(Vec3::splat(size)),
             Pickable::default(),
-            TakeUp(choices),
+            TakeUp(choices.clone()),
             Source,
             ChildOf(root),
             children![(
@@ -2391,6 +2393,7 @@ fn build_board(
             material: fence_material,
             foot: low,
             over: Vec3::new(at.x, rim, at.y),
+            take: choices,
             sides: said
                 .sides
                 .iter()
@@ -3716,7 +3719,7 @@ fn bowl_stones(
                     e.insert(looks(id));
                 }
                 // No longer in hand: a click there is on its space.
-                e.remove::<(Source, Pickable)>()
+                e.remove::<(Source, Pickable, Choice)>()
                     .insert((placed, Rest(to), Carry::Put(to)));
             }
             None => {
@@ -3810,6 +3813,12 @@ fn bowl_stones(
         let (source, _) = kit.source_for(&Gesture::piece(piece), yours)?;
         Some((source, piece.to_string()))
     });
+    // A click on what was chosen puts it back, as one on its source does; on the stone the
+    // turn holds by itself, there is nothing to put back.
+    let click = turn
+        .in_hand_choice()
+        .filter(|_| auto.is_none())
+        .map(|g| Choice(g.clone()));
     if let Some((source, id)) =
         auto.or_else(|| turn.in_hand_choice().and_then(|g| kit.source_for(g, yours)))
     {
@@ -3822,14 +3831,19 @@ fn bowl_stones(
         match take(&|f| f.cell.is_none() && f.source == source) {
             // Another kind of the same pool: the piece in hand becomes it.
             Some((entity, was)) => {
+                let mut e = commands.entity(entity);
                 if was.piece != id {
-                    commands.entity(entity).insert((looks(id), held));
+                    e.insert((looks(id), held));
                 }
+                match click {
+                    Some(c) => e.insert(c),
+                    None => e.remove::<Choice>(),
+                };
             }
             None => {
                 let at = over(&source);
                 // Pressed where it waits, it is carried from there (`drag.rs`).
-                commands.spawn((
+                let mut e = commands.spawn((
                     Name::new(format!("{id} in hand")),
                     held,
                     looks(id),
@@ -3842,6 +3856,9 @@ fn bowl_stones(
                     (Source, Pickable::default()),
                     ChildOf(root),
                 ));
+                if let Some(c) = click {
+                    e.insert(c);
+                }
             }
         }
     }
@@ -4138,7 +4155,7 @@ fn show_tints(
                 };
                 commands
                     .entity(entity)
-                    .remove::<(Source, Pickable)>()
+                    .remove::<(Source, Pickable, TakeToPlace)>()
                     .insert((
                         FromStock {
                             kind: kind.clone(),
@@ -4149,7 +4166,13 @@ fn show_tints(
                     ));
                 kept = true;
             }
-            (None, None) if taken == Some(hand.kind.as_str()) && !kept => kept = true,
+            (None, None) if taken == Some(hand.kind.as_str()) && !kept => {
+                // A click on it puts it back, as one on its column does.
+                commands
+                    .entity(entity)
+                    .insert(TakeToPlace(takes[hand.kind.as_str()].clone()));
+                kept = true;
+            }
             _ => commands.entity(entity).despawn(),
         }
     }
@@ -4198,7 +4221,11 @@ fn show_tints(
                 lift: LIFT * kit.scale,
                 scale: kit.scale,
             },
-            (Source, Pickable::default()),
+            (
+                Source,
+                Pickable::default(),
+                TakeToPlace(takes[kind].clone()),
+            ),
             ChildOf(root),
         ));
     }
@@ -4253,7 +4280,7 @@ fn show_fences(
             (Some((key, to)), None) if !kept => {
                 commands
                     .entity(entity)
-                    .remove::<(Source, Pickable)>()
+                    .remove::<(Source, Pickable, TakeUp)>()
                     .insert((HeldFence(Some(key.clone())), Rest(*to), Carry::Put(*to)));
                 kept = true;
             }
@@ -4295,7 +4322,8 @@ fn show_fences(
                         lift: LIFT * kit.scale,
                         scale: kit.scale,
                     },
-                    (Source, Pickable::default()),
+                    // A click on it puts it back, as one on the bowl does.
+                    (Source, Pickable::default(), TakeUp(fence.take.clone())),
                 ));
             }
             _ => {}
@@ -5006,6 +5034,33 @@ mod tests {
             let mut app = app();
             app.insert_resource(Appearances::built_in());
             app
+        }
+
+        /// A click on `entity` (a press and a release on it), as `play::on_click` takes it.
+        fn click_on(app: &mut App, entity: Entity) {
+            use bevy::picking::backend::HitData;
+            use bevy::picking::events::{Pointer, PointerClick};
+            use bevy::picking::pointer::{Location, PointerButton, PointerId};
+            if !app.world().contains_resource::<crate::net::Net>() {
+                app.insert_resource(crate::net::Net::for_test().0)
+                    .add_observer(crate::play::on_click);
+            }
+            let at = Location {
+                target: bevy::camera::NormalizedRenderTarget::None {
+                    width: 1,
+                    height: 1,
+                },
+                position: Vec2::ZERO,
+            };
+            app.world_mut().trigger(PointerClick {
+                entity,
+                pointer: Pointer::new(PointerId::Mouse, at),
+                button: PointerButton::Primary,
+                hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                duration: Duration::ZERO,
+                count: 1,
+            });
+            app.update();
         }
 
         #[test]
@@ -7024,8 +7079,13 @@ wood = "contrast"
             assert_eq!(fence.0, None);
             assert!(matches!(carry, Carry::Held { .. }) && !held);
             let rest = *rest;
-            let mut bowl = app.world_mut().query_filtered::<&Transform, With<TakeUp>>();
+            // The bowl, and the fence in hand, whose click puts it back as the bowl's does.
+            let mut bowl = app
+                .world_mut()
+                .query_filtered::<&Transform, (With<TakeUp>, Without<HeldFence>)>();
             let bowl = bowl.single(app.world()).unwrap().translation;
+            let mut q = app.world_mut().query::<(&HeldFence, &TakeUp)>();
+            assert_eq!(q.single(app.world()).unwrap().1.0.len(), sides.len());
             assert!(
                 rest.0.translation.xz().distance(bowl.xz()) < 1e-5,
                 "over the bowl: {} {bowl}",
@@ -7133,6 +7193,11 @@ wood = "contrast"
                     .expect("its bowl");
                 let rest = app.world().get::<Rest>(*stone).unwrap().0.translation;
                 assert!(rest.xz().distance(over.xz()) < 1e-5, "{id}: over its bowl");
+                // Clicked where it waits: nothing to put back, nothing done.
+                let before = app.world().resource::<WatchStatus>().turn.clone();
+                click_on(&mut app, *stone);
+                assert_eq!(app.world().resource::<WatchStatus>().turn, before, "{id}");
+                assert!(app.world().get_entity(*stone).is_ok(), "{id}: still there");
                 // Placed on b2: carried there from over the bowl, solid, no ghost over it.
                 let mut watch = app.world_mut().resource_mut::<WatchStatus>();
                 let outcome = watch.turn.as_mut().unwrap().gesture(&Gesture::pos("b2"));
@@ -7265,6 +7330,25 @@ wood = "contrast"
                 value: "red".into(),
             });
             app.world_mut().resource_mut::<WatchStatus>().turn = Some(turn);
+            app.update();
+            // Clicked where it waits, it goes back, as a click on its bowl puts it back.
+            let mut q = app.world_mut().query::<(Entity, &FromBowl)>();
+            let (waiting, _) = q.single(app.world()).unwrap();
+            click_on(&mut app, waiting);
+            let turn = || app.world().resource::<WatchStatus>().turn.as_ref().unwrap();
+            assert_eq!(turn().in_hand(), None, "put back");
+            assert!(turn().gestures.is_empty());
+            let mut q = app.world_mut().query::<&FromBowl>();
+            assert_eq!(
+                q.iter(app.world()).count(),
+                0,
+                "nothing waits over the bowl"
+            );
+            let mut watch = app.world_mut().resource_mut::<WatchStatus>();
+            watch.turn.as_mut().unwrap().gesture(&Gesture {
+                kind: "piece".into(),
+                value: "red".into(),
+            });
             app.update();
             let mut q = app
                 .world_mut()

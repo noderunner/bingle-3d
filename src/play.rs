@@ -1647,7 +1647,7 @@ pub fn ask_again(net: &Net, watch: &mut WatchStatus) {
 /// up. A click on the board's own spaces is a press and a release there, which `drag.rs` reads
 /// (`click_at`), so that a drag and a click are told apart in one place; so is a drag from what
 /// lies beside it, which is no click even let go where it was pressed.
-fn on_click(
+pub(crate) fn on_click(
     click: On<PointerClick>,
     spots: Query<(), With<Spot>>,
     (choices, takes, places): (Query<&Choice>, Query<&TakeUp>, Query<&TakeToPlace>),
